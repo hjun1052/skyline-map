@@ -56,10 +56,11 @@ Everything below was measured on the sample city: Skyline's `public/samples/seor
 | Drawn transit line pieces | 2,850 | 2,850 | |
 | Stations / bus stops | 57 / 186 | 57 / 186 | station names are missing in converter files |
 | Lots / buildings / rails / roads drawn | 6,438 / 6,248 / 1,167 / 7,209 | 6,405 / 6,215 / 1,139 / 7,114 | tram and monorail tracks on roads need lanes; canals were dropped by the converter |
-| Road class drawn | — | 5,790 / 7,094 the same | width separates ramps, highways, runways and taxiways; gravel paths and parking-lane quirks don't separate |
+| Road class drawn | — | 4,312 / 7,094 the same; every difference is between neighbouring street classes | width separates ramps, highways, runways and taxiways. Small Road splits 58/42 minor/tertiary over 7 cities, so it is left unguessed (Seorang happens to lean tertiary) |
 | Bridges | 435 | 314 found, 6 wrong | low bridges are only known from the prefab name |
 | Tunnels | 152 | 152 found, 3 wrong | |
-| Discoveries | 33 | 24, all also in `.cslmap` | missing: station-name ones (no names), street, widest road (lanes), footprint, parts |
+| Toll booths | 12 | 12 | a booth's " Sub" building is recognised by its prefab name |
+| Discoveries | 33 | 20, all also in `.cslmap` | left out without the data: widest road (lanes), footprint and parts (building chains), longest bridge and viaduct (low bridges missed); station and street ones need names |
 | Driving, walking, transit directions | yes | **off** | no lane table |
 | Save files (`.crp`) | yes | **off** | the save is matched by segment prefab names |
 
@@ -119,10 +120,43 @@ Only converted files were available. These can't be tested without real Vellum B
 
 - **Routing:** impossible to do reliably without lanes. An item-class lane guess put four of twelve test drives 46–70% off in the research spike. It is not used anywhere.
 - **Road classes:** gravel paths draw as footpaths; the R69 racetrack draws as a highway ramp (width 12); some streets draw a class off.
-- **Multi-part assets** are separate buildings, so toll booth sub-buildings count separately.
-- **Attribution** in the map corner still says "CSLMapView" for a `.vellummap`.
-- **Findfile help** only covers CSLMapView's folder. Bridge's folder (`Documents/Vellum Bridge/<city>/`) is not mentioned.
+- **Multi-part assets** are separate buildings (toll booths are handled through the " Sub" prefab name; other assets are not grouped).
 - **Spec drift:** written against Vellum `8857666`. A newer minor is tolerated; a major 2 is refused with a clear message.
+
+## Review pass
+
+A second pass after the first experiment.
+
+- **Attribution.** The map corner and the drawer footer credit the exporter of the open map: "Cities: Skylines · Vellum Bridge" and "Rendered from a Vellum Bridge export", or CSLMapView as before. The time-lapse tip follows the exporter too.
+- **"Where is my file?"** now also shows Vellum Bridge's folder, each with its own copy button:
+  - the paths come from Vellum's source (`ExportStorage.ExportFolder`): `%USERPROFILE%\Documents\Vellum Bridge` on Windows (with a OneDrive note, since `MyDocuments` follows a redirected Documents folder) and `~/Vellum Bridge` on macOS and Linux;
+  - each city has its own subfolder (`VellumWriter.CityFolder`);
+  - the find-file self-check pins the paths.
+- **Rendering.** Measured against 7 real `.cslmap` exports, not one city:
+  - **Medium Road** draws as primary (68% of 1,951 segments).
+  - **Small Road** (58/42) is left to the default rules; the earlier tertiary rule fitted Seorang only and was removed.
+  - **Rejected:** a "segment crosses water" bridge rule found 7 real bridges but invented 38–67.
+  - **No signal in the data:** paths and tracks have no width difference between ground and elevated versions.
+  - The check now requires every class difference to be between neighbouring street classes, instead of a match percentage on one city.
+- **Zip security.** Found and fixed:
+  - **Zip bomb.** Entries used to be fully decompressed before their size was checked. They now inflate into a growing buffer that stops the moment it passes the declared size. A 2 GiB bomb (2 MB compressed) is rejected in 5 ms with 6 MB of extra memory.
+  - **Amplification.** Duplicate module records could inflate one entry many times. Now each module may appear once, at its fixed v1 path. Unknown modules are skipped without being inflated.
+  - **Structure.** Added checks: end record must end the file; directory bounds; no multi-disk, zip64 or encrypted entries; at most 64 entries; local header name and method must match the directory; entries may not overlap.
+  - **Manifest.** Known codec only; sha256 is now required.
+  - **JSON shapes.** A non-list collection, non-numeric position, non-integer id or missing sea level gives a "damaged" message instead of a crash or NaN.
+  - 19 new regression tests.
+- **Feature degradation.** Newly covered:
+  - **Cycling layer:** off with the explanation (bike lanes are lane data).
+  - **Time-lapse:** road length uses the drawn road classes.
+  - **Road panel:** shows the file's own item class, with a note that lanes, speeds and one-ways aren't in the file.
+  - **Toll booths:** no longer doubled.
+  - **Bridge records:** hidden.
+- **Simplified.**
+  - One `needLanes()` guard replaces seven copies.
+  - The `.cslmap` and `.vellummap` time-lapse scans share one function.
+  - The shared road-class set lives in `geo.ts`.
+  - Unused fields (`parkGrid`, `cityId`, `waterDepth`, `formatVersion`, stop `derived`) were removed.
+- **`.cslmap` unchanged:** identical hashes against `main` for map sources, meta, DEM, district field, search, discoveries, one-way, tolls, 60 routes and the time-lapse scan.
 
 ## Assessment
 

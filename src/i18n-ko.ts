@@ -836,7 +836,6 @@ export const KO: Record<string, string> = {
   // .vellummap (experimental)
   "Also opens .vellummap files from Vellum Bridge (experimental)": "Vellum Bridge의 .vellummap 파일도 열 수 있어요 (실험 기능)",
   "Directions are off for this map": "이 지도에서는 길찾기를 쓸 수 없어요",
-  "This .vellummap file has no lane data (one-way streets, speed limits, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis and save files need a .cslmap export of the same city.": "이 .vellummap 파일에는 차로 정보(일방통행, 제한 속도, 차·버스·사람이 다닐 수 있는 차로)가 없어서 경로를 믿을 만하게 계산할 수 없어요. 길찾기, 도달 범위, 통제 분석, 세이브 파일을 쓰려면 같은 도시의 .cslmap 내보내기가 필요해요.",
   "Opened from {producer} (.vellummap, experimental)": "{producer}에서 내보낸 지도 (.vellummap, 실험 기능)",
   "District, from the game's district map": "구역, 게임의 구역 지도 기준",
   "Boundaries and figures come from the game itself (Vellum Bridge export).": "경계와 수치는 게임에서 그대로 가져왔어요 (Vellum Bridge 내보내기).",
@@ -845,4 +844,10 @@ export const KO: Record<string, string> = {
   "This file is not a city export Skyline Map can read.": "Skyline Map이 읽을 수 있는 도시 내보내기 파일이 아니에요.",
   "This .vellummap is damaged: {detail}": "이 .vellummap 파일이 손상됐어요: {detail}",
   "This .vellummap was written by a newer version of Vellum Bridge (format {version}). Skyline Map reads format 1.": "이 .vellummap은 더 새로운 Vellum Bridge로 만들어졌어요 (형식 {version}). Skyline Map은 형식 1을 읽어요.",
+  "Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL).": "Vellum Bridge 내보내기로 그린 지도입니다. 지도 데이터 © 각 도시의 시장. 글꼴: Pretendard (OFL).",
+  "Vellum Bridge (experimental) saves .vellummap exports here, in a folder for each city:": "Vellum Bridge(실험 기능)는 .vellummap 파일을 이 폴더 안에 도시별 폴더로 저장합니다:",
+  "If OneDrive backs up your Documents folder, look in OneDrive, Documents, Vellum Bridge instead.": "OneDrive가 문서 폴더를 백업하고 있다면 OneDrive > 문서 > Vellum Bridge에서 찾아보세요.",
+  "Vellum Bridge keeps every export as its own file in the city's folder.": "Vellum Bridge는 내보낼 때마다 도시 폴더에 새 파일을 남겨요.",
+  "Road type is the class in the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.": "도로 종류는 .vellummap 파일의 분류이고, 지도 표시는 도로 폭도 함께 써요. 이 파일에는 차로, 제한 속도, 일방통행 정보가 없어요.",
+  "This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis, the cycling layer and save files need a .cslmap export of the same city.": "이 .vellummap 파일에는 차로 정보(일방통행, 제한 속도, 자전거 도로, 차·버스·사람이 다닐 수 있는 차로)가 없어서 경로를 믿을 만하게 계산할 수 없어요. 길찾기, 도달 범위, 통제 분석, 자전거 레이어, 세이브 파일을 쓰려면 같은 도시의 .cslmap 내보내기가 필요해요.",
 };

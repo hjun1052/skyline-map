@@ -5,7 +5,7 @@
 import type { CityData, CSeg } from './parse';
 import type { BuiltCity } from './build';
 import { makeTerrainSampler, modeOf } from './build';
-import { HALF, MAP_SIZE, toLngLat, fromLngLat, polylineLength, type XY } from './geo';
+import { HALF, MAP_SIZE, ROAD_CLASSES, toLngLat, fromLngLat, polylineLength, type XY } from './geo';
 
 export type DiscoveryCat = 'transit' | 'roads' | 'land' | 'buildings' | 'quirks';
 type GeoFeature = { type: 'Feature'; properties: { role: 'line' | 'area' | 'point' | 'pin' }; geometry: { type: string; coordinates: unknown } };
@@ -138,8 +138,7 @@ export function discover(city: CityData, built: BuiltCity): DiscoveryResult {
   for (const f of built.sources.rails.features) if (f.properties.type !== undefined) railProps.set(f.properties.id as number, f.properties);
   // a road carries car or tram lanes; a file without a lane table (.vellummap) only has the drawn road class to go by
   const noLanes = city.segTypes.size === 0;
-  const ROADS = new Set(['motorway', 'motorway_link', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service', 'track', 'raceway', 'inherit']);
-  const drivable = (p: P) => p.lanes > 0 || (noLanes && ROADS.has(p.cls));
+  const drivable = (p: P) => p.lanes > 0 || (noLanes && ROAD_CLASSES.has(p.cls));
   const isRoad = (p: P | undefined) => !!p && drivable(p) && !['runway', 'taxiway', 'pedestrian', 'footway', 'trail', 'canal', 'ferry'].includes(p.cls);
   const roadSegs = city.segs.filter((s) => isRoad(roadProps.get(s.id)) && s.pts.length >= 2);
   const railSegs = city.segs.filter((s) => { const p = railProps.get(s.id); return p && ['rail', 'subway', 'monorail', 'tram'].includes(p.cls) && s.pts.length >= 2; });
@@ -344,7 +343,8 @@ export function discover(city: CityData, built: BuiltCity): DiscoveryResult {
     });
   const both = [...roadSegs, ...railSegs];
   const bridges = structs('bridge', both), tunnels = structs('tunnel', both);
-  {
+  // without prefab names (.vellummap) low bridges look like roads, so the longest one may be missed: no record
+  if (!noLanes) {
     const wet = bridges.map((b) => ({ ...b, wet: overWater(b.pts) })).filter((b) => b.wet >= 40 && b.wet >= b.len * 0.25);
     // i18n-keys
     void ['Longest bridge', 'A continuous {len} span with {w} of it over water.', 'Road bridge', 'Rail bridge', 'Longest viaduct', 'The longest continuous elevated stretch, {len}, mostly over dry land.'];

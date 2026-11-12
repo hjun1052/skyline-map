@@ -16,7 +16,7 @@ export interface BuiltCity {
   meta: {
     name: string; generated: string; bounds: [XY, XY];
     /** set for formats other than .cslmap: where the map came from and what it can do (see CityExtras.caps) */
-    source?: { format: 'vellummap'; producer: string; version: string; lanes: boolean; exactDistricts: boolean; waterDepth: boolean };
+    source?: { format: 'vellummap'; producer: string; lanes: boolean; exactDistricts: boolean };
     stats: Record<string, number>;
     elevation: { min: number; max: number };
     lines: { id: number; name: string; type: string; color: string; stops: number; bbox: [number, number, number, number] | null; stopNames?: string[]; shape?: 'both' | 'loop' }[];
@@ -111,10 +111,9 @@ export function classify(seg: CSeg, st: CSegType | undefined, lanes: ReturnType<
     return { cls: 'motorway', group: 'road', rank: 9 };
   }
   if (lanes.vehicle === 0 && st && st.lanes.some((l) => l.type.includes('Pedestrian'))) return { cls: 'footway', group: 'path', rank: 0 };
-  // a file with no lane table at all (.vellummap): the class most of the item class's real prefabs get from their
-  // lanes in .cslmap exports (street parking counts, so a basic street draws as a collector)
-  if (noLaneTable && /^Small Road( Elevated)?$/.test(n)) return { cls: 'tertiary', group: 'road', rank: 4 };
-  if (noLaneTable && /^(Medium|Large) Road( Elevated)?$/.test(n)) return { cls: 'primary', group: 'road', rank: 6 };
+  // no lane table (.vellummap): Medium Road prefabs draw as primary in 68% of 1,951 segments over 7 real .cslmap
+  // exports (street parking counts as lanes). Small Road splits 58/42 minor/tertiary, too close to call: left to the rules below
+  if (noLaneTable && /^Medium Road( Elevated)?$/.test(n)) return { cls: 'primary', group: 'road', rank: 6 };
   if (/Large Road|Large Avenue|Six Lane|6L|Boulevard/i.test(both) || lanes.vehicle >= 6) return { cls: 'primary', group: 'road', rank: 6 };
   if (/Medium Road|Avenue Large|Medium Avenue|Four Lane Road/i.test(both)) return { cls: 'secondary', group: 'road', rank: 5 };
   if (/Small 4 Lane|Small Avenue|4LRoad|Small4L|Busway|Asymmetrical|3 lane|Oneway3L/i.test(both) || lanes.vehicle >= 4) return { cls: 'tertiary', group: 'road', rank: 4 };
@@ -369,7 +368,7 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
     w = Math.round(w * 10) / 10;
 
     const name = seg.customName || '';
-    const props: Props = { id: seg.id, cls: c.cls, w, brunnel, rank: c.rank, z: Math.round(avgY * 10) / 10, name, type: seg.name, lanes: lanes.vehicle, oneway: lanes.oneway ? 1 : 0, len: Math.round(polylineLength(pts2)), toll: tolls?.gateOf.has(seg.id) ? 2 : tolls?.boothOf.has(seg.id) ? 1 : 0, ow: oneway?.dir.get(seg.id) ?? 0, owSure: oneway && oneway.source.get(seg.id) !== 'prior' ? 1 : 0, speed: lanes.speed, bike: lanes.bike || /Bicycle|Bike/i.test(seg.name) ? 1 : 0, district: districtAt(seg.pts[seg.pts.length >> 1].x, seg.pts[seg.pts.length >> 1].z) };
+    const props: Props = { id: seg.id, cls: c.cls, w, brunnel, rank: c.rank, z: Math.round(avgY * 10) / 10, name, type: city.segTypes.size === 0 ? seg.icls : seg.name, lanes: lanes.vehicle, oneway: lanes.oneway ? 1 : 0, len: Math.round(polylineLength(pts2)), toll: tolls?.gateOf.has(seg.id) ? 2 : tolls?.boothOf.has(seg.id) ? 1 : 0, ow: oneway?.dir.get(seg.id) ?? 0, owSure: oneway && oneway.source.get(seg.id) !== 'prior' ? 1 : 0, speed: lanes.speed, bike: lanes.bike || /Bicycle|Bike/i.test(seg.name) ? 1 : 0, district: districtAt(seg.pts[seg.pts.length >> 1].x, seg.pts[seg.pts.length >> 1].z) };
     const f: Feature = { type: 'Feature', id: seg.id, properties: props, geometry: { type: 'LineString', coordinates: coords } };
     bump('seg:' + c.cls);
 
@@ -644,6 +643,7 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
     if (!s || s.stationId === undefined) return null;
     return { key: s.name ? s.name : '\u0000station:' + s.stationId, name: s.name ?? '' };
   };
+  let fst: ReturnType<typeof fileStation> = null;
   for (const tr of city.transports) {
     const mode = modeOf(tr.type);
     for (const sid of tr.stops) {
@@ -670,13 +670,12 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
         stopName.set(sid, best.name);
         st = byName.get(best.name);
         if (!st) { st = { x: best.x, z: best.z, lines: new Set(), modes: new Set(), name: best.name }; byName.set(best.name, st); stations.push(st); }
-      } else if (fileStation(sid)) {
+      } else if ((fst = fileStation(sid))) {
         // no named building nearby, but the file names the stop's station (.vellummap): every platform of that
         // station building shares it, so they group by building, not by distance
-        const fs = fileStation(sid)!;
-        if (fs.name) stopName.set(sid, fs.name);
-        st = byName.get(fs.key);
-        if (!st) { st = { x: n.x, z: n.z, lines: new Set(), modes: new Set(), name: fs.name }; byName.set(fs.key, st); stations.push(st); }
+        if (fst.name) stopName.set(sid, fst.name);
+        st = byName.get(fst.key);
+        if (!st) { st = { x: n.x, z: n.z, lines: new Set(), modes: new Set(), name: fst.name }; byName.set(fst.key, st); stations.push(st); }
       } else {
         // unnamed: merge only with other unnamed platforms of the same spot
         st = stations.find((c) => !c.name && Math.hypot(c.x - n.x, c.z - n.z) < 120);
@@ -831,7 +830,7 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
 
   return {
     meta: { name: city.name, generated: city.generated, bounds: [toLngLat(-HALF, -HALF), toLngLat(HALF, HALF)], stats, elevation: { min: emin, max: emax }, lines,
-      ...(city.extras ? { source: { format: city.extras.source, producer: city.extras.producer, version: city.extras.formatVersion, lanes: city.extras.caps.lanes, exactDistricts: !!city.extras.districtGrid, waterDepth: city.extras.waterDepth } } : {}) },
+      ...(city.extras ? { source: { format: city.extras.source, producer: city.extras.producer, lanes: city.extras.caps.lanes, exactDistricts: !!city.extras.districtGrid } } : {}) },
     sources: { land: fc(land), water: fc(water), lots: fc(lots), buildings: fc(blds), roads: fc(roads), rails: fc(rails), transit: fc(transit), places: fc(places), roadLabels: fc(roadLabels), grid: fc(grid), districts: fc(districtFeats) },
     dem: { surface: T.surface, size: n },
     districtField: (() => {

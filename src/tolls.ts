@@ -47,7 +47,9 @@ function inside(p: { x: number; z: number }, poly: { x: number; z: number }[]) {
 }
 
 export function detectTolls(city: CityData): TollData {
-  const parents = city.buildings.filter((b) => /Toll Booth/i.test(b.name) && !b.parent && b.pts.length >= 3);
+  // without sub-building chains (.vellummap) a booth's sub-building is recognised by its prefab name ("… Sub")
+  const noChains = city.extras?.caps.buildingParts === false;
+  const parents = city.buildings.filter((b) => /Toll Booth/i.test(b.name) && !b.parent && b.pts.length >= 3 && !(noChains && / Sub$/i.test(b.name)));
   const tollSegs = city.segs.filter((s) => !s.path && s.pts.length >= 2 && TOLL_SEG.test(s.name));
   const at = new Map<number, CSeg[]>();
   for (const s of city.segs) if (!s.path) for (const n of [s.sn, s.en]) { const l = at.get(n); if (l) l.push(s); else at.set(n, [s]); }

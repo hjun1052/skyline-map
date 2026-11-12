@@ -25,22 +25,28 @@ const CRC = new Uint32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 
 const crc32 = (b: Uint8Array) => { let c = 0xffffffff; for (const x of b) c = CRC[(c ^ x) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
 const deflate = async (b: Uint8Array) => new Uint8Array(await new Response(new Blob([b as BlobPart]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());
 const sha = async (b: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', b as BufferSource))].map((x) => x.toString(16).padStart(2, '0')).join('');
-interface ZEntry { name: string; data: Uint8Array; store?: boolean; fakeSize?: number }
-async function zip(entries: ZEntry[]): Promise<Uint8Array> {
-  const parts: Uint8Array[] = [], central: Uint8Array[] = [];
+interface ZEntry { name: string; data: Uint8Array; store?: boolean; fakeSize?: number; flags?: number; localName?: string; localMethod?: number; aliasOf?: string }
+/** a zip writer that can also forge archives: wrong declared sizes, flags, local headers, entries sharing data, trailing bytes */
+async function zip(entries: ZEntry[], o: { trailing?: Uint8Array; disk?: number } = {}): Promise<Uint8Array> {
+  const parts: Uint8Array[] = [], central: Uint8Array[] = [], at = new Map<string, number>();
   let off = 0;
   for (const e of entries) {
-    const name = new TextEncoder().encode(e.name), body = e.store ? e.data : await deflate(e.data), crc = crc32(e.data), usize = e.fakeSize ?? e.data.length;
-    const lh = new DataView(new ArrayBuffer(30));
-    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(8, e.store ? 0 : 8, true); lh.setUint32(14, crc, true); lh.setUint32(18, body.length, true); lh.setUint32(22, usize, true); lh.setUint16(26, name.length, true);
+    const name = new TextEncoder().encode(e.name), body = e.store ? e.data : await deflate(e.data), crc = crc32(e.data), usize = e.fakeSize ?? e.data.length, method = e.store ? 0 : 8;
+    let start = off;
+    if (e.aliasOf) start = at.get(e.aliasOf)!; // central record only, pointing at another entry's data
+    else {
+      const lname = new TextEncoder().encode(e.localName ?? e.name), lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, e.flags ?? 0, true); lh.setUint16(8, e.localMethod ?? method, true); lh.setUint32(14, crc, true); lh.setUint32(18, body.length, true); lh.setUint32(22, usize, true); lh.setUint16(26, lname.length, true);
+      parts.push(new Uint8Array(lh.buffer), lname, body); at.set(e.name, off);
+      off += 30 + lname.length + body.length;
+    }
     const ch = new DataView(new ArrayBuffer(46));
-    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(10, e.store ? 0 : 8, true); ch.setUint32(16, crc, true); ch.setUint32(20, body.length, true); ch.setUint32(24, usize, true); ch.setUint16(28, name.length, true); ch.setUint32(42, off, true);
-    parts.push(new Uint8Array(lh.buffer), name, body); central.push(new Uint8Array(ch.buffer), name);
-    off += 30 + name.length + body.length;
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, e.flags ?? 0, true); ch.setUint16(10, method, true); ch.setUint32(16, crc, true); ch.setUint32(20, body.length, true); ch.setUint32(24, usize, true); ch.setUint16(28, name.length, true); ch.setUint32(42, start, true);
+    central.push(new Uint8Array(ch.buffer), name);
   }
   const cdSize = central.reduce((s, b) => s + b.length, 0), end = new DataView(new ArrayBuffer(22));
-  end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true); end.setUint32(12, cdSize, true); end.setUint32(16, off, true);
-  const all = [...parts, ...central, new Uint8Array(end.buffer)], out = new Uint8Array(all.reduce((s, b) => s + b.length, 0));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(4, o.disk ?? 0, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true); end.setUint32(12, cdSize, true); end.setUint32(16, off, true);
+  const all = [...parts, ...central, new Uint8Array(end.buffer), o.trailing ?? new Uint8Array()], out = new Uint8Array(all.reduce((s, b) => s + b.length, 0));
   let p = 0; for (const b of all) { out.set(b, p); p += b.length; }
   return out;
 }
@@ -85,11 +91,12 @@ function baseModules(): Mods {
   };
 }
 const IDS: Record<string, string> = { 'terrain.bin': 'terrain', 'water.json': 'water', 'water-mask.bin': 'water-mask', 'water-depth.bin': 'water-depth', 'vegetation.bin': 'vegetation', 'roads.json': 'roads', 'transit.json': 'transit', 'buildings.json': 'buildings', 'districts.json': 'districts', 'parks.json': 'parks', 'districts.bin': 'district-grid', 'parks.bin': 'park-grid' };
-async function doc(mods: Mods, o: { version?: string; manifestExtra?: object; moduleVersion?: Record<string, string>; badHash?: string; codec?: Record<string, string>; extraEntries?: ZEntry[]; drop?: string[]; fakeSize?: Record<string, number> } = {}) {
+async function doc(mods: Mods, o: { version?: string; manifestExtra?: object; moduleVersion?: Record<string, string>; badHash?: string; codec?: Record<string, string>; extraEntries?: ZEntry[]; drop?: string[]; fakeSize?: Record<string, number>; editModules?: (ms: any[]) => any[]; entry?: Record<string, Partial<ZEntry>>; zipOpts?: { trailing?: Uint8Array; disk?: number } } = {}) {
   const paths = Object.keys(mods).filter((p) => !o.drop?.includes(p));
-  const modules = await Promise.all(paths.map(async (p) => ({ id: IDS[p], path: p, version: o.moduleVersion?.[p] ?? '1.0', codec: o.codec?.[p] ?? 'deflate', sha256: p === o.badHash ? '0'.repeat(64) : await sha(mods[p]) })));
+  let modules = await Promise.all(paths.map(async (p) => ({ id: IDS[p], path: p, version: o.moduleVersion?.[p] ?? '1.0', codec: o.codec?.[p] ?? 'deflate', sha256: p === o.badHash ? '0'.repeat(64) : await sha(mods[p]) } as any)));
+  if (o.editModules) modules = o.editModules(modules);
   const manifest = { format: 'vellummap', exportSchemaVersion: o.version ?? '1.1', snapshotId: 'x', exportedAtUtc: '2026-09-23T14:05:00Z', game: { version: 'unknown' }, producer: { name: 'Vellum Bridge', version: '1.0.0' }, city: { name: 'Testville', id: 'abc' }, modules, ...o.manifestExtra };
-  return zip([{ name: 'manifest.json', data: enc(manifest) }, ...paths.map((p) => ({ name: p, data: mods[p], fakeSize: o.fakeSize?.[p] })), ...(o.extraEntries ?? [])]);
+  return zip([{ name: 'manifest.json', data: enc(manifest) }, ...paths.map((p) => ({ name: p, data: mods[p], fakeSize: o.fakeSize?.[p], ...o.entry?.[p] })), ...(o.extraEntries ?? [])], o.zipOpts);
 }
 
 // ------------------------------------------------------------ 1. rules
@@ -115,9 +122,9 @@ async function doc(mods: Mods, o: { version?: string; manifestExtra?: object; mo
   ok(b901.name === 'H1 1x1 Sweatshop01' && b901.myname === '' && b901.srv === 'Commercial', 'buildings 1.0: name is the prefab', b901);
   ok(city.districts[0].name === 'Westside' && city.parks[0].type === 'Zoo', 'districts and parks');
   const ex = city.extras!;
-  ok(ex.source === 'vellummap' && !ex.caps.lanes && ex.cityId === 'abc' && ex.waterDepth && ex.producer === 'Vellum Bridge 1.0.0', 'extras', { ...ex, districtGrid: undefined, parkGrid: undefined });
+  ok(ex.source === 'vellummap' && !ex.caps.lanes && !ex.caps.buildingParts && ex.producer === 'Vellum Bridge 1.0.0', 'extras', { ...ex, districtGrid: undefined });
   ok(ex.districtStats.get(3)?.population === 1234 && ex.districtStats.get(3)?.jobs?.office === 30, 'district stats');
-  ok(ex.stopInfo.get(11)?.stationId === 900 && ex.stopInfo.get(11)?.name === 'Central' && ex.stopInfo.get(10)?.derived === true, 'stop names and station ids');
+  ok(ex.stopInfo.get(11)?.stationId === 900 && ex.stopInfo.get(11)?.name === 'Central' && ex.stopInfo.get(10)?.name === 'Elm Street 1' && ex.stopInfo.get(10)?.stationId === undefined, 'stop names and station ids');
 
   const built = buildCity(city, () => {}, inferOneWay(city), detectTolls(city));
   ok(built.meta.source?.format === 'vellummap' && built.meta.source.lanes === false && built.meta.source.exactDistricts, 'built map says what it can do', built.meta.source);
@@ -136,7 +143,7 @@ async function doc(mods: Mods, o: { version?: string; manifestExtra?: object; mo
   // mask-only water: wet cells are filled to sea level (at least 0.5 m)
   const m2 = baseModules(); delete m2['water-depth.bin']; m2['water.json'] = enc({ seaLevel: 60 });
   const c2 = vellumToCity(await readVellummap(await doc(m2)));
-  ok(c2.water[1080] === 10 && c2.water[0] === 0 && c2.extras!.waterDepth === false, 'mask-only water filled to sea level', c2.water[1080]);
+  ok(c2.water[1080] === 10 && c2.water[0] === 0, 'mask-only water filled to sea level', c2.water[1080]);
   // leniency: newer minor, unknown fields, unknown entries, missing optional modules
   const m3 = baseModules(); delete m3['districts.bin'];
   const r3 = JSON.parse(new TextDecoder().decode(m3['roads.json'])); r3.segments[0].lanes = 4; r3.futureThing = true; m3['roads.json'] = enc(r3);
@@ -166,6 +173,31 @@ async function doc(mods: Mods, o: { version?: string; manifestExtra?: object; mo
   const badJson = { ...m, 'transit.json': new TextEncoder().encode('{"lines": [') };
   await rejects(readVellummap(await doc(badJson)).then(vellumToCity), /transit\.json is not valid JSON/, 'invalid JSON module');
   await rejects(readVellummap(await zip([{ name: 'manifest.json', data: enc({ format: 'vellummap', exportSchemaVersion: '1.0' }) }, { name: 'manifest.json', data: enc({}) }])), /two entries named/, 'duplicate entry names');
+
+  // zip hardening (each defence in readVellummap/zipEntries/inflate)
+  const bomb = new Uint8Array(64 * 1024 * 1024); // 64 MiB of zeros deflates to ~64 KB
+  await rejects(readVellummap(await doc({ ...m, 'roads.json': bomb }, { fakeSize: { 'roads.json': 1000 } })), /roads\.json: larger than declared/, 'zip bomb: inflating past the declared size stops at once');
+  await rejects(readVellummap(await doc(m, { fakeSize: { 'parks.json': 2 } })), /parks\.json: larger than declared/, 'entry larger than declared');
+  await rejects(readVellummap(await doc(m, { fakeSize: { 'parks.json': 99999 } })), /parks\.json: wrong size/, 'entry smaller than declared');
+  await rejects(readVellummap(await doc(m, { entry: { 'parks.json': { flags: 1 } } })), /encrypted/, 'encrypted entry');
+  await rejects(readVellummap(await doc(m, { entry: { 'parks.json': { localName: 'parkz.json' } } })), /local header disagrees/, 'local header names another file');
+  await rejects(readVellummap(await doc(m, { entry: { 'parks.json': { localMethod: 0 } } })), /local header disagrees/, 'local header uses another method');
+  await rejects(readVellummap(await doc(m, { extraEntries: [{ name: 'alias.json', data: m['roads.json'], aliasOf: 'roads.json' }] })), /overlaps|local header disagrees/, 'two entries sharing compressed data');
+  await rejects(readVellummap(await doc(m, { zipOpts: { trailing: new Uint8Array(30) } })), /no zip directory/, 'bytes after the end record');
+  await rejects(readVellummap(await doc(m, { zipOpts: { disk: 1 } })), /multi-part/, 'multi-disk archive');
+  await rejects(readVellummap(await zip(Array.from({ length: 70 }, (_, i) => ({ name: `f${i}`, data: enc(i), store: true }))).then((z) => z)), /too many entries/, 'more than 64 entries');
+  await rejects(readVellummap(await doc(m, { editModules: (ms) => [...ms, { ...ms.find((x) => x.id === 'roads') }] })), /module roads is listed twice/, 'module listed twice (would inflate one entry many times)');
+  await rejects(readVellummap(await doc(m, { editModules: (ms) => ms.map((x) => (x.id === 'parks' ? { ...x, path: 'roads.json' } : x)) })), /module parks is not at parks\.json/, 'module pointing at another module\'s entry');
+  await rejects(readVellummap(await doc(m, { codec: { 'roads.json': 'zstd' } })), /unknown codec zstd/, 'unknown codec');
+  await rejects(readVellummap(await doc(m, { editModules: (ms) => ms.map((x) => (x.id === 'roads' ? { ...x, sha256: undefined } : x)) })), /roads\.json: no checksum/, 'module without a checksum');
+  // a module this reader does not know is skipped, never inflated: a broken one does not matter
+  ok(!!(await readVellummap(await doc(m, { editModules: (ms) => [...ms, { id: 'future', path: 'future.bin', version: '1.0', codec: 'deflate', sha256: '0'.repeat(64) }], extraEntries: [{ name: 'future.bin', data: bomb, fakeSize: 5 }] }))), 'unknown modules are not inflated');
+  // JSON shapes: a damaged message, not a crash or NaN on the map
+  const withRoads = (r: unknown) => doc({ ...m, 'roads.json': enc(r) });
+  await rejects(readVellummap(await withRoads({ nodes: {}, segments: [] })).then(vellumToCity), /roads\.json: nodes is not a list/, 'collection that is not a list');
+  await rejects(readVellummap(await withRoads({ nodes: [{ sourceId: 1, position: { x: 'a', y: 0, z: 0 }, elevation: 0, underground: false }], segments: [] })).then(vellumToCity), /not a number/, 'position that is not a number');
+  await rejects(readVellummap(await withRoads({ nodes: [{ sourceId: '1', position: { x: 0, y: 0, z: 0 }, elevation: 0, underground: false }], segments: [] })).then(vellumToCity), /bad id/, 'id that is not an integer');
+  await rejects(readVellummap(await doc({ ...m, 'water.json': enc({ seaLevel: null }) })).then(vellumToCity), /seaLevel: not a number/, 'missing sea level');
 }
 // pieces
 {
@@ -250,7 +282,10 @@ async function doc(mods: Mods, o: { version?: string; manifestExtra?: object; mo
   const both = b1.sources.roads.features.filter((f) => cls2.has(f.properties.id));
   const sameCls = both.filter((f) => cls2.get(f.properties.id) === f.properties.cls).length;
   console.log(`  road classes: ${sameCls}/${both.length} the same`);
-  ok(sameCls / both.length > 0.8, 'road classes mostly the same', `${sameCls}/${both.length}`);
+  // what the data can't tell apart: same item class and width, classes that come from lanes or the prefab name only
+  const NEAR = new Set(['tertiary>minor', 'minor>tertiary', 'secondary>primary', 'primary>secondary', 'trail>footway', 'raceway>motorway_link', 'service>minor', 'motorway_link>motorway']);
+  const far = both.filter((f) => cls2.get(f.properties.id) !== f.properties.cls && !NEAR.has(`${f.properties.cls}>${cls2.get(f.properties.id)}`));
+  ok(far.length === 0, 'road classes differ only between neighbouring street classes', Object.entries(far.reduce((m: Record<string, number>, f) => { const k = `${f.properties.cls}>${cls2.get(f.properties.id)} ${f.properties.type}`; m[k] = (m[k] ?? 0) + 1; return m; }, {})));
   for (const c of ['motorway', 'motorway_link', 'runway', 'taxiway']) {
     const want = both.filter((f) => f.properties.cls === c), hit = want.filter((f) => cls2.get(f.properties.id) === c).length;
     ok(hit / want.length > 0.85, `${c} kept (width tells the variants apart)`, `${hit}/${want.length}`);
@@ -271,7 +306,10 @@ async function doc(mods: Mods, o: { version?: string; manifestExtra?: object; mo
   const d1 = discover(cs, b1), d2 = discover(vm, b2);
   ok(Math.abs(d1.summary.roadKm - d2.summary.roadKm) / d1.summary.roadKm < 0.05, 'discoveries: road length', [d1.summary.roadKm, d2.summary.roadKm]);
   const ids2 = d2.items.map((i) => i.id);
-  ok(!ids2.includes('footprint') && !ids2.includes('parts') && !ids2.includes('wide'), 'discoveries: no footprint, parts or widest-road records without the data', ids2);
+  ok(!['footprint', 'parts', 'wide', 'bridge', 'viaduct'].some((k) => ids2.includes(k)), 'discoveries: no footprint, parts, widest-road or bridge records without the data', ids2);
+  ok(b2.meta.stats.tollBooths === b1.meta.stats.tollBooths, 'toll booths: sub-buildings are not extra booths', [b1.meta.stats.tollBooths, b2.meta.stats.tollBooths]);
+  const icls = new Map(vm.segs.map((x) => [x.id, x.icls]));
+  ok(b2.sources.roads.features.every((f) => f.properties.type === icls.get(f.properties.id as number)), 'road panel shows the file\'s own item class, not the width-derived name');
   ok(d2.items.every((i) => d1.items.some((j) => j.id === i.id)), 'discoveries: nothing the .cslmap does not have');
   console.log(`  discoveries: ${d1.items.length} → ${d2.items.length}`);
 }

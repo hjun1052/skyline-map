@@ -836,7 +836,6 @@ export const RU: Record<string, string> = {
   // .vellummap (experimental)
   "Also opens .vellummap files from Vellum Bridge (experimental)": "Также открывает файлы .vellummap из Vellum Bridge (экспериментально)",
   "Directions are off for this map": "Маршруты для этой карты недоступны",
-  "This .vellummap file has no lane data (one-way streets, speed limits, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis and save files need a .cslmap export of the same city.": "В этом файле .vellummap нет данных о полосах (одностороннее движение, ограничения скорости, какие полосы доступны машинам, автобусам и пешеходам), поэтому надёжно построить маршрут нельзя. Для маршрутов, зон доступности, анализа перекрытий и файлов сохранения нужен экспорт .cslmap того же города.",
   "Opened from {producer} (.vellummap, experimental)": "Открыто из {producer} (.vellummap, экспериментально)",
   "District, from the game's district map": "Район, по карте районов игры",
   "Boundaries and figures come from the game itself (Vellum Bridge export).": "Границы и цифры взяты из самой игры (экспорт Vellum Bridge).",
@@ -845,4 +844,10 @@ export const RU: Record<string, string> = {
   "This file is not a city export Skyline Map can read.": "Этот файл не является экспортом города, который может прочитать Skyline Map.",
   "This .vellummap is damaged: {detail}": "Файл .vellummap повреждён: {detail}",
   "This .vellummap was written by a newer version of Vellum Bridge (format {version}). Skyline Map reads format 1.": "Этот файл .vellummap создан более новой версией Vellum Bridge (формат {version}). Skyline Map читает формат 1.",
+  "Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL).": "Отображено по данным, экспортированным с помощью Vellum Bridge. Права на данные карты принадлежат мэру города. Шрифты: Pretendard (OFL).",
+  "Vellum Bridge (experimental) saves .vellummap exports here, in a folder for each city:": "Vellum Bridge (экспериментально) сохраняет файлы .vellummap здесь, в отдельной папке для каждого города:",
+  "If OneDrive backs up your Documents folder, look in OneDrive, Documents, Vellum Bridge instead.": "Если OneDrive резервирует папку «Документы», ищите в OneDrive → Документы → Vellum Bridge.",
+  "Vellum Bridge keeps every export as its own file in the city's folder.": "Vellum Bridge сохраняет каждый экспорт отдельным файлом в папке города.",
+  "Road type is the class in the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.": "Тип дороги — это класс из файла .vellummap; стиль на карте учитывает и ширину дороги. В файле нет полос, ограничений скорости и одностороннего движения.",
+  "This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis, the cycling layer and save files need a .cslmap export of the same city.": "В этом файле .vellummap нет данных о полосах (одностороннее движение, ограничения скорости, велодорожки, какие полосы доступны машинам, автобусам и пешеходам), поэтому надёжно построить маршрут нельзя. Для маршрутов, зон доступности, анализа перекрытий, слоя велодорожек и файлов сохранения нужен экспорт .cslmap того же города.",
 };

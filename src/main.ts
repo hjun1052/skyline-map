@@ -60,7 +60,20 @@ const map = new maplibregl.Map({
 (window as any).__map = map;
 const styleReady = new Promise<void>((res) => (map.loaded() ? res() : map.once('load', () => res())));
 map.addControl(new maplibregl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-right');
-map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: 'Cities: Skylines · CSLMapView' }), 'bottom-right');
+// i18n-keys
+void ["Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL)."];
+// end i18n-keys
+/** the map corner credits the mod that exported the open map (CSLMapView before one is open) */
+let attribution: maplibregl.AttributionControl | null = null;
+function creditExporter(exporter: 'CSLMapView' | 'Vellum Bridge') {
+  if (attribution) map.removeControl(attribution);
+  attribution = new maplibregl.AttributionControl({ compact: true, customAttribution: `Cities: Skylines · ${exporter}` });
+  map.addControl(attribution, 'bottom-right');
+  const about = document.querySelector<HTMLElement>('#about [data-i18n]')!;
+  about.dataset.i18n = about.dataset.i18nSrc = exporter === 'CSLMapView' ? "Rendered from CSLMapView exports. Map data © the city's mayor. Fonts: Pretendard (OFL)." : "Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL).";
+  about.textContent = t(about.dataset.i18n);
+}
+creditExporter('CSLMapView');
 map.touchZoomRotate.enableRotation();
 document.documentElement.dataset.theme = state.mode === 'night' ? 'dark' : 'light';
 
@@ -181,8 +194,10 @@ function showCity(city: BuiltCity) {
   for (const id of ['topbar', 'layerSwitch', 'controls', 'dirFab']) $(id).hidden = false;
   $('cityChip').textContent = city.meta.name;
   cityTexts(city);
-  for (const id of ['dirFab', 'dirBtn', 'reachBtn', 'closureMenu', 'simMenu']) { $(id).classList.toggle('off', !canRoute()); $(id).setAttribute('aria-disabled', String(!canRoute())); }
-  if (!canRoute()) toast(t('Directions are off for this map'));
+  creditExporter(city.meta.source ? 'Vellum Bridge' : 'CSLMapView');
+  syncUi();
+  for (const id of ['dirFab', 'dirBtn', 'reachBtn', 'closureMenu', 'simMenu']) { $(id).classList.toggle('off', !hasLanes()); $(id).setAttribute('aria-disabled', String(!hasLanes())); }
+  if (!hasLanes()) toast(t('Directions are off for this map'));
   renderDrawer(city);
   void pricing.attach(city);
   schem.reset();
@@ -352,7 +367,7 @@ function setSelection(features: { type: 'Feature'; geometry: any; properties: an
 let panelPlace: { label: string; ll: [number, number] } | null = null;
 function panel(html: string, accent?: string) {
   $('panelBody').innerHTML = (accent ? `<div class="p-hero" style="background:${accent}"></div>` : '') + html;
-  if (panelPlace && canRoute()) {
+  if (panelPlace && hasLanes()) {
     $('panelBody').querySelector('.p-head')?.insertAdjacentHTML('afterend', `<div class="p-quick">
       <button class="q-btn primary" data-dir="to"><span><svg viewBox="0 0 24 24"><path d="M21.7 11.3l-9-9a1 1 0 0 0-1.4 0l-9 9a1 1 0 0 0 0 1.4l9 9a1 1 0 0 0 1.4 0l9-9a1 1 0 0 0 0-1.4zM14 14.5V12h-4v3H8v-4a1 1 0 0 1 1-1h5V7.5l3.5 3.5-3.5 3.5z"/></svg></span>${t('Directions')}</button>
       <button class="q-btn" data-dir="from"><span><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-2.1A7 7 0 0 0 13 5.1V3h-2v2.1A7 7 0 0 0 5.1 11H3v2h2.1a7 7 0 0 0 5.9 5.9V21h2v-2.1a7 7 0 0 0 5.9-5.9H21v-2zm-9 6a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg></span>${t('Start here')}</button>
@@ -457,7 +472,7 @@ function describeRest(f: MapGeoJSONFeature, p: any, layer: string, geom: any, ln
   setSelection(sel);
   const totalLen = p.name ? Math.round(sel.reduce((s, x) => s + lineLen(x.geometry.coordinates), 0)) : p.len;
   panel(head(name, (L(p.cls) ?? p.cls) + (p.brunnel === 'bridge' ? ' · ' + t('Bridge / elevated') : p.brunnel === 'tunnel' ? ' · ' + t('Tunnel') : '')) +
-    `<div class="p-rows">${row('Road type', p.type)}${row('District', p.district)}${row('Lanes', p.lanes || null)}${row('Speed limit', p.speed ? p.speed + ' km/h' : null)}${row('Bike lane', p.bike ? t('Yes') : null)}${row('Carriageway', p.w ? p.w + ' m' : null)}${row('One-way', p.oneway ? t('Yes') : null)}${row(p.name ? t('Total length') : t('Segment length'), totalLen ? (totalLen > 1000 ? (totalLen / 1000).toFixed(2) + ' km' : totalLen + ' m') : null)}${row('Elevation', p.z !== undefined ? Math.round(p.z) + ' m' : null)}</div>${p.id !== undefined && !/rail|subway|monorail|tram|cablecar/.test(p.cls) ? sim.roadHtml(Number(p.id)) : ''}${p.id !== undefined && !['runway', 'taxiway', 'canal', 'ferry'].includes(p.cls) ? `<div class="p-actions">${closeBtn({ kind: /rail|subway|monorail|tram|cablecar/.test(p.cls) ? 'rail' : 'road', seg: Number(p.id) })}</div>` : ''}`);
+    `<div class="p-rows">${row('Road type', p.type)}${row('District', p.district)}${row('Lanes', p.lanes || null)}${row('Speed limit', p.speed ? p.speed + ' km/h' : null)}${row('Bike lane', p.bike ? t('Yes') : null)}${row('Carriageway', p.w ? p.w + ' m' : null)}${row('One-way', p.oneway ? t('Yes') : null)}${row(p.name ? t('Total length') : t('Segment length'), totalLen ? (totalLen > 1000 ? (totalLen / 1000).toFixed(2) + ' km' : totalLen + ' m') : null)}${row('Elevation', p.z !== undefined ? Math.round(p.z) + ' m' : null)}</div>${hasLanes() ? '' : `<p class="p-note">${esc(t('Road type is the class in the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.'))}</p>`}${p.id !== undefined && !/rail|subway|monorail|tram|cablecar/.test(p.cls) ? sim.roadHtml(Number(p.id)) : ''}${p.id !== undefined && !['runway', 'taxiway', 'canal', 'ferry'].includes(p.cls) ? `<div class="p-actions">${closeBtn({ kind: /rail|subway|monorail|tram|cablecar/.test(p.cls) ? 'rail' : 'road', seg: Number(p.id) })}</div>` : ''}`);
 }
 /** The district shown as a soft region (estimated: no district shapes in the export), redrawn on theme changes. */
 let glowDistrict: number | null = null;
@@ -492,7 +507,7 @@ function inPoly(pt: [number, number], rings: [number, number][][]) {
 }
 /** "What if it closes?" button for a panel */
 function closeBtn(p: import('./closure').ClosurePick) {
-  if (!canRoute()) return '';
+  if (!hasLanes()) return '';
   return `<button class="pill" data-close-pick="${esc(JSON.stringify(p))}"><svg viewBox="0 0 24 24" width="16" height="16"><path fill-rule="evenodd" d="${CLOSURE_ICON}"/></svg>${t('What if it closes?')}</button>`;
 }
 function lineLen(c: [number, number][]) { let l = 0; for (let i = 1; i < c.length; i++) { const a = fromLngLat(c[i - 1][0], c[i - 1][1]), b = fromLngLat(c[i][0], c[i][1]); l += Math.hypot(a[0] - b[0], a[1] - b[1]); } return l; }
@@ -501,10 +516,9 @@ function coordText(lng: number, lat: number) { const [x, z] = fromLngLat(lng, la
 $('panelBody').addEventListener('click', (e) => {
   const t = e.target as HTMLElement;
   const cp = (t.closest('[data-close-pick]') as HTMLElement | null)?.dataset.closePick;
-  if (cp) return canRoute() ? closure.open(JSON.parse(cp)) : explainNoRoute();
+  if (cp) return needLanes(() => closure.open(JSON.parse(cp)))();
   const dd = (t.closest('[data-dir]') as HTMLElement | null)?.dataset.dir;
-  if (dd && panelPlace && !canRoute()) return explainNoRoute();
-  if (dd && panelPlace) { const pl = panelPlace; closePanel(); return dd === 'to' ? dir.setTo(pl) : dir.setFrom(pl); }
+  if (dd && panelPlace) { const pl = panelPlace; return needLanes(() => { closePanel(); dd === 'to' ? dir.setTo(pl) : dir.setFrom(pl); })(); }
   const id = (t.closest('[data-line]') as HTMLElement | null)?.dataset.line;
   if (id) return selectLine(+id, true);
   const fare = (t.closest('[data-edit-fare]') as HTMLElement | null)?.dataset.editFare;
@@ -568,7 +582,7 @@ const schem = createSchematic({
     if (se) choose(se); else map.flyTo({ center: p.ll, zoom: 16.5, speed: 1.6 });
   },
   showLine: (id) => selectLine(id, true),
-  directions: (from, to) => (canRoute() ? dir.open({ from, to, mode: 'transit' }) : (schem.close(), explainNoRoute())),
+  directions: (from, to) => { if (!hasLanes()) schem.close(); needLanes(() => dir.open({ from, to, mode: 'transit' }))(); },
   onOpen: () => { closeDrawer(); closePanel(); if (measure.isActive()) measure.close(); },
   onClose: () => {},
 });
@@ -585,8 +599,7 @@ const dir = createDirections({
   onOpen: () => { closePanel(); sim.close(); if (reach.isActive()) reach.close(); discoveries.close(); closure.close(); $('topbar').hidden = true; document.body.classList.add('dir-open'); },
   onClose: () => { $('topbar').hidden = false; document.body.classList.remove('dir-open'); },
 });
-$('dirBtn').onclick = () => (canRoute() ? dir.open() : explainNoRoute());
-$('dirFab').onclick = () => (canRoute() ? dir.open() : explainNoRoute());
+$('dirBtn').onclick = $('dirFab').onclick = needLanes(() => dir.open());
 
 const measure = createMeasure(map, {
   onOpen: () => { closePanel(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); discoveries.close(); closure.close(); $('measureBtn').classList.add('on'); },
@@ -601,7 +614,7 @@ const reach = createReach(map, {
   traffic: () => dir.trafficOn(),
   onOpen: () => { closeDrawer(); closePanel(); sim.close(); if (dir.isOpen()) dir.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); closure.close(); },
 });
-$('reachBtn').onclick = () => { closeDrawer(); if (!canRoute()) return explainNoRoute(); const c = map.getCenter(); reach.open([c.lng, c.lat]); };
+$('reachBtn').onclick = needLanes(() => { closeDrawer(); const c = map.getCenter(); reach.open([c.lng, c.lat]); });
 
 const timelapse = createTimelapse(map, {
   worker, city: () => state.city, currentFile: () => state.currentFile, toast,
@@ -622,7 +635,7 @@ const closure = createClosure(map, {
   traffic: () => dir.trafficOn(),
   onOpen: () => { sim.close(); closeDrawer(); closePanel(); hideCtx(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); },
 });
-$('closureMenu').onclick = () => (canRoute() ? closure.open() : (closeDrawer(), explainNoRoute()));
+$('closureMenu').onclick = needLanes(() => closure.open());
 
 const sim = createSim(map, {
   worker, toast, city: () => state.city,
@@ -631,7 +644,7 @@ const sim = createSim(map, {
   selectLine: (id) => selectLine(id, true),
   onOpen: () => { closeDrawer(); closePanel(); hideCtx(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); closure.close(); },
 });
-$('simMenu').onclick = () => (canRoute() ? sim.open() : (closeDrawer(), explainNoRoute()));
+$('simMenu').onclick = needLanes(() => sim.open());
 /** What a click while closing picks: a station, a railway, or a road (nearest of each in a small box). */
 function closurePickAt(pt: { x: number; y: number }) {
   const r = 8, box: [[number, number], [number, number]] = [[pt.x - r, pt.y - r], [pt.x + r, pt.y + r]];
@@ -668,7 +681,7 @@ map.on('contextmenu', (e) => {
   ctxPlace = { label: placeLabelAt(e.point), ll: [e.lngLat.lng, e.lngLat.lat] };
   const [x, z] = fromLngLat(e.lngLat.lng, e.lngLat.lat);
   ctx.innerHTML = `<div class="ctx-title">${esc(ctxPlace.label === t('Dropped pin') ? `x ${Math.round(x)}, z ${Math.round(z)}` : ctxPlace.label)}</div>
-    ${canRoute() ? `<button data-c="from">${t('Directions from here')}</button><button data-c="to">${t('Directions to here')}</button>` : ''}<button data-c="measure">${t('Measure distance')}</button>${canRoute() ? `<button data-c="reach">${t('How far can I get from here?')}</button>` : ''}`;
+    ${hasLanes() ? `<button data-c="from">${t('Directions from here')}</button><button data-c="to">${t('Directions to here')}</button>` : ''}<button data-c="measure">${t('Measure distance')}</button>${hasLanes() ? `<button data-c="reach">${t('How far can I get from here?')}</button>` : ''}`;
   const r = map.getContainer().getBoundingClientRect();
   ctx.style.left = Math.min(e.point.x + r.left, innerWidth - 230) + 'px';
   ctx.style.top = Math.min(e.point.y + r.top, innerHeight - 170) + 'px';
@@ -764,6 +777,7 @@ function syncUi() {
   document.querySelectorAll<HTMLElement>('#chips .chip[data-opt]').forEach((c) => {
     const k = c.dataset.opt as keyof typeof state.opts;
     c.classList.toggle('on', !!state.opts[k] || (k === 'contours' && state.mode === 'terrain'));
+    if (k === 'cycling') { c.classList.toggle('off', !hasLanes()); c.setAttribute('aria-disabled', String(!hasLanes())); }
   });
   document.querySelectorAll<HTMLElement>('.layer-opt').forEach((b) => b.classList.toggle('on', b.dataset.mode === state.mode));
   $('layerThumb').className = 'thumb ' + (state.mode === 'night' ? 't-map' : state.mode === 'terrain' ? 't-map' : 't-terrain');
@@ -775,6 +789,7 @@ $('chips').addEventListener('click', (e) => {
   const c = (e.target as HTMLElement).closest('.chip[data-opt]') as HTMLElement | null;
   if (!c) return;
   const k = c.dataset.opt as keyof typeof state.opts;
+  if (k === 'cycling' && !hasLanes()) return needLanes(() => {})(); // bike lanes are lane data
   (state.opts as any)[k] = !state.opts[k];
   if (k === 'bus' && state.opts.bus) state.opts.transit = true;
   if (k === 'transit' && !state.opts.transit) state.opts.bus = false;
@@ -814,13 +829,15 @@ function updateExtrusion() {
 map.on('pitch', updateExtrusion);
 
 let toastT = 0;
-/** routing needs the export's lane table; formats without one (.vellummap) switch the routing tools off */
-function canRoute() { return state.city?.meta.source?.lanes !== false; }
-function explainNoRoute() {
+/** routing and bike lanes need the export's lane table; formats without one (.vellummap) switch those tools off */
+function hasLanes() { return state.city?.meta.source?.lanes !== false; }
+/** run `f`, or, on a map without lanes, explain why it is off */
+function needLanes(f: () => unknown) { return () => { if (hasLanes()) return void f(); closeDrawer(); explainNoLanes(); }; }
+function explainNoLanes() {
   panelPlace = null;
-  panel(head(t('Directions are off for this map'), '.vellummap') + `<p class="p-note">${esc(t("This .vellummap file has no lane data (one-way streets, speed limits, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis and save files need a .cslmap export of the same city."))}</p>`);
+  panel(head(t('Directions are off for this map'), '.vellummap') + `<p class="p-note">${esc(t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis, the cycling layer and save files need a .cslmap export of the same city."))}</p>`);
 }
-$('cityInfo').addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('[data-why-no-route]')) { closeDrawer(); explainNoRoute(); } });
+$('cityInfo').addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('[data-why-no-route]')) { closeDrawer(); explainNoLanes(); } });
 function toast(msg: string) { const el = $('toast'); el.textContent = msg; el.hidden = false; clearTimeout(toastT); toastT = window.setTimeout(() => (el.hidden = true), 4500); }
 
 map.on('error', (e) => { if (!String(e.error?.message ?? '').includes('csldem')) console.warn('[map]', e.error?.message ?? e); });

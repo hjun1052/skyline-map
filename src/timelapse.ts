@@ -4,6 +4,7 @@
 import type { Map as MLMap, GeoJSONSource, FilterSpecification } from 'maplibre-gl';
 import type { BuiltCity } from './build';
 import { t, locale, fmtFixed } from './i18n';
+import { ROAD_CLASSES } from './geo';
 
 const TAGGED = ['roads', 'rails', 'lots', 'buildings', 'transit'];
 const HIDDEN = ['places', 'roadLabels']; // labels of places that may not exist yet
@@ -31,7 +32,9 @@ export function createTimelapse(map: MLMap, deps: { worker: Worker; city: () => 
     const lots = c.sources.lots as any, roads = c.sources.roads as any;
     let blds = 0, m = 0;
     for (const f of lots.features) if ((f.properties.born ?? 0) <= T && !f.properties.part) blds++;
-    for (const f of roads.features) if ((f.properties.born ?? 0) <= T && f.properties.lanes > 0) m += f.properties.len ?? 0; // roads with car lanes
+    // roads with car lanes; without a lane table (.vellummap) the drawn road classes stand in
+    const noLanes = c.meta.source?.lanes === false;
+    for (const f of roads.features) if ((f.properties.born ?? 0) <= T && (f.properties.lanes > 0 || (noLanes && ROAD_CLASSES.has(f.properties.cls)))) m += f.properties.len ?? 0;
     return { blds, km: m / 1000 };
   }
 
@@ -43,7 +46,7 @@ export function createTimelapse(map: MLMap, deps: { worker: Worker; city: () => 
       el.innerHTML = `${head}
         <p class="tl-lede">${esc(t('Watch {city} grow. Pick older exports of this city: the more saves, the smoother the time-lapse.', { city }))}</p>
         ${st.loading ? `<p class="tl-msg">${esc(st.msg)}</p>` : `<div class="tl-actions"><button class="pill primary" data-a="pick">${t('Choose older exports')}</button>${st.dev.length ? `<button class="pill" data-a="dev">${esc(t('Use {n} saves from the export folder', { n: st.dev.length }))}</button>` : ''}</div>
-        ${st.msg ? `<p class="tl-msg">${esc(st.msg)}</p>` : ''}<p class="tl-note">${t('Tip: turn on timestamps in the CSLMapView settings so every export is kept.')}</p>`}`;
+        ${st.msg ? `<p class="tl-msg">${esc(st.msg)}</p>` : ''}<p class="tl-note">${deps.city()?.meta.source ? t('Vellum Bridge keeps every export as its own file in the city\'s folder.') : t('Tip: turn on timestamps in the CSLMapView settings so every export is kept.')}</p>`}`;
       return;
     }
     const T = st.times[st.i], s = stats(T), n = st.times.length;

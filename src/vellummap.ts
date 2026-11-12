@@ -26,50 +26,88 @@ const damaged = (detail: string) => new FormatError('This .vellummap is damaged:
 export const isZip = (b: Uint8Array) => b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04;
 
 // ------------------------------------------------------------------ zip container
+//
+// Defences, each with a regression test in tools/vellummap-check.ts:
+//  - sizes: an entry inflates into a growing buffer and is cut off the moment it passes its declared size, so a
+//    small entry that expands into gigabytes never gets far; declared sizes are capped (manifest 1 MiB, JSON module
+//    256 MiB, document 1 GiB in total, grids exact) before anything is inflated;
+//  - structure: one end record that ends the file, a directory inside the file, no multi-disk, zip64 or encrypted
+//    entries, at most 64 entries, unique names, local headers that agree with the directory (name, method), and
+//    entries whose data does not overlap (a classic zip bomb shares one compressed stream between many entries);
+//  - manifest: each module at most once, at its fixed v1 path, with a known codec matching the zip method and the
+//    sha256 of its content; unknown modules and entries are never inflated.
 
-interface Entry { name: string; method: number; csize: number; usize: number; off: number }
+interface Entry { name: string; method: number; csize: number; usize: number; start: number; off: number }
 const MiB = 1024 * 1024;
-const LIMIT = { manifest: MiB, json: 256 * MiB, document: 1024 * MiB };
+const LIMIT = { manifest: MiB, json: 256 * MiB, document: 1024 * MiB, entries: 64 };
 const T = 1081, V = 512, A = 900; // terrain/water, vegetation, area grids (samples per side)
-const GRID_BYTES: Record<string, number> = { 'terrain.bin': T * T * 2, 'water-mask.bin': T * T, 'water-depth.bin': T * T * 2, 'vegetation.bin': V * V, 'districts.bin': A * A * 8, 'parks.bin': A * A * 8 };
-const REQUIRED = ['terrain', 'water', 'water-mask', 'vegetation', 'roads', 'transit', 'buildings', 'districts', 'parks'];
+/** v1 modules: fixed path, exact byte size for grids */
+const MODULES: Record<string, { path: string; bytes?: number; required?: true }> = {
+  terrain: { path: 'terrain.bin', bytes: T * T * 2, required: true }, water: { path: 'water.json', required: true },
+  'water-mask': { path: 'water-mask.bin', bytes: T * T, required: true }, 'water-depth': { path: 'water-depth.bin', bytes: T * T * 2 },
+  vegetation: { path: 'vegetation.bin', bytes: V * V, required: true }, roads: { path: 'roads.json', required: true },
+  transit: { path: 'transit.json', required: true }, buildings: { path: 'buildings.json', required: true },
+  districts: { path: 'districts.json', required: true }, parks: { path: 'parks.json', required: true },
+  'district-grid': { path: 'districts.bin', bytes: A * A * 8 }, 'park-grid': { path: 'parks.bin', bytes: A * A * 8 },
+};
 
 function zipEntries(buf: Uint8Array): Entry[] {
-  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength), u16 = (p: number) => dv.getUint16(p, true), u32 = (p: number) => dv.getUint32(p, true);
+  // the end record is the one whose comment runs exactly to the end of the file
   let eocd = -1;
-  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i--) if (u32(i) === 0x06054b50 && i + 22 + u16(i + 20) === buf.length) { eocd = i; break; }
   if (eocd < 0) throw damaged('no zip directory');
-  const n = dv.getUint16(eocd + 10, true), cdOff = dv.getUint32(eocd + 16, true);
-  if (n === 0xffff || cdOff === 0xffffffff) throw damaged('zip64 archives are not supported');
+  const n = u16(eocd + 10), cdSize = u32(eocd + 12), cdOff = u32(eocd + 16);
+  if (u16(eocd + 4) !== 0 || u16(eocd + 6) !== 0 || u16(eocd + 8) !== n) throw damaged('multi-part zip archives are not supported');
+  if (n === 0xffff || cdOff === 0xffffffff || cdSize === 0xffffffff) throw damaged('zip64 archives are not supported');
+  if (n > LIMIT.entries) throw damaged(`too many entries (${n})`);
+  if (cdOff + cdSize > eocd) throw damaged('broken zip directory');
   const out: Entry[] = [];
   const seen = new Set<string>();
   let p = cdOff;
   for (let k = 0; k < n; k++) {
-    if (p + 46 > buf.length || dv.getUint32(p, true) !== 0x02014b50) throw damaged('broken zip directory');
-    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true);
-    const nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lho = dv.getUint32(p + 42, true);
-    const name = new TextDecoder().decode(buf.subarray(p + 46, p + 46 + nl));
+    if (p + 46 > cdOff + cdSize || u32(p) !== 0x02014b50) throw damaged('broken zip directory');
+    const flags = u16(p + 8), method = u16(p + 10), csize = u32(p + 20), usize = u32(p + 24), nl = u16(p + 28), xl = u16(p + 30), cl = u16(p + 32), start = u32(p + 42);
+    if (p + 46 + nl + xl + cl > cdOff + cdSize) throw damaged('broken zip directory');
+    const nameBytes = buf.subarray(p + 46, p + 46 + nl), name = new TextDecoder().decode(nameBytes);
+    if (flags & 1) throw damaged(`${name}: encrypted entries are not supported`);
     if (seen.has(name)) throw damaged(`two entries named ${name}`);
     seen.add(name);
-    if (lho + 30 > buf.length || dv.getUint32(lho, true) !== 0x04034b50) throw damaged(`${name}: broken entry`);
-    // the data follows the local header, whose name/extra lengths may differ from the directory's
-    const off = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
-    if (off + csize > buf.length) throw damaged(`${name}: truncated`);
-    out.push({ name, method, csize, usize, off });
+    if (start + 30 > cdOff || u32(start) !== 0x04034b50) throw damaged(`${name}: broken entry`);
+    const lnl = u16(start + 26), lxl = u16(start + 28);
+    // the local header must describe the same entry as the directory (tools that read either must see one file)
+    if (u16(start + 8) !== method || lnl !== nl || buf.subarray(start + 30, start + 30 + lnl).some((b, i) => b !== nameBytes[i])) throw damaged(`${name}: local header disagrees with the directory`);
+    const off = start + 30 + lnl + lxl;
+    if (off + csize > cdOff) throw damaged(`${name}: truncated`);
+    out.push({ name, method, csize, usize, start, off });
     p += 46 + nl + xl + cl;
   }
+  // entries must not share bytes
+  const byStart = [...out].sort((a, b) => a.start - b.start);
+  for (let i = 1; i < byStart.length; i++) if (byStart[i].start < byStart[i - 1].off + byStart[i - 1].csize) throw damaged(`${byStart[i].name} overlaps ${byStart[i - 1].name}`);
   return out;
 }
 
+/** inflate one entry, never holding more than its declared size */
 async function inflate(buf: Uint8Array, e: Entry): Promise<Uint8Array> {
   const raw = buf.subarray(e.off, e.off + e.csize);
-  let out: Uint8Array;
-  if (e.method === 0) out = raw.slice();
-  else if (e.method === 8) {
-    try { out = new Uint8Array(await new Response(new Blob([raw as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()); }
-    catch { throw damaged(`${e.name}: cannot be decompressed`); }
-  } else throw damaged(`${e.name}: unsupported compression ${e.method}`);
-  if (out.length !== e.usize) throw damaged(`${e.name}: wrong size`);
+  if (e.method === 0) { if (e.csize !== e.usize) throw damaged(`${e.name}: wrong size`); return raw.slice(); }
+  if (e.method !== 8) throw damaged(`${e.name}: unsupported compression ${e.method}`);
+  const chunks: Uint8Array[] = [];
+  let n = 0;
+  const reader = new Blob([raw as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.length;
+      if (n > e.usize) { await reader.cancel().catch(() => {}); throw damaged(`${e.name}: larger than declared`); }
+      chunks.push(value);
+    }
+  } catch (err) { if (err instanceof FormatError) throw err; throw damaged(`${e.name}: cannot be decompressed`); }
+  if (n !== e.usize) throw damaged(`${e.name}: wrong size`);
+  const out = new Uint8Array(n);
+  let at = 0; for (const c of chunks) { out.set(c, at); at += c.length; }
   return out;
 }
 
@@ -79,44 +117,53 @@ async function sha256(b: Uint8Array) {
 }
 
 export interface VellumDoc { manifest: any; files: Map<string, Uint8Array> }
+const newer = (version: string) => new FormatError('This .vellummap was written by a newer version of Vellum Bridge (format {version}). Skyline Map reads format 1.', { version });
+const notOurs = () => new FormatError('This file is not a city export Skyline Map can read.');
 
 /**
  * Open a .vellummap held in memory. `only` limits which modules are inflated (the time-lapse needs just three);
- * required modules and sizes are checked either way.
+ * the container and the manifest are checked in full either way.
  */
 export async function readVellummap(bytes: Uint8Array, only?: string[]): Promise<VellumDoc> {
-  if (!isZip(bytes)) throw new FormatError('This file is not a city export Skyline Map can read.');
+  if (!isZip(bytes)) throw notOurs();
   const entries = zipEntries(bytes);
-  let declared = 0;
-  for (const e of entries) declared += e.usize;
-  if (declared > LIMIT.document) throw damaged('it declares more than 1 GiB of content');
+  if (entries.reduce((s, e) => s + e.usize, 0) > LIMIT.document) throw damaged('it declares more than 1 GiB of content');
   const byName = new Map(entries.map((e) => [e.name, e]));
   const me = byName.get('manifest.json');
-  if (!me) throw new FormatError('This file is not a city export Skyline Map can read.');
+  if (!me) throw notOurs();
   if (me.usize > LIMIT.manifest) throw damaged('manifest.json is too large');
   let manifest: any;
   try { manifest = JSON.parse(new TextDecoder().decode(await inflate(bytes, me))); } catch (err) { if (err instanceof FormatError) throw err; throw damaged('manifest.json is not valid JSON'); }
-  if (manifest?.format !== 'vellummap') throw new FormatError('This file is not a city export Skyline Map can read.');
+  if (manifest?.format !== 'vellummap') throw notOurs();
   const ver = String(manifest.exportSchemaVersion ?? '');
   if (!/^\d+\.\d+$/.test(ver)) throw damaged('missing format version');
-  if (ver.split('.')[0] !== '1') throw new FormatError('This .vellummap was written by a newer version of Vellum Bridge (format {version}). Skyline Map reads format 1.', { version: ver });
-  const modules: any[] = Array.isArray(manifest.modules) ? manifest.modules : [];
-  for (const m of modules) {
-    if (String(m.version ?? '').split('.')[0] !== '1') throw new FormatError('This .vellummap was written by a newer version of Vellum Bridge (format {version}). Skyline Map reads format 1.', { version: `${m.id} ${m.version}` });
+  if (!ver.startsWith('1.')) throw newer(ver);
+  if (typeof manifest.city?.name !== 'string') throw damaged('no city name');
+  if (!Array.isArray(manifest.modules)) throw damaged('no module list');
+
+  // the modules this reader knows, each once, at its fixed path; newer ones (unknown ids) are skipped, never inflated
+  const known = new Map<string, any>();
+  for (const m of manifest.modules) {
+    const spec = MODULES[m?.id];
+    if (!spec) continue;
+    if (known.has(m.id)) throw damaged(`module ${m.id} is listed twice`);
+    if (m.path !== spec.path) throw damaged(`module ${m.id} is not at ${spec.path}`);
+    if (!/^1\.\d+$/.test(String(m.version ?? ''))) throw newer(`${m.id} ${m.version}`);
+    if (m.codec !== 'deflate' && m.codec !== 'stored') throw damaged(`${m.path}: unknown codec ${m.codec}`);
+    if (typeof m.sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(m.sha256)) throw damaged(`${m.path}: no checksum`);
+    known.set(m.id, m);
   }
-  for (const id of REQUIRED) if (!modules.some((m) => m.id === id)) throw damaged(`module ${id} is missing`);
-  if (!manifest.city || typeof manifest.city.name !== 'string') throw damaged('no city name');
+  for (const [id, spec] of Object.entries(MODULES)) if (spec.required && !known.has(id)) throw damaged(`module ${id} is missing`);
 
   const files = new Map<string, Uint8Array>();
-  await Promise.all(modules.map(async (m) => {
-    const e = byName.get(m.path);
+  await Promise.all([...known].map(async ([id, m]) => {
+    const e = byName.get(m.path), spec = MODULES[id];
     if (!e) throw damaged(`${m.path} is missing`);
-    const grid = GRID_BYTES[m.path];
-    if (grid !== undefined ? e.usize !== grid : e.usize > LIMIT.json) throw damaged(`${m.path}: wrong size`);
+    if (spec.bytes !== undefined ? e.usize !== spec.bytes : e.usize > LIMIT.json) throw damaged(`${m.path}: wrong size`);
     if ((m.codec === 'stored') !== (e.method === 0)) throw damaged(`${m.path}: codec does not match`);
     if (only && !only.includes(m.path)) return;
     const data = await inflate(bytes, e);
-    if (typeof m.sha256 === 'string' && (await sha256(data)) !== m.sha256.toLowerCase()) throw damaged(`${m.path}: checksum mismatch`);
+    if ((await sha256(data)) !== m.sha256.toLowerCase()) throw damaged(`${m.path}: checksum mismatch`);
     files.set(m.path, data);
   }));
   return { manifest, files };
@@ -127,6 +174,12 @@ const json = (d: VellumDoc, path: string) => {
   if (!b) throw damaged(`${path} is missing`);
   try { return JSON.parse(new TextDecoder().decode(b)); } catch { throw damaged(`${path} is not valid JSON`); }
 };
+// shape checks for the JSON modules: a bad value is a "damaged" message, never a crash or a NaN on the map
+const list = (o: any, key: string, where: string): any[] => { const v = o?.[key]; if (!Array.isArray(v)) throw damaged(`${where}: ${key} is not a list`); return v; };
+const num = (v: unknown, where: string): number => { if (typeof v !== 'number' || !Number.isFinite(v)) throw damaged(`${where}: not a number`); return v; };
+const sid = (v: unknown, where: string): number => { if (!Number.isSafeInteger(v) || (v as number) < 0) throw damaged(`${where}: bad id`); return v as number; };
+const pos = (p: any, where: string): Vec3 => ({ x: num(p?.x, where), y: num(p?.y, where), z: num(p?.z, where) });
+const str = (v: unknown) => (typeof v === 'string' ? v : '');
 /** little-endian u16 grid (DataView: correct on any host) */
 function u16(b: Uint8Array): Uint16Array {
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength), out = new Uint16Array(b.length >> 1);
@@ -220,7 +273,7 @@ export function splitLegs(route: number[], stops: Vec3[], geom: (id: number) => 
 // ------------------------------------------------------------------ mapping onto CityData
 
 export interface DistrictStats { population?: number; homes?: number; jobs?: { commercial: number; industrial: number; office: number }; specializations?: string[] }
-export interface StopInfo { name?: string; derived: boolean; stationId?: number }
+export interface StopInfo { name?: string; stationId?: number }
 
 /** the strongest area id of a cell of a 900² u8x8 area grid (4 ids, then their 4 alphas); 0 = none */
 export function areaAt(grid: Uint8Array, x: number, z: number): number {
@@ -251,8 +304,7 @@ const LINE_SEG = (ic: string) => / Line$/.test(ic) && !/Pipe|Power/.test(ic);
 
 export function vellumToCity(d: VellumDoc): CityData {
   const m = d.manifest;
-  const water = json(d, 'water.json');
-  const seaLevel = Number(water.seaLevel) || 0;
+  const seaLevel = num(json(d, 'water.json').seaLevel, 'water.json seaLevel');
 
   const terrain = u16(d.files.get('terrain.bin')!);
   const depthB = d.files.get('water-depth.bin'), mask = d.files.get('water-mask.bin')!;
@@ -266,73 +318,85 @@ export function vellumToCity(d: VellumDoc): CityData {
   }
 
   const dg = d.files.get('districts.bin');
+  const distAt = (p: Vec3) => (dg ? areaAt(dg, p.x, p.z) : 0);
   const roads = json(d, 'roads.json');
   const nodes = new Map<number, CNode>();
-  for (const n of roads.nodes ?? []) {
-    const p = n.position, elev = Number(n.elevation) || 0, ug = !!n.underground;
+  for (const n of list(roads, 'nodes', 'roads.json')) {
+    const id = sid(n?.sourceId, 'roads.json node'), p = pos(n.position, `roads.json node ${id}`), elev = Number(n.elevation) || 0, ug = n.underground === true;
     // `og` (on ground) is not in the file: a node with no elevation step that is not underground is on the ground
-    nodes.set(n.sourceId, { id: n.sourceId, x: p.x, y: p.y, z: p.z, ug, srv: '', subsrv: '', dist: dg ? areaAt(dg, p.x, p.z) : 0, og: elev === 0 && !ug, elev });
+    nodes.set(id, { id, ...p, ug, srv: '', subsrv: '', dist: distAt(p), og: elev === 0 && !ug, elev });
   }
 
   const segs: CSeg[] = [];
   const geom = new Map<number, Vec3[]>();
   const lineSegs = new Map<string, CSeg[]>(); // Bridge exports the lines' own segments; .cslmap carries the legs on them
-  for (const s of roads.segments ?? []) {
-    const ic = String(s.itemClass ?? '');
-    const seg: CSeg = { id: s.sourceId, sn: s.startNodeSourceId, en: s.endNodeSourceId, icls: ic, width: Number(s.width) || 8,
+  const offGround = (id: number) => { const nd = nodes.get(id); if (nd) nd.og = false; };
+  for (const s of list(roads, 'segments', 'roads.json')) {
+    const id = sid(s?.sourceId, 'roads.json segment'), where = `roads.json segment ${id}`, ic = str(s.itemClass), width = Number(s.width) || 0;
+    const seg: CSeg = { id, sn: sid(s.startNodeSourceId, where), en: sid(s.endNodeSourceId, where), icls: ic, width: width || 8,
       // no prefab name in the format: a road-type name from the item class and width stands in, and no lane table matches it
-      name: roadTypeName(ic, Number(s.width) || 0), customName: typeof s.name === 'string' ? s.name : '', pts: (s.points ?? []).map((p: Vec3) => ({ x: p.x, y: p.y, z: p.z })), path: null };
-    for (const id of [seg.sn, seg.en]) { const nd = nodes.get(id); if (nd && (!nd.srv || nd.srv === 'Road')) nd.srv = LINE_SEG(ic) || /Track|Metro|Monorail|Cable|Station|Stop/i.test(ic) ? 'PublicTransport' : /Beautification/i.test(ic) ? 'Beautification' : 'Road'; }
-    geom.set(seg.id, seg.pts);
-    if (LINE_SEG(ic)) { for (const id of [seg.sn, seg.en]) { const nd = nodes.get(id); if (nd) nd.og = false; } const k = seg.sn + ',' + seg.en; (lineSegs.get(k) ?? lineSegs.set(k, []).get(k)!).push(seg); continue; }
+      name: roadTypeName(ic, width), customName: str(s.name), pts: list(s, 'points', where).map((p) => pos(p, where)), path: null };
+    const srv = LINE_SEG(ic) || /Track|Metro|Monorail|Cable|Station|Stop/i.test(ic) ? 'PublicTransport' : /Beautification/i.test(ic) ? 'Beautification' : 'Road';
+    for (const n of [seg.sn, seg.en]) { const nd = nodes.get(n); if (nd && (!nd.srv || nd.srv === 'Road')) nd.srv = srv; }
+    geom.set(id, seg.pts);
+    if (LINE_SEG(ic)) { offGround(seg.sn); offGround(seg.en); const k = seg.sn + ',' + seg.en; (lineSegs.get(k) ?? lineSegs.set(k, []).get(k)!).push(seg); continue; }
     segs.push(seg);
   }
 
-  const transit = json(d, 'transit.json');
   const stopInfo = new Map<number, StopInfo>();
   let synthetic = -1;
-  const transports: CTransport[] = (transit.lines ?? []).map((l: any) => {
-    const stops: any[] = l.stops ?? [];
+  const transports: CTransport[] = list(json(d, 'transit.json'), 'lines', 'transit.json').map((l) => {
+    const lid = sid(l?.sourceId, 'transit.json line'), where = `transit.json line ${lid}`, type = str(l.transportType);
+    const stops = list(l, 'stops', where).map((s) => ({ id: sid(s?.sourceId, where), p: pos(s.position, where), name: str(s.name), station: s.stationId === undefined ? undefined : sid(s.stationId, where) }));
     for (const s of stops) {
-      if (!nodes.has(s.sourceId)) nodes.set(s.sourceId, { id: s.sourceId, ...s.position, ug: false, srv: 'PublicTransport', subsrv: '', dist: dg ? areaAt(dg, s.position.x, s.position.z) : 0, og: null, elev: 0 });
-      else { const nd = nodes.get(s.sourceId)!; nd.srv = 'PublicTransport'; nd.og = false; } // stops are transit-line nodes, never flagged on-ground
-      if (s.name || s.stationId !== undefined) stopInfo.set(s.sourceId, { name: s.name, derived: !!s.nameDerived, stationId: s.stationId });
+      const nd = nodes.get(s.id);
+      if (!nd) nodes.set(s.id, { id: s.id, ...s.p, ug: false, srv: 'PublicTransport', subsrv: '', dist: distAt(s.p), og: false, elev: 0 });
+      else { nd.srv = 'PublicTransport'; nd.og = false; } // stops are transit-line nodes, never flagged on-ground
+      if (s.name || s.station !== undefined) stopInfo.set(s.id, { name: s.name || undefined, stationId: s.station });
     }
     if (stops.length >= 2) {
-      const legs = splitLegs((l.route ?? []).filter((id: number) => id), stops.map((s) => s.position), (id) => geom.get(id));
-      legs.forEach((path, i) => {
+      const route = list(l, 'route', where).map((x) => sid(x, where)).filter((x) => x);
+      splitLegs(route, stops.map((s) => s.p), (id) => geom.get(id)).forEach((path, i) => {
         const a = stops[i], b = stops[(i + 1) % stops.length];
-        const own = lineSegs.get(a.sourceId + ',' + b.sourceId)?.shift();
-        segs.push(own ? { ...own, path } : { id: synthetic--, sn: a.sourceId, en: b.sourceId, icls: `${l.transportType} Line`, width: 0, name: `${l.transportType} Line`, customName: '', pts: [a.position, b.position], path });
+        const own = lineSegs.get(a.id + ',' + b.id)?.shift();
+        segs.push(own ? { ...own, path } : { id: synthetic--, sn: a.id, en: b.id, icls: `${type} Line`, width: 0, name: `${type} Line`, customName: '', pts: [a.p, b.p], path });
       });
     }
-    const c = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(String(l.color ?? '')) ?? [, '80', '80', '80'];
-    return { id: l.sourceId, name: String(l.name ?? ''), type: String(l.transportType ?? ''), color: [parseInt(c[1]!, 16), parseInt(c[2]!, 16), parseInt(c[3]!, 16)] as [number, number, number], stops: stops.map((s) => s.sourceId) };
+    const c = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(str(l.color)) ?? [, '80', '80', '80'];
+    return { id: lid, name: str(l.name), type, color: [parseInt(c[1]!, 16), parseInt(c[2]!, 16), parseInt(c[3]!, 16)] as [number, number, number], stops: stops.map((s) => s.id) };
   });
 
-  const buildings: CBuilding[] = (json(d, 'buildings.json').buildings ?? []).map((b: any) => {
-    const ic = String(b.itemClass ?? ''), sub = String(b.serviceType ?? '');
+  const buildings: CBuilding[] = list(json(d, 'buildings.json'), 'buildings', 'buildings.json').map((b) => {
+    const id = sid(b?.sourceId, 'buildings.json building'), ic = str(b.itemClass), sub = str(b.serviceType);
     // module 1.1: `prefab` is the asset and `name` the name the player sees (renamed or unique buildings only)
-    const prefab = b.prefab ?? b.name ?? '', shown = b.prefab ? String(b.name ?? '').trim() : '';
-    return { id: b.sourceId, name: String(prefab), myname: shown, srv: serviceOf(ic, sub), subsrv: sub, icls: ic, parent: 0, sub: 0, pts: (b.footprint ?? []).map((p: Vec3) => ({ x: p.x, y: p.y, z: p.z })) };
+    const prefab = str(b.prefab) || str(b.name), shown = b.prefab ? str(b.name).trim() : '';
+    return { id, name: prefab, myname: shown, srv: serviceOf(ic, sub), subsrv: sub, icls: ic, parent: 0, sub: 0, pts: list(b, 'footprint', `building ${id}`).map((p) => pos(p, `building ${id}`)) };
   });
 
-  const districtsJ = json(d, 'districts.json').districts ?? [];
   const districtStats = new Map<number, DistrictStats>();
-  for (const x of districtsJ) if (x.population !== undefined || x.jobs !== undefined) districtStats.set(x.sourceId, { population: x.population, homes: x.homes, jobs: x.jobs, specializations: x.specializations });
-  const area = (a: any): CArea => ({ id: a.sourceId, name: String(a.name ?? ''), x: a.labelPosition?.x ?? 0, y: a.labelPosition?.y ?? 0, z: a.labelPosition?.z ?? 0, type: a.parkType });
+  const area = (a: any, where: string): CArea => {
+    const id = sid(a?.sourceId, where), p = a.labelPosition ? pos(a.labelPosition, where) : { x: 0, y: 0, z: 0 };
+    return { id, name: str(a.name), ...p, type: typeof a.parkType === 'string' ? a.parkType : undefined };
+  };
+  const districts = list(json(d, 'districts.json'), 'districts', 'districts.json').map((x) => {
+    const a = area(x, 'districts.json');
+    const count = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+    if (x.population !== undefined || x.jobs !== undefined) districtStats.set(a.id, { population: count(x.population), homes: count(x.homes),
+      jobs: x.jobs ? { commercial: count(x.jobs.commercial) ?? 0, industrial: count(x.jobs.industrial) ?? 0, office: count(x.jobs.office) ?? 0 } : undefined,
+      specializations: Array.isArray(x.specializations) ? x.specializations.filter((v: unknown) => typeof v === 'string') : undefined });
+    return a;
+  });
 
   return {
-    name: m.city.name, generated: String(m.exportedAtUtc ?? ''), seaLevel,
-    nodes, segs, buildings, segTypes: new Map(),
-    districts: districtsJ.map(area), parks: (json(d, 'parks.json').parks ?? []).map(area), transports,
+    name: m.city.name, generated: str(m.exportedAtUtc), seaLevel,
+    nodes, segs, buildings, segTypes: new Map(), districts, transports,
+    parks: list(json(d, 'parks.json'), 'parks', 'parks.json').map((x) => area(x, 'parks.json')),
     height, water: wat, terrainSize: T, forest: d.files.get('vegetation.bin')!, forestSize: V,
     extras: {
       source: 'vellummap',
-      caps: { lanes: false, buildingParts: false, saveMatch: false },
-      producer: `${m.producer?.name ?? ''} ${m.producer?.version ?? ''}`.trim(), formatVersion: String(m.exportSchemaVersion),
-      cityId: typeof m.city.id === 'string' ? m.city.id : undefined,
-      districtGrid: dg, parkGrid: d.files.get('parks.bin'), districtStats, stopInfo, waterDepth: !!depth,
+      caps: { lanes: false, buildingParts: false },
+      producer: `${str(m.producer?.name)} ${str(m.producer?.version)}`.trim(),
+      districtGrid: dg, districtStats, stopInfo,
     },
   };
 }
@@ -340,8 +404,8 @@ export function vellumToCity(d: VellumDoc): CityData {
 /** Time-lapse: the identities in an older .vellummap (same keys as history.ts scans from .cslmap). */
 export async function vellumIdentities(bytes: Uint8Array) {
   const d = await readVellummap(bytes, ['roads.json', 'buildings.json', 'transit.json']);
-  const segs: [number, number, number][] = (json(d, 'roads.json').segments ?? []).map((s: any) => [s.sourceId, s.startNodeSourceId, s.endNodeSourceId]);
-  const blds: [number, string][] = (json(d, 'buildings.json').buildings ?? []).map((b: any) => [b.sourceId, String(b.prefab ?? b.name ?? '')]);
-  const lines: [number, string][] = (json(d, 'transit.json').lines ?? []).map((l: any) => [l.sourceId, String(l.transportType ?? '')]);
-  return { name: String(d.manifest.city.name), time: Date.parse(String(d.manifest.exportedAtUtc ?? '')), segs, blds, lines };
+  const segs = list(json(d, 'roads.json'), 'segments', 'roads.json').map((s): [number, number, number] => [sid(s?.sourceId, 'segment'), sid(s.startNodeSourceId, 'segment'), sid(s.endNodeSourceId, 'segment')]);
+  const blds = list(json(d, 'buildings.json'), 'buildings', 'buildings.json').map((b): [number, string] => [sid(b?.sourceId, 'building'), str(b.prefab) || str(b.name)]);
+  const lines = list(json(d, 'transit.json'), 'lines', 'transit.json').map((l): [number, string] => [sid(l?.sourceId, 'line'), str(l.transportType)]);
+  return { name: String(d.manifest.city.name), time: Date.parse(str(d.manifest.exportedAtUtc)), segs, blds, lines };
 }

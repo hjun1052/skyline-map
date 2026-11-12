@@ -51,16 +51,14 @@ export interface CityData {
 
 export interface CityExtras {
   source: 'vellummap';
-  /** what the file carries: lanes (routing, one-way, speeds), sub-building chains, prefab names a save can match */
-  caps: { lanes: boolean; buildingParts: boolean; saveMatch: boolean };
-  producer: string; formatVersion: string; cityId?: string;
-  /** 900² cells x (4 area ids + 4 alphas), the game's own district and park grids */
-  districtGrid?: Uint8Array; parkGrid?: Uint8Array;
+  /** what the file carries: lanes (routing, one-way streets, speeds) and sub-building chains */
+  caps: { lanes: boolean; buildingParts: boolean };
+  producer: string;
+  /** 900² cells x (4 area ids + 4 alphas), the game's own district grid */
+  districtGrid?: Uint8Array;
   districtStats: Map<number, import('./vellummap').DistrictStats>;
   /** per stop node: the name the file gives it (derived from a street or landmark, or set by a mod) and its station building */
   stopInfo: Map<number, import('./vellummap').StopInfo>;
-  /** false: water depth was synthesized from the wet mask */
-  waterDepth: boolean;
 }
 
 const ATTR = /([\w:]+)="([^"]*)"/g;
