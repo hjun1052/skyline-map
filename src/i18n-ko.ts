@@ -833,4 +833,16 @@ export const KO: Record<string, string> = {
   "traffic known for {pct}% of the route": "경로의 {pct}%만 교통 정보 있음",
   "Driving times include the traffic from your save, as an estimate.": "자동차 시간에는 세이브의 교통 상황이 추정치로 반영돼요.",
   "Uses the export's network and the same routing as Directions, with the traffic from your save as an estimate. Lines through the closure are cut there; nothing reroutes them.": "내보낸 파일의 도로·철도망과 길찾기와 같은 경로 계산을 쓰고, 세이브의 교통 상황을 추정치로 반영해요. 막힌 곳을 지나는 노선은 그곳에서 끊기고, 우회 노선은 만들지 않아요.",
+  // .vellummap (experimental)
+  "Also opens .vellummap files from Vellum Bridge (experimental)": "Vellum Bridge의 .vellummap 파일도 열 수 있어요 (실험 기능)",
+  "Directions are off for this map": "이 지도에서는 길찾기를 쓸 수 없어요",
+  "This .vellummap file has no lane data (one-way streets, speed limits, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis and save files need a .cslmap export of the same city.": "이 .vellummap 파일에는 차로 정보(일방통행, 제한 속도, 차·버스·사람이 다닐 수 있는 차로)가 없어서 경로를 믿을 만하게 계산할 수 없어요. 길찾기, 도달 범위, 통제 분석, 세이브 파일을 쓰려면 같은 도시의 .cslmap 내보내기가 필요해요.",
+  "Opened from {producer} (.vellummap, experimental)": "{producer}에서 내보낸 지도 (.vellummap, 실험 기능)",
+  "District, from the game's district map": "구역, 게임의 구역 지도 기준",
+  "Boundaries and figures come from the game itself (Vellum Bridge export).": "경계와 수치는 게임에서 그대로 가져왔어요 (Vellum Bridge 내보내기).",
+  "Homes": "가구",
+  "Specializations": "특화",
+  "This file is not a city export Skyline Map can read.": "Skyline Map이 읽을 수 있는 도시 내보내기 파일이 아니에요.",
+  "This .vellummap is damaged: {detail}": "이 .vellummap 파일이 손상됐어요: {detail}",
+  "This .vellummap was written by a newer version of Vellum Bridge (format {version}). Skyline Map reads format 1.": "이 .vellummap은 더 새로운 Vellum Bridge로 만들어졌어요 (형식 {version}). Skyline Map은 형식 1을 읽어요.",
 };

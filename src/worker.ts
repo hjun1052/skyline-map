@@ -9,9 +9,10 @@ import type { SchemInput } from './schematic';
 import { reachGrid } from './reach';
 import { discover } from './discover';
 import { createClosures, segInfoFrom } from './closure';
-import { cityKeys, scanExport, bornById, exportTime, type HistoryKeys } from './history';
+import { cityKeys, scanExport, scanIdentities, bornById, exportTime, type HistoryKeys } from './history';
 import type { CityData } from './parse';
 import { loadSim, transferables } from './sim';
+import { readVellummap, vellumToCity, vellumIdentities, isZip, FormatError } from './vellummap';
 
 let router: Router | null = null;
 let closures: ReturnType<typeof createClosures> | null = null;
@@ -24,13 +25,20 @@ let history: HistoryKeys | null = null;
 /** bumped by every sim load and clear: an older load that finishes late must not apply its rules */
 let simToken = 0;
 
-async function decode(buf: ArrayBuffer): Promise<string> {
+/** the file's bytes, gunzipped when gzip (a .cslmap.gz, or any map kept in the browser's recent cities) */
+async function gunzip(buf: ArrayBuffer): Promise<Uint8Array> {
   const head = new Uint8Array(buf, 0, Math.min(2, buf.byteLength));
   if (head[0] === 0x1f && head[1] === 0x8b) {
     const stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'));
     buf = await new Response(stream).arrayBuffer();
   }
-  return new TextDecoder('utf-8').decode(buf);
+  return new Uint8Array(buf);
+}
+/** open either format: a zip is a .vellummap, anything else is read as .cslmap XML */
+async function readCity(buf: ArrayBuffer, p: (s: string) => void): Promise<CityData> {
+  const bytes = await gunzip(buf);
+  if (isZip(bytes)) { p('Reading nodes'); return vellumToCity(await readVellummap(bytes)); }
+  return parseCity(new TextDecoder('utf-8').decode(bytes), p);
 }
 
 self.onmessage = async (e: MessageEvent) => {
@@ -39,13 +47,12 @@ self.onmessage = async (e: MessageEvent) => {
   try {
     if (msg.type === 'load') {
       progress('Decoding file', 4);
-      const xml = await decode(msg.buffer);
       // i18n-keys: progress steps, shown translated by the page
       const steps = ['Reading nodes', 'Reading segments', 'Reading buildings', 'Reading terrain', 'Classifying roads', 'Shaping buildings', 'Tracing transit lines', 'Tracing coastlines', 'Growing forests', 'Mapping built-up areas'];
       void ['Decoding file', 'Preparing directions', 'Finding discoveries', 'Rendering'];
       // end i18n-keys
       const p = (s: string) => progress(s, 8 + (steps.indexOf(s) + 1) * 8.5);
-      const city = parseCity(xml, p);
+      const city = await readCity(msg.buffer, p);
       lastHeight = { h: city.height, size: city.terrainSize };
       lastCity = city; history = null;
       const oneway = inferOneWay(city);
@@ -79,7 +86,8 @@ self.onmessage = async (e: MessageEvent) => {
       history = cityKeys(lastCity, exportTime(lastCity.generated));
       self.postMessage({ type: 'historyStart', name: lastCity.name, time: exportTime(lastCity.generated) });
     } else if (msg.type === 'historyFile' && history) {
-      const r = scanExport(await decode(msg.buffer), history);
+      const bytes = await gunzip(msg.buffer);
+      const r = isZip(bytes) ? scanIdentities(await vellumIdentities(bytes), history) : scanExport(new TextDecoder('utf-8').decode(bytes), history);
       self.postMessage({ type: 'historyFile', id: msg.id, ...r });
     } else if (msg.type === 'historyDone' && history && lastCity) {
       const born = bornById(lastCity, history);
@@ -123,6 +131,7 @@ self.onmessage = async (e: MessageEvent) => {
       self.postMessage({ type: 'contours', fc });
     }
   } catch (err) {
-    self.postMessage({ type: 'error', message: (err as Error).message ?? String(err) });
+    if (err instanceof FormatError) self.postMessage({ type: 'error', message: err.message, key: err.key, params: err.params });
+    else self.postMessage({ type: 'error', message: (err as Error).message ?? String(err) });
   }
 };

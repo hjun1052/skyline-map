@@ -40,6 +40,17 @@ export function scanExport(xml: string, keys: HistoryKeys): { name: string; time
   return { name, time };
 }
 
+/** The same scan for an older .vellummap, from the identities its reader lists (see vellumIdentities). */
+export function scanIdentities(f: { name: string; time: number; segs: [number, number, number][]; blds: [number, string][]; lines: [number, string][] }, keys: HistoryKeys): { name: string; time: number } {
+  const { name, time } = f;
+  if (!Number.isFinite(time)) return { name, time };
+  const lower = (m: Map<string, number>, k: string) => { const v = m.get(k); if (v !== undefined && time < v) m.set(k, time); };
+  for (const [id, sn, en] of f.segs) lower(keys.segs, segKey(id, sn, en));
+  for (const [id, nm] of f.blds) lower(keys.blds, bldKey(id, nm));
+  for (const [id, type] of f.lines) lower(keys.lines, lineKey(id, type));
+  return { name, time };
+}
+
 /** First-seen times by id, for tagging the open city's map features. */
 export function bornById(city: CityData, keys: HistoryKeys) {
   const seg: [number, number][] = [], bld: [number, number][] = [], line: [number, number][] = [];

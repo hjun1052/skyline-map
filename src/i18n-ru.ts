@@ -833,4 +833,16 @@ export const RU: Record<string, string> = {
   "traffic known for {pct}% of the route": "{pct}% дорожного движения относится к данному маршруту",
   "Driving times include the traffic from your save, as an estimate.": "Время вождения включает в себя дорожное движение из вашего файла сохранения и является примерным.",
   "Uses the export's network and the same routing as Directions, with the traffic from your save as an estimate. Lines through the closure are cut there; nothing reroutes them.": "Использует дорожные сети из экспортированных данных и такую же маршрутизацию как и Направления, с примерным дорожным движением из вашего файла сохранения. Маршруты через перекрытия срезаны; ничего не перемаршрутизирует их.",
+  // .vellummap (experimental)
+  "Also opens .vellummap files from Vellum Bridge (experimental)": "Также открывает файлы .vellummap из Vellum Bridge (экспериментально)",
+  "Directions are off for this map": "Маршруты для этой карты недоступны",
+  "This .vellummap file has no lane data (one-way streets, speed limits, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis and save files need a .cslmap export of the same city.": "В этом файле .vellummap нет данных о полосах (одностороннее движение, ограничения скорости, какие полосы доступны машинам, автобусам и пешеходам), поэтому надёжно построить маршрут нельзя. Для маршрутов, зон доступности, анализа перекрытий и файлов сохранения нужен экспорт .cslmap того же города.",
+  "Opened from {producer} (.vellummap, experimental)": "Открыто из {producer} (.vellummap, экспериментально)",
+  "District, from the game's district map": "Район, по карте районов игры",
+  "Boundaries and figures come from the game itself (Vellum Bridge export).": "Границы и цифры взяты из самой игры (экспорт Vellum Bridge).",
+  "Homes": "Жилища",
+  "Specializations": "Специализации",
+  "This file is not a city export Skyline Map can read.": "Этот файл не является экспортом города, который может прочитать Skyline Map.",
+  "This .vellummap is damaged: {detail}": "Файл .vellummap повреждён: {detail}",
+  "This .vellummap was written by a newer version of Vellum Bridge (format {version}). Skyline Map reads format 1.": "Этот файл .vellummap создан более новой версией Vellum Bridge (формат {version}). Skyline Map читает формат 1.",
 };

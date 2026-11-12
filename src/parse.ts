@@ -45,6 +45,22 @@ export interface CityData {
   /** forest density 0-255, row-major, row = +z */
   forest: Uint8Array;
   forestSize: number;
+  /** set by readers of other formats (see vellummap.ts); absent for .cslmap, which has everything */
+  extras?: CityExtras;
+}
+
+export interface CityExtras {
+  source: 'vellummap';
+  /** what the file carries: lanes (routing, one-way, speeds), sub-building chains, prefab names a save can match */
+  caps: { lanes: boolean; buildingParts: boolean; saveMatch: boolean };
+  producer: string; formatVersion: string; cityId?: string;
+  /** 900² cells x (4 area ids + 4 alphas), the game's own district and park grids */
+  districtGrid?: Uint8Array; parkGrid?: Uint8Array;
+  districtStats: Map<number, import('./vellummap').DistrictStats>;
+  /** per stop node: the name the file gives it (derived from a street or landmark, or set by a mod) and its station building */
+  stopInfo: Map<number, import('./vellummap').StopInfo>;
+  /** false: water depth was synthesized from the wet mask */
+  waterDepth: boolean;
 }
 
 const ATTR = /([\w:]+)="([^"]*)"/g;

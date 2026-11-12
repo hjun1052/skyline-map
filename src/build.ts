@@ -2,6 +2,7 @@ import type { SchemInput } from './schematic';
 import type { CityData, CSeg, CSegType, CBuilding, Vec3 } from './parse';
 import type { OneWayResult } from './oneway';
 import { boothLabel, type TollData } from './tolls';
+import { areaAt } from './vellummap';
 import { HALF, MAP_SIZE, XY, pointInRing, distToRing, toLngLat, isolines, assemblePolygons, chaikin, simplify, blur, mergeChains, polylineLength } from './geo';
 
 type Props = Record<string, string | number | boolean | null>;
@@ -14,6 +15,8 @@ export interface SearchEntry { name: string; kind: string; sub: string; center: 
 export interface BuiltCity {
   meta: {
     name: string; generated: string; bounds: [XY, XY];
+    /** set for formats other than .cslmap: where the map came from and what it can do (see CityExtras.caps) */
+    source?: { format: 'vellummap'; producer: string; version: string; lanes: boolean; exactDistricts: boolean; waterDepth: boolean };
     stats: Record<string, number>;
     elevation: { min: number; max: number };
     lines: { id: number; name: string; type: string; color: string; stops: number; bbox: [number, number, number, number] | null; stopNames?: string[]; shape?: 'both' | 'loop' }[];
@@ -77,7 +80,7 @@ export function laneInfo(st: CSegType | undefined) {
   return { vehicle, span: hi > lo ? hi - lo : 0, tram, bike, oneway: vehicle > 0 && (fwd === 0 || back === 0), center: hi > lo ? (hi + lo) / 2 : 0, speed: Math.round(speed * 50) };
 }
 
-export function classify(seg: CSeg, st: CSegType | undefined, lanes: ReturnType<typeof laneInfo>): RoadClass {
+export function classify(seg: CSeg, st: CSegType | undefined, lanes: ReturnType<typeof laneInfo>, noLaneTable = false): RoadClass {
   const n = seg.name, ic = seg.icls, both = n + ' ' + ic;
   if (seg.path) return { cls: 'route', group: 'route', rank: 0 };
   if (/ Line$|Line$/.test(ic) && !/Pipe/.test(ic)) return { cls: 'route', group: 'route', rank: 0 };
@@ -108,6 +111,10 @@ export function classify(seg: CSeg, st: CSegType | undefined, lanes: ReturnType<
     return { cls: 'motorway', group: 'road', rank: 9 };
   }
   if (lanes.vehicle === 0 && st && st.lanes.some((l) => l.type.includes('Pedestrian'))) return { cls: 'footway', group: 'path', rank: 0 };
+  // a file with no lane table at all (.vellummap): the class most of the item class's real prefabs get from their
+  // lanes in .cslmap exports (street parking counts, so a basic street draws as a collector)
+  if (noLaneTable && /^Small Road( Elevated)?$/.test(n)) return { cls: 'tertiary', group: 'road', rank: 4 };
+  if (noLaneTable && /^(Medium|Large) Road( Elevated)?$/.test(n)) return { cls: 'primary', group: 'road', rank: 6 };
   if (/Large Road|Large Avenue|Six Lane|6L|Boulevard/i.test(both) || lanes.vehicle >= 6) return { cls: 'primary', group: 'road', rank: 6 };
   if (/Medium Road|Avenue Large|Medium Avenue|Four Lane Road/i.test(both)) return { cls: 'secondary', group: 'road', rank: 5 };
   if (/Small 4 Lane|Small Avenue|4LRoad|Small4L|Busway|Asymmetrical|3 lane|Oneway3L/i.test(both) || lanes.vehicle >= 4) return { cls: 'tertiary', group: 'road', rank: 4 };
@@ -273,6 +280,20 @@ export function districtField(nodes: DistrictSample[], reach = 600, noneBias = 2
   return { n, cell, l1, d1, l2, d2 };
 }
 
+/**
+ * The same field read from the game's own district grid (a .vellummap carries it): every cell is exactly its
+ * district, at distance 0, with no runner-up. Drawn the same way, the regions are the real districts.
+ */
+export function districtFieldFromGrid(grid: Uint8Array) {
+  const cell = MAP_SIZE / 512, n = 512, N = n * n;
+  const l1 = new Int32Array(N), l2 = new Int32Array(N).fill(-1), d1 = new Float64Array(N).fill(Infinity), d2 = new Float64Array(N).fill(Infinity);
+  for (let k = 0; k < N; k++) {
+    const id = areaAt(grid, ((k % n) + 0.5) * cell - HALF, (Math.floor(k / n) + 0.5) * cell - HALF);
+    if (id) { l1[k] = id; d1[k] = 0; }
+  }
+  return { n, cell, l1, d1, l2, d2 };
+}
+
 /** The district drawn in every cell (the nearest; see districtField). */
 export function districtGrid(nodes: DistrictSample[], reach = 600, noneBias = 20) {
   const { n, cell, l1 } = districtField(nodes, reach, noneBias);
@@ -289,7 +310,7 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
 
   // --------------------------------------------------------- districts
   progress('Mapping districts');
-  const field = districtField(districtSamples(city));
+  const field = city.extras?.districtGrid ? districtFieldFromGrid(city.extras.districtGrid) : districtField(districtSamples(city));
   const { l1: dgrid, n: dn, cell: DC } = field;
   const distName = new Map(city.districts.map((d) => [d.id, d.name]));
   const districtAt = (x: number, z: number) => {
@@ -315,7 +336,7 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
     if (seg.pts.length < 2) continue;
     const st = city.segTypes.get(seg.name);
     const lanes = laneInfo(st);
-    const c = classify(seg, st, lanes);
+    const c = classify(seg, st, lanes, city.segTypes.size === 0);
     if (c.cls === 'concourse') { concourses.push(seg); continue; }
     if (c.group === 'skip' || c.group === 'route') continue;
 
@@ -541,7 +562,9 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
   // ---------------------------------------------------- districts/parks
   for (const d of city.districts) {
     if (!d.name || d.id === 0 || (Math.abs(d.x) >= HALF - 1 && Math.abs(d.z) >= HALF - 1)) continue;
-    places.push({ type: 'Feature', properties: { kind: 'district', did: d.id, name: d.name, rank: 1 }, geometry: { type: 'Point', coordinates: ll(d) } });
+    const ds = city.extras?.districtStats.get(d.id);
+    const dstat: Props = ds ? { pop: ds.population ?? null, homes: ds.homes ?? null, jobs: ds.jobs ? ds.jobs.commercial + ds.jobs.industrial + ds.jobs.office : null, spec: ds.specializations?.join(', ') ?? null } : {};
+    places.push({ type: 'Feature', properties: { kind: 'district', did: d.id, name: d.name, rank: 1, ...dstat }, geometry: { type: 'Point', coordinates: ll(d) } });
     search.push({ name: d.name, kind: 'district', sub: 'District', center: ll(d), zoom: 15 });
   }
   for (const p of city.parks) {
@@ -615,6 +638,12 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
   const stopStation = new Map<number, (typeof stations)[number]>();
   const byName = new Map<string, (typeof stations)[number]>();
   const busStops: { x: number; z: number; lines: Set<number> }[] = [];
+  /** a station stop's station from the file itself: its building id, and its name when the file gives one */
+  const fileStation = (sid: number) => {
+    const s = city.extras?.stopInfo.get(sid);
+    if (!s || s.stationId === undefined) return null;
+    return { key: s.name ? s.name : '\u0000station:' + s.stationId, name: s.name ?? '' };
+  };
   for (const tr of city.transports) {
     const mode = modeOf(tr.type);
     for (const sid of tr.stops) {
@@ -641,6 +670,13 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
         stopName.set(sid, best.name);
         st = byName.get(best.name);
         if (!st) { st = { x: best.x, z: best.z, lines: new Set(), modes: new Set(), name: best.name }; byName.set(best.name, st); stations.push(st); }
+      } else if (fileStation(sid)) {
+        // no named building nearby, but the file names the stop's station (.vellummap): every platform of that
+        // station building shares it, so they group by building, not by distance
+        const fs = fileStation(sid)!;
+        if (fs.name) stopName.set(sid, fs.name);
+        st = byName.get(fs.key);
+        if (!st) { st = { x: n.x, z: n.z, lines: new Set(), modes: new Set(), name: fs.name }; byName.set(fs.key, st); stations.push(st); }
       } else {
         // unnamed: merge only with other unnamed platforms of the same spot
         st = stations.find((c) => !c.name && Math.hypot(c.x - n.x, c.z - n.z) < 120);
@@ -794,7 +830,8 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
   stats.districts = city.districts.length; stats.nodes = city.nodes.size;
 
   return {
-    meta: { name: city.name, generated: city.generated, bounds: [toLngLat(-HALF, -HALF), toLngLat(HALF, HALF)], stats, elevation: { min: emin, max: emax }, lines },
+    meta: { name: city.name, generated: city.generated, bounds: [toLngLat(-HALF, -HALF), toLngLat(HALF, HALF)], stats, elevation: { min: emin, max: emax }, lines,
+      ...(city.extras ? { source: { format: city.extras.source, producer: city.extras.producer, version: city.extras.formatVersion, lanes: city.extras.caps.lanes, exactDistricts: !!city.extras.districtGrid, waterDepth: city.extras.waterDepth } } : {}) },
     sources: { land: fc(land), water: fc(water), lots: fc(lots), buildings: fc(blds), roads: fc(roads), rails: fc(rails), transit: fc(transit), places: fc(places), roadLabels: fc(roadLabels), grid: fc(grid), districts: fc(districtFeats) },
     dem: { surface: T.surface, size: n },
     districtField: (() => {
