@@ -939,6 +939,6 @@ body.closure-open .maplibregl-canvas { cursor: crosshair; }
 }
 
 /* tools a map format can't support (e.g. routing on a .vellummap): still visible, visibly off, explained on click */
-.menu-item.off, .fab.off, .icon-btn.off { opacity: .45; }
+.menu-item.off, .fab.off, .icon-btn.off, .chip.off { opacity: .45; }
 .city-source { margin: -4px 20px 10px; font-size: 12.5px; color: var(--muted); }
 .city-source .link-btn { font-size: inherit; padding: 0; }
