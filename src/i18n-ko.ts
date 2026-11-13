@@ -886,4 +886,12 @@ export const KO: Record<string, string> = {
   "No driving route between these places on the estimated road network.": "추정한 도로망에서는 이 두 곳을 잇는 자동차 경로가 없습니다.",
   "One-way streets on this map are estimated, so this direction may be wrong. Check in game.": "이 지도의 일방통행은 추정한 것이라 이 방향이 틀릴 수 있습니다. 게임에서 확인하세요.",
   "This needs a .cslmap export": ".cslmap 내보내기가 필요해요",
+  // .vellummap notice
+  ".vellummap support is experimental": ".vellummap 지원은 실험 기능이에요",
+  "Vellum Bridge exports carry less than CSLMapView .cslmap exports: no lane data and no multi-part buildings.": "Vellum Bridge 내보내기에는 CSLMapView의 .cslmap보다 정보가 적어요. 차로 정보와 여러 부분으로 된 건물 정보가 없어요.",
+  "Directions, travel-time areas and closure analysis are approximate: speeds and one-way streets are estimated from road types.": "길찾기, 도달 범위, 통제 분석은 근사치예요. 속도와 일방통행을 도로 종류로 추정해요.",
+  "Lanes, speed limits, the cycling layer and save files aren't available, and some city discoveries are left out.": "차로, 제한 속도, 자전거 레이어, 세이브 파일은 쓸 수 없고, 일부 도시 발견 항목은 빠져요.",
+  "For the full map, open a .cslmap export of the same city.": "모든 기능을 쓰려면 같은 도시의 .cslmap 내보내기를 여세요.",
+  "Don't show this again": "다시 보지 않기",
+  "Open map": "지도 열기",
 };

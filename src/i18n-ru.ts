@@ -886,4 +886,12 @@ export const RU: Record<string, string> = {
   "No driving route between these places on the estimated road network.": "По оценённой дорожной сети между этими местами нет автомобильного маршрута.",
   "One-way streets on this map are estimated, so this direction may be wrong. Check in game.": "Одностороннее движение на этой карте оценено приблизительно, поэтому это направление может быть неверным. Проверьте в игре.",
   "This needs a .cslmap export": "Нужен экспорт .cslmap",
+  // .vellummap notice
+  ".vellummap support is experimental": "Поддержка .vellummap экспериментальная",
+  "Vellum Bridge exports carry less than CSLMapView .cslmap exports: no lane data and no multi-part buildings.": "В экспорте Vellum Bridge меньше данных, чем в .cslmap из CSLMapView: нет данных о полосах и о зданиях из нескольких частей.",
+  "Directions, travel-time areas and closure analysis are approximate: speeds and one-way streets are estimated from road types.": "Маршруты, зоны доступности и анализ перекрытий приблизительные: скорость и одностороннее движение оцениваются по типу дорог.",
+  "Lanes, speed limits, the cycling layer and save files aren't available, and some city discoveries are left out.": "Полосы, ограничения скорости, слой велодорожек и файлы сохранения недоступны, а некоторые открытия в городе не показываются.",
+  "For the full map, open a .cslmap export of the same city.": "Для полной карты откройте экспорт .cslmap того же города.",
+  "Don't show this again": "Больше не показывать",
+  "Open map": "Открыть карту",
 };

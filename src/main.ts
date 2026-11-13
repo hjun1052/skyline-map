@@ -136,7 +136,34 @@ async function openBuffer(buf: ArrayBuffer, label: string) {
 let pending: { blob: Blob; file: string; save?: Recent['save'] } | null = null;
 /** opening another map: a reload must not bring the sample back */
 const dropSample = () => { const u = new URL(location.href); if (u.searchParams.has('sample')) { u.searchParams.delete('sample'); history.replaceState(null, '', u); } };
-async function openFile(f: File) { dropSample(); state.currentFile = ''; pending = { blob: f, file: f.name }; await openBuffer(await f.arrayBuffer(), f.name); }
+// first time a .vellummap is opened: it is experimental and carries less than a .cslmap (unless turned off)
+const VELLUM_NOTICE_OFF = 'atlas:vellumNoticeOff';
+/** Ask before opening a .vellummap; resolves false when cancelled. Other files open straight away. */
+async function vellumNotice(f: File): Promise<boolean> {
+  try { if (localStorage.getItem(VELLUM_NOTICE_OFF) === '1') return true; } catch { /* storage blocked: ask every time */ }
+  const head = new Uint8Array(await f.slice(0, 4).arrayBuffer());
+  if (!/\.vellummap(\.gz)?$/i.test(f.name) && !(head[0] === 0x50 && head[1] === 0x4b && head[2] === 3 && head[3] === 4)) return true;
+  const dlg = document.createElement('dialog');
+  dlg.className = 'card vellum-notice'; dlg.setAttribute('aria-labelledby', 'vnTitle');
+  dlg.innerHTML = `<h2 id="vnTitle">${esc(t('.vellummap support is experimental'))}</h2>
+    <p>${esc(t('Vellum Bridge exports carry less than CSLMapView .cslmap exports: no lane data and no multi-part buildings.'))}</p>
+    <ul><li>${esc(t('Directions, travel-time areas and closure analysis are approximate: speeds and one-way streets are estimated from road types.'))}</li>
+    <li>${esc(t('Lanes, speed limits, the cycling layer and save files aren\'t available, and some city discoveries are left out.'))}</li></ul>
+    <p class="vn-hint">${esc(t('For the full map, open a .cslmap export of the same city.'))}</p>
+    <label class="vn-check"><input type="checkbox"> ${esc(t('Don\'t show this again'))}</label>
+    <div class="vn-actions"><button type="button" class="pill" data-v="cancel">${esc(t('Cancel'))}</button><button type="button" class="pill primary" data-v="open" autofocus>${esc(t('Open map'))}</button></div>`;
+  document.body.appendChild(dlg);
+  return new Promise((resolve) => {
+    const done = (open: boolean) => {
+      try { if (dlg.querySelector<HTMLInputElement>('.vn-check input')!.checked) localStorage.setItem(VELLUM_NOTICE_OFF, '1'); } catch { /* private mode */ }
+      dlg.close(); dlg.remove(); resolve(open);
+    };
+    dlg.addEventListener('click', (e) => { const v = (e.target as HTMLElement).closest<HTMLElement>('[data-v]')?.dataset.v; if (v) done(v === 'open'); });
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); done(false); }); // Esc
+    dlg.showModal();
+  });
+}
+async function openFile(f: File) { if (!(await vellumNotice(f))) return; dropSample(); state.currentFile = ''; pending = { blob: f, file: f.name }; await openBuffer(await f.arrayBuffer(), f.name); }
 async function openRecent(r: Recent) { dropSample(); state.currentFile = ''; pending = { blob: r.map, file: r.file, save: r.save }; await openBuffer(await r.map.arrayBuffer(), r.file); }
 async function openSample() {
   pending = null;
@@ -283,7 +310,7 @@ $('sampleBtn').onclick = () => { const u = new URL(location.href); u.searchParam
 if (new URL(location.href).searchParams.has('sample')) void openSample();
 
 mountFindFile($('findFile'));
-$('fileInput').addEventListener('change', (e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) openFile(f); });
+$('fileInput').addEventListener('change', (e) => { const el = e.target as HTMLInputElement, f = el.files?.[0]; el.value = ''; if (f) openFile(f); });
 let dragDepth = 0;
 window.addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; $('dropOverlay').hidden = false; });
 window.addEventListener('dragleave', (e) => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; $('dropOverlay').hidden = true; } });
