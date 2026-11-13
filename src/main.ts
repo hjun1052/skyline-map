@@ -10,6 +10,7 @@ import { addIcons, iconDataUrl } from './icons';
 import type { BuiltCity, SearchEntry, FC } from './build';
 import { fromLngLat, toLngLat } from './geo';
 import { createDirections } from './directions';
+import { createNav } from './nav-ui';
 import { createMeasure } from './measure';
 import { createReach } from './reach-ui';
 import { createTimelapse } from './timelapse';
@@ -160,6 +161,7 @@ async function openLocal(file: string) {
 }
 
 function showCity(city: BuiltCity) {
+  if (nav.isActive()) nav.stop();
   if (reach.isActive()) reach.close();
   timelapse.reset();
   discoveries.set(city.discoveries ?? null);
@@ -537,7 +539,7 @@ $('panelBody').addEventListener('change', (e) => {
 $('panelBody').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.target as HTMLElement).matches('[data-panel-booth]')) (e.target as HTMLInputElement).blur(); });
 
 map.on('click', (e) => {
-  if (!state.city) return;
+  if (!state.city || nav.isActive()) return;
   hideCtx();
   if (measure.isActive()) { measure.click(e); return; }
   if (reach.isActive()) { reach.click([e.lngLat.lng, e.lngLat.lat]); return; }
@@ -596,10 +598,17 @@ const dir = createDirections({
   showOnSchematic: (route) => schem.open({ route }),
   simRules: () => sim.hasRules(),
   simTraffic: () => sim.hasTraffic(),
+  simulate: (r, to) => { if (!nav.start(r, to)) toast(t('This route is too short to simulate')); },
+  simulating: () => nav.isActive(),
   onOpen: () => { closePanel(); sim.close(); if (reach.isActive()) reach.close(); discoveries.close(); closure.close(); $('topbar').hidden = true; document.body.classList.add('dir-open'); },
   onClose: () => { $('topbar').hidden = false; document.body.classList.remove('dir-open'); },
 });
 $('dirBtn').onclick = $('dirFab').onclick = needLanes(() => dir.open());
+const nav = createNav({
+  map, roadLabel: (cls) => L(cls),
+  onOpen: () => { closePanel(); hideCtx(); $('layerPop').hidden = true; },
+  onClose: () => {},
+});
 
 const measure = createMeasure(map, {
   onOpen: () => { closePanel(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); discoveries.close(); closure.close(); $('measureBtn').classList.add('on'); },
@@ -676,7 +685,7 @@ document.body.appendChild(ctx);
 let ctxPlace: { label: string; ll: [number, number] } | null = null;
 function hideCtx() { ctx.hidden = true; }
 map.on('contextmenu', (e) => {
-  if (!state.city) return;
+  if (!state.city || nav.isActive()) return;
   e.preventDefault();
   ctxPlace = { label: placeLabelAt(e.point), ll: [e.lngLat.lng, e.lngLat.lat] };
   const [x, z] = fromLngLat(e.lngLat.lng, e.lngLat.lat);
@@ -858,7 +867,7 @@ onLang(() => {
   applyStatic(); renderLangSwitches(); applyStyle();
   if (state.city) { renderDrawer(state.city); cityTexts(state.city); }
   if (!$('panel').hidden) { if (panelRefresh) panelRefresh(); else closePanel(); }
-  dir.relang(); measure.refresh(); pricingEd.refresh(); schem.relang(); discoveries.refresh(); closure.refresh();
+  dir.relang(); nav.relang(); measure.refresh(); pricingEd.refresh(); schem.relang(); discoveries.refresh(); closure.refresh();
   if (!$('welcome').hidden) { loadLocalList(); void renderRecent(); }
 });
 renderLangSwitches();
