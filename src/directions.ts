@@ -274,7 +274,7 @@ export function createDirections(d: DirectionsDeps) {
 
   /** Maps without lane data: every route is worked out on estimated lanes. */
   function approxNote(): string {
-    return d.approx() ? `<div class="toll-note approx-note">${esc(t('Approximate route'))}<div class="small">${esc(t('This map has no lane data: speeds and one-way streets are estimated from each road\'s type, so times may be off and a route may use a one-way street the wrong way. Check in game.'))}</div></div>` : '';
+    return d.approx() ? `<div class="toll-note approx-note">${esc(t('Approximate route'))}<div class="small">${esc(t('This map has no lane data: speeds and one-way streets are estimated from each road\'s type, so times may be off and a route may use a one-way street the wrong way. Check in game. For more accurate directions, open a .cslmap export of the same city.'))}</div></div>` : '';
   }
   /** Traffic-aware driving: what traffic adds, against the same route without it, and how much of it has data. */
   function trafficNote(r: Route): string {
