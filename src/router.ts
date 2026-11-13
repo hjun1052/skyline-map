@@ -155,10 +155,12 @@ export class Router {
       // class only names the edge in instructions and sets default speeds; access comes from lanes
       const c = c0.group === 'road' || c0.group === 'path' ? c0 : { ...c0, cls: acc.drive ? 'minor' : 'footway' };
       const pts: XY[] = seg.pts.map((p) => [p.x, p.z]);
-      const both = seg.name + ' ' + seg.icls;
+      // on estimated lanes the prefab name is a guess: bridges and tunnels come from the file's own class only
+      const both = city.extras?.caps.lanesEstimated ? seg.icls : seg.name + ' ' + seg.icls;
       const e: Edge = {
         id: seg.id, a: node(seg.sn), b: node(seg.en), len: Math.max(1, len(pts)), pts, cls: c.cls, name: seg.customName,
-        speed: (lanes.speed > 0 && lanes.speed < 200 ? lanes.speed : DRIVE_DEFAULT[c.cls] ?? 30) / 3.6, limKnown: lanes.speed > 0 && lanes.speed < 200,
+        // estimated lanes (.vellummap) give a speed to drive at, never a posted limit to show
+        speed: (lanes.speed > 0 && lanes.speed < 200 ? lanes.speed : DRIVE_DEFAULT[c.cls] ?? 30) / 3.6, limKnown: lanes.speed > 0 && lanes.speed < 200 && !city.extras?.caps.lanesEstimated,
         bike: lanes.bike || /Bicycle|Bike/i.test(seg.name), brunnel: /Tunnel/i.test(both) ? 'tunnel' : /Elevated|Bridge/i.test(both) ? 'bridge' : '',
         acc, gate: tolls?.gateOf.get(seg.id) ?? 0, ow: oneway?.dir.get(seg.id) ?? 0, sure: !!oneway && oneway.source.get(seg.id) !== 'prior' && oneway.source.has(seg.id), confirmed: oneway?.source.get(seg.id) === 'transit',
         hA: headRad(pts), hB: headRad([...pts].reverse()),
@@ -475,12 +477,14 @@ export class Router {
       }
       if ('bent' in found && found.bent) this.flagAgainst(r, path);
       const used = new Set(path.map((p) => p.e));
-      const overlap = out.some((o) => { const prev = (o as any)._edges as Set<number>; let sh = 0; for (const e of used) if (prev.has(e)) sh += this.edges[e].len; return sh / r.dist > 0.7; });
-      if (!overlap && (!out.length || r.time <= out[0].time * 1.5)) { (r as any)._edges = used; out.push(r); }
+      // a different set of graph edges can still draw the very same line (joins part-way along a road): that is a copy too
+      const line = r.legs.map((l) => l.coords.map((c) => c[0].toFixed(6) + ',' + c[1].toFixed(6)).join(' ')).join('|');
+      const overlap = out.some((o) => { if ((o as any)._line === line) return true; const prev = (o as any)._edges as Set<number>; let sh = 0; for (const e of used) if (prev.has(e)) sh += this.edges[e].len; return sh / r.dist > 0.7; });
+      if (!overlap && (!out.length || r.time <= out[0].time * 1.5)) { (r as any)._edges = used; (r as any)._line = line; out.push(r); }
       // a near-copy means the penalty is too weak to leave a fast road (e.g. an expressway): escalate faster
       for (const e of used) penalty.set(e, (penalty.get(e) ?? 1) * (overlap ? 1.8 : 1.3));
     }
-    for (const r of out) delete (r as any)._edges;
+    for (const r of out) { delete (r as any)._edges; delete (r as any)._line; }
     // both ends on one edge: walking straight along it beats going out to a junction and back
     if (mode !== 'drive') {
       let direct: Route | null = null;

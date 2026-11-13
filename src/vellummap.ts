@@ -5,7 +5,8 @@
 // The file is mapped onto the same CityData a .cslmap gives, so everything downstream works unchanged. What the
 // format does not carry is left empty, never guessed into something that looks exact:
 //  - no road prefab names and no lane table: `segTypes` stays empty, so the map has no lanes, one-way streets or
-//    speed limits, and routing is switched off (`extras.caps.lanes = false`, see main.ts canRoute);
+//    speed limits (`extras.caps.lanes = false`); routing runs on a separate copy with estimated lanes and is labelled
+//    approximate (lane-infer.ts, worker.ts, main.ts canRoute);
 //  - no sub-building chains (`prntb`/`subb`): multi-part assets are separate buildings;
 //  - no service on nodes and buildings: derived from the item class (a fixed table, see SERVICE_OF);
 //  - transit legs: the file has one route per line, cut back into stop-to-stop legs (splitLegs).

@@ -26,7 +26,7 @@ Everything below was measured on the sample city: Skyline's `public/samples/seor
   - node and building service, from the item class (a 103-entry table read off 7 real exports; every class has exactly one service);
   - road type for drawing, from item class + width;
   - transit stop-to-stop legs, cut out of each line's whole route by dynamic programming.
-- **Routing is switched off** for files with no lane table: directions, "How far can I get?", "What if it closes?" and save files (`.crp`).
+- **Routing:** first switched off; now approximate, on estimated lanes (see [Approximate directions](#approximate-directions)). Save files (`.crp`) stay off.
   - The buttons stay visible but dimmed, with `aria-disabled`. Clicking one opens a panel that explains why.
   - Panel and right-click direction actions are hidden, and a one-time toast appears.
   - The drawer says "Opened from … (.vellummap, experimental)".
@@ -61,7 +61,7 @@ Everything below was measured on the sample city: Skyline's `public/samples/seor
 | Tunnels | 152 | 152 found, 3 wrong | |
 | Toll booths | 12 | 12 | a booth's " Sub" building is recognised by its prefab name |
 | Discoveries | 33 | 20, all also in `.cslmap` | left out without the data: widest road (lanes), footprint and parts (building chains), longest bridge and viaduct (low bridges missed); station and street ones need names |
-| Driving, walking, transit directions | yes | **off** | no lane table |
+| Driving, walking, transit directions | yes | **approximate** | estimated lanes, see below |
 | Save files (`.crp`) | yes | **off** | the save is matched by segment prefab names |
 
 **`.cslmap` behaviour is unchanged.** On the sample city, `main` and this branch produce identical hashes for:
@@ -118,7 +118,7 @@ Only converted files were available. These can't be tested without real Vellum B
 
 ## Remaining issues
 
-- **Routing:** impossible to do reliably without lanes. An item-class lane guess put four of twelve test drives 46–70% off in the research spike. It is not used anywhere.
+- **Routing:** exact routing needs lane data upstream. The spike's item-class guess put four of twelve drives 46–70% off; the approximate routing below fixes most of that, but one-way vs two-way versions of the same class and width stay unknowable.
 - **Road classes:** gravel paths draw as footpaths; the R69 racetrack draws as a highway ramp (width 12); some streets draw a class off.
 - **Multi-part assets** are separate buildings (toll booths are handled through the " Sub" prefab name; other assets are not grouped).
 - **Spec drift:** written against Vellum `8857666`. A newer minor is tolerated; a major 2 is refused with a clear message.
@@ -167,3 +167,41 @@ A second pass after the first experiment.
   - **No routing.** Directions and the save features are central to Skyline, and the format can't support them. This needs data upstream; parser work can't fix it.
   - **Unverified on real exports.** Every number here comes from converter output, which lacks exactly the fields that make `.vellummap` attractive (names, district grids, stats, station ids).
 - Before shipping, even as experimental: test against a few real Bridge exports, ideally the same save exported by both mods, and decide whether a map-only mode is worth the support load.
+
+## Approximate directions
+
+A follow-up to "no routing": how far can routes get without lane data?
+
+**Why the spike looked bad.** Its four slow drives came from:
+- road mods whose classes never appear in other cities, which got no car lanes, so routes drove round them;
+- toll-gate pieces (22.4 m) matched as ordinary 22 m highways;
+- "2L2W" (two-way) mod highways read as one-way.
+
+**What was built** (`src/lane-infer.ts`; details in [architecture.md](../architecture.md#approximate-directions-vellummap)):
+- class + width catalogue from real .cslmap exports;
+- family fallback;
+- one-way evidence from bus routes, booths, class names and twin carriageways;
+- a routing-only copy of the city.
+- Every result is labelled approximate. No inferred one-way is treated as confirmed, and no estimated speed is shown as a limit.
+
+**Measured** (`npm run check:vellum-routes`, each city's lanes estimated only from the other six, 40 trips per mode per city):
+
+| | Found | Time within 10% | within 25% | Same path, worst 10% of trips |
+|---|---|---|---|---|
+| Drive | 280/280 | 92% | 99% | 84% |
+| Walk | 234/234 | 99% | 100% | 100% |
+| Transit | 240/240 | 99% | 100% | 100% |
+
+- `.cslmap` routes, travel-time areas and closures are unchanged. The one exception is a router fix that drops alternatives drawing the same line as an earlier one, a bug that also showed on `.cslmap`.
+- The converted Seorang fixture, through the real reader, gives the same quality. It is in the catalogue, so it is a smoke test.
+
+**A real Vellum Bridge export** (Costa Tijuca, Bridge 0.9.0, the sample city shipped with Vellum Desktop) has no matching .cslmap, so it can only be checked for coverage and plausibility:
+- 92% of road length matched by class + width; metro tunnels at an unseen width fell back to track;
+- ship paths, airplane paths, pipes and connectors got no lanes;
+- 60/60 drives found, at plausible average speeds (median 38 km/h);
+- walking and cycling fail where the true network would too: walking found the same trips on true and estimated networks in four .cslmap cities.
+
+**Limits:**
+- one-way vs two-way versions of one class and width (Two Lane Highway, small one-way streets);
+- road mods with lanes unlike anything in the catalogue;
+- the numbers come from 7 cities and are not a guarantee for others.

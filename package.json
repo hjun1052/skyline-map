@@ -25,7 +25,9 @@
     "check:nav": "tsx tools/nav-check.ts",
     "check:sim": "tsx tools/sim-check.ts",
     "check:data": "node tools/check-sample.mjs",
-    "check:vellummap": "tsx tools/vellummap-check.ts"
+    "check:vellummap": "tsx tools/vellummap-check.ts",
+    "check:vellum-routes": "tsx tools/vellum-route-check.ts",
+    "lane-catalog": "tsx tools/lane-catalog.ts"
   },
   "author": "",
   "license": "AGPL-3.0-only",

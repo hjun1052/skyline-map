@@ -666,6 +666,9 @@ body.closure-open .maplibregl-canvas { cursor: crosshair; }
 .st-dist.toll-fee { color: #a5581a; font-weight: 600; }
 :root[data-theme='dark'] .st-dist.toll-fee { color: #f0a868; }
 .toll-note b { font-weight: 700; }
+/* maps without lane data: one caveat above the route list */
+.approx-note { margin: 12px 16px 6px; line-height: 1.4; }
+.approx-note .small { margin-top: 2px; color: var(--muted); }
 .dd-head .link-btn { margin-top: 2px; }
 .fare-box { margin: 4px 18px 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
 .fare-box.empty { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

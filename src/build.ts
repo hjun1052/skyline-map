@@ -16,7 +16,7 @@ export interface BuiltCity {
   meta: {
     name: string; generated: string; bounds: [XY, XY];
     /** set for formats other than .cslmap: where the map came from and what it can do (see CityExtras.caps) */
-    source?: { format: 'vellummap'; producer: string; lanes: boolean; exactDistricts: boolean };
+    source?: { format: 'vellummap'; producer: string; lanes: boolean; exactDistricts: boolean; /** routing runs on estimated lanes: every route is approximate */ approxRoutes?: boolean };
     stats: Record<string, number>;
     elevation: { min: number; max: number };
     lines: { id: number; name: string; type: string; color: string; stops: number; bbox: [number, number, number, number] | null; stopNames?: string[]; shape?: 'both' | 'loop' }[];

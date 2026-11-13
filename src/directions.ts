@@ -56,6 +56,8 @@ export interface DirectionsDeps {
   /** drive a route in the navigation simulation, and whether one is running */
   simulate: (r: Route, destination: string) => void;
   simulating: () => boolean;
+  /** routes run on lanes estimated from road types (.vellummap): label every result approximate */
+  approx: () => boolean;
 }
 
 export function createDirections(d: DirectionsDeps) {
@@ -220,11 +222,11 @@ export function createDirections(d: DirectionsDeps) {
     const rs = st.results[st.mode];
     if (rs === undefined) { body.innerHTML = '<div class="dir-loading"><span></span></div>'; return; }
     if (!rs.length) {
-      const why = st.mode === 'transit' ? t('No transit route — it may be quicker to walk, or no line serves these places.') : st.mode === 'walk' || st.mode === 'bike' ? t('No route for this mode. The places may only be connected by highways or water.') : t('No legal driving route between these places. One-way roads confirmed by traffic are never driven the wrong way.');
-      body.innerHTML = `<div class="dir-empty">${esc(why)}</div>`; return;
+      const why = st.mode === 'transit' ? t('No transit route — it may be quicker to walk, or no line serves these places.') : st.mode === 'walk' || st.mode === 'bike' ? t('No route for this mode. The places may only be connected by highways or water.') : d.approx() ? t('No driving route between these places on the estimated road network.') : t('No legal driving route between these places. One-way roads confirmed by traffic are never driven the wrong way.');
+      body.innerHTML = approxNote() + `<div class="dir-empty">${esc(why)}</div>`; return;
     }
     const sel = rs[st.sel];
-    body.innerHTML = st.expanded && sel ? details(sel) : rs.map((r, i) => routeCard(r, i, i === st.sel)).join('');
+    body.innerHTML = approxNote() + (st.expanded && sel ? details(sel) : rs.map((r, i) => routeCard(r, i, i === st.sel)).join(''));
   }
 
   function routeCard(r: Route, i: number, on: boolean): string {
@@ -267,9 +269,13 @@ export function createDirections(d: DirectionsDeps) {
       }
     });
     rows.push(`<li class="tr-place"><i class="dot d"></i><b>${esc(st.to!.label)}</b></li>`);
-    return head + `<ol class="transit-steps">${rows.join('')}</ol>${fareBox(P.fareCost(r))}<div class="dd-schem"><button class="pill" data-schem>${svg('<path d="M4 6h5v2H6v3h3v2H6v3h3v2H4V6zm11 0h5v12h-5v-2h3v-3h-3v-2h3V8h-3V6zM10 11h4v2h-4z"/>')}${t('Show on transit map')}</button></div><p class="muted small dd-note">${t('Ride times come from the real road and track speed limits, with acceleration, stops and traffic. Waiting times are estimates: the export has no timetable.')}</p>`;
+    return head + `<ol class="transit-steps">${rows.join('')}</ol>${fareBox(P.fareCost(r))}<div class="dd-schem"><button class="pill" data-schem>${svg('<path d="M4 6h5v2H6v3h3v2H6v3h3v2H4V6zm11 0h5v12h-5v-2h3v-3h-3v-2h3V8h-3V6zM10 11h4v2h-4z"/>')}${t('Show on transit map')}</button></div><p class="muted small dd-note">${d.approx() ? t('Ride times are estimated from each road and track\'s type, with acceleration, stops and traffic. Waiting times are estimates: the file has no timetable.') : t('Ride times come from the real road and track speed limits, with acceleration, stops and traffic. Waiting times are estimates: the export has no timetable.')}</p>`;
   }
 
+  /** Maps without lane data: every route is worked out on estimated lanes. */
+  function approxNote(): string {
+    return d.approx() ? `<div class="toll-note approx-note">${esc(t('Approximate route'))}<div class="small">${esc(t('This map has no lane data: speeds and one-way streets are estimated from each road\'s type, so times may be off and a route may use a one-way street the wrong way. Check in game.'))}</div></div>` : '';
+  }
   /** Traffic-aware driving: what traffic adds, against the same route without it, and how much of it has data. */
   function trafficNote(r: Route): string {
     if (r.baseTime === undefined) return '';
@@ -282,7 +288,7 @@ export function createDirections(d: DirectionsDeps) {
   function onewayNote(r: Route, long = false): string {
     const n = r.againstLikelyOneWay?.length;
     if (!n) return '';
-    return `<div class="toll-note warn oneway-note">${t('No route obeys every one-way here: this one drives against a likely one-way direction')}${long ? `<div class="small">${t('That direction was inferred from the road layout and no vehicle has confirmed it, so it may be wrong. Check before driving.')}</div>` : ''}</div>`;
+    return `<div class="toll-note warn oneway-note">${t('No route obeys every one-way here: this one drives against a likely one-way direction')}${long ? `<div class="small">${d.approx() ? t('One-way streets on this map are estimated, so this direction may be wrong. Check in game.') : t('That direction was inferred from the road layout and no vehicle has confirmed it, so it may be wrong. Check before driving.')}</div>` : ''}</div>`;
   }
   function tollDetails(r: Route): string {
     const tc = P.tollCost(r)!;

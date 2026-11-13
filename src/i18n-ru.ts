@@ -876,4 +876,14 @@ export const RU: Record<string, string> = {
   "{first}, then {second}": "{first}, затем {second}",
   "You will arrive at your destination": "Вы прибудете к месту назначения",
   "This route is too short to simulate": "Маршрут слишком короткий для симуляции",
+  // .vellummap approximate directions
+  "Directions on this map are approximate": "Маршруты на этой карте приблизительные",
+  "Approximate route": "Приблизительный маршрут",
+  "This map has no lane data: speeds and one-way streets are estimated from each road's type, so times may be off and a route may use a one-way street the wrong way. Check in game.": "На этой карте нет данных о полосах: скорость и одностороннее движение оцениваются по типу дороги, поэтому время может отличаться, а маршрут может проехать по односторонней улице против движения. Проверьте в игре.",
+  "Ride times are estimated from each road and track's type, with acceleration, stops and traffic. Waiting times are estimates: the file has no timetable.": "Время в пути оценивается по типу дорог и путей с учётом разгона, остановок и движения. Время ожидания тоже примерное: в файле нет расписания.",
+  "Approximate: this map has no lane data, so speeds and one-way streets are estimated from road types.": "Приблизительно: на этой карте нет данных о полосах, поэтому скорость и одностороннее движение оцениваются по типу дорог.",
+  "This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use). Directions, travel-time areas and closure analysis estimate it from each road's type and width, so routes and times are approximate, and a route may use a one-way street the wrong way. The cycling layer and save files need a .cslmap export of the same city.": "В этом файле .vellummap нет данных о полосах (одностороннее движение, ограничения скорости, велодорожки, какие полосы доступны машинам, автобусам и пешеходам). Маршруты, зоны доступности и анализ перекрытий оценивают их по типу и ширине дорог, поэтому маршруты и время приблизительные, а маршрут может проехать по односторонней улице против движения. Для слоя велодорожек и файлов сохранения нужен экспорт .cslmap того же города.",
+  "No driving route between these places on the estimated road network.": "По оценённой дорожной сети между этими местами нет автомобильного маршрута.",
+  "One-way streets on this map are estimated, so this direction may be wrong. Check in game.": "Одностороннее движение на этой карте оценено приблизительно, поэтому это направление может быть неверным. Проверьте в игре.",
+  "This needs a .cslmap export": "Нужен экспорт .cslmap",
 };

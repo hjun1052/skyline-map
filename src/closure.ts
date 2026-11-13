@@ -40,10 +40,11 @@ void ['Heading north', 'Heading northeast', 'Heading east', 'Heading southeast',
 const COMPASS = ['Heading east', 'Heading northeast', 'Heading north', 'Heading northwest', 'Heading west', 'Heading southwest', 'Heading south', 'Heading southeast'];
 const compass = (a: XY, b: XY) => COMPASS[(Math.round(Math.atan2(b[1] - a[1], b[0] - a[0]) / (Math.PI / 4)) + 8) % 8];
 
-/** Road and rail segments the closure tool can close, from the built map (same classes the map draws). */
-export function segInfoFrom(built: { sources: Record<string, { features: { properties: Record<string, any> }[] }> }): Map<number, SegInfo> {
+/** Road and rail segments the closure tool can close, from the built map (same classes the map draws). A map without lanes
+ *  (.vellummap) passes the roads its estimated lanes let cars use. */
+export function segInfoFrom(built: { sources: Record<string, { features: { properties: Record<string, any> }[] }> }, estimatedRoads?: Set<number>): Map<number, SegInfo> {
   const m = new Map<number, SegInfo>();
-  for (const f of built.sources.roads.features) { const p = f.properties; if (p.lanes > 0 || ['footway', 'pedestrian', 'trail', 'track'].includes(p.cls)) m.set(p.id, { group: 'road', cls: p.cls, brunnel: p.brunnel ?? '', name: p.name ?? '' }); }
+  for (const f of built.sources.roads.features) { const p = f.properties; if (p.lanes > 0 || estimatedRoads?.has(p.id) || ['footway', 'pedestrian', 'trail', 'track'].includes(p.cls)) m.set(p.id, { group: 'road', cls: p.cls, brunnel: p.brunnel ?? '', name: p.name ?? '' }); }
   for (const f of built.sources.rails.features) { const p = f.properties; if (p.type !== undefined && ['rail', 'subway', 'monorail', 'tram', 'cablecar'].includes(p.cls)) m.set(p.id, { group: 'rail', cls: p.cls, brunnel: p.brunnel ?? '', name: p.name ?? '' }); }
   return m;
 }

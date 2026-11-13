@@ -15,7 +15,7 @@ const LIMITS = [15, 30, 45, 60];
 // light to deep: the nearest band is the strongest (YlGnBu, readable on both map styles)
 const BANDS = ['#253494', '#2c7fb8', '#41b6c4', '#a1dab4'];
 
-export function createReach(map: MLMap, deps: { worker: Worker; land: () => DistrictField | null; night: () => boolean; onOpen: () => void; traffic: () => boolean }) {
+export function createReach(map: MLMap, deps: { worker: Worker; land: () => DistrictField | null; night: () => boolean; onOpen: () => void; traffic: () => boolean; approx: () => boolean }) {
   const st = { active: false, at: null as LL | null, mode: 'transit' as Mode, limit: 30, id: 0, grid: null as ReachGrid | null, busy: false };
   try { const s = JSON.parse(localStorage.getItem('atlas:reach') ?? 'null'); if (s) { st.mode = s.mode ?? st.mode; st.limit = s.limit ?? st.limit; } } catch { /* ignore */ }
 
@@ -88,7 +88,7 @@ export function createReach(map: MLMap, deps: { worker: Worker; land: () => Dist
       <div class="r-legend">${BANDS.map((c, i) => `<span><i style="background:${c}"></i>${Math.round(i * q)}–${Math.round((i + 1) * q)}</span>`).join('')}<em>${t('{n} min', { n: '' }).trim()}</em></div>
       <p class="r-stat">${st.busy ? t('Working out travel times…') : st.grid && total ? `${t('Reachable area')}: <b>${fmtArea(total)}</b>` : st.at ? t('Nothing reachable from here by this mode.') : ''}</p>
       <p class="r-hint">${t('Click the map or drag the pin to move the start.')}</p>
-      <p class="r-note">${t('Estimated from the road and transit network; transit includes average waits.')}${st.mode === 'drive' && deps.traffic() ? ' ' + t('Driving times include the traffic from your save, as an estimate.') : ''}</p>`;
+      <p class="r-note">${t('Estimated from the road and transit network; transit includes average waits.')}${st.mode === 'drive' && deps.traffic() ? ' ' + t('Driving times include the traffic from your save, as an estimate.') : ''}${deps.approx() ? ' ' + t('Approximate: this map has no lane data, so speeds and one-way streets are estimated from road types.') : ''}</p>`;
   }
 
   function request() {

@@ -11,6 +11,7 @@ import { discover } from './discover';
 import { createClosures, segInfoFrom } from './closure';
 import { cityKeys, scanExport, scanIdentities, bornById, exportTime, type HistoryKeys } from './history';
 import type { CityData } from './parse';
+import type { LaneCatalog } from './lane-infer';
 import { loadSim, transferables } from './sim';
 import { readVellummap, vellumToCity, vellumIdentities, isZip, FormatError } from './vellummap';
 
@@ -62,8 +63,22 @@ self.onmessage = async (e: MessageEvent) => {
       // a record that throws must not stop the city from opening
       try { built.discoveries = discover(city, built); } catch (err) { console.warn('[atlas] discoveries failed', err); built.discoveries = null; }
       progress('Preparing directions', 94);
-      router = new Router(city, built.stopNames ?? new Map(), oneway, tolls);
-      closures = createClosures(city, router, segInfoFrom(built), built.stopNames ?? new Map());
+      // a file without lanes (.vellummap) routes on lanes estimated from each road's class and width: a separate
+      // copy of the city for the router only, so the map, records and road panels keep showing what the file holds
+      let rCity = city, rOneway = oneway, rTolls = tolls, estRoads: Set<number> | undefined;
+      if (city.extras && !city.extras.caps.lanes) {
+        // if this fails (a stale page after a deploy, odd data) the map still opens, with directions off as before
+        try {
+          const [{ routingCopy }, cat] = await Promise.all([import('./lane-infer'), import('./lane-catalog.json')]);
+          const est = routingCopy(city, (cat.default ?? cat) as unknown as LaneCatalog);
+          if (est.stats.known + est.stats.family > 0 && built.meta.source) {
+            rCity = est.city; rOneway = est.oneway; rTolls = est.tolls; estRoads = est.roads;
+            built.meta.source.approxRoutes = true;
+          }
+        } catch (err) { console.warn('[atlas] estimated lanes failed; directions stay off', err); }
+      }
+      router = new Router(rCity, built.stopNames ?? new Map(), rOneway, rTolls);
+      closures = createClosures(rCity, router, segInfoFrom(built, estRoads), built.stopNames ?? new Map());
       delete built.stopNames;
       schemInput = built.schem ?? null; schemCache.clear();
       delete built.schem;

@@ -198,8 +198,9 @@ function showCity(city: BuiltCity) {
   cityTexts(city);
   creditExporter(city.meta.source ? 'Vellum Bridge' : 'CSLMapView');
   syncUi();
-  for (const id of ['dirFab', 'dirBtn', 'reachBtn', 'closureMenu', 'simMenu']) { $(id).classList.toggle('off', !hasLanes()); $(id).setAttribute('aria-disabled', String(!hasLanes())); }
-  if (!hasLanes()) toast(t('Directions are off for this map'));
+  for (const id of ['dirFab', 'dirBtn', 'reachBtn', 'closureMenu']) { $(id).classList.toggle('off', !canRoute()); $(id).setAttribute('aria-disabled', String(!canRoute())); }
+  $('simMenu').classList.toggle('off', !hasLanes()); $('simMenu').setAttribute('aria-disabled', String(!hasLanes()));
+  if (!hasLanes()) toast(canRoute() ? t('Directions on this map are approximate') : t('Directions are off for this map'));
   renderDrawer(city);
   void pricing.attach(city);
   schem.reset();
@@ -301,7 +302,7 @@ function renderDrawer(city: BuiltCity) {
   $('cityInfo').innerHTML = `
     <div class="city-title">${esc(city.meta.name)}</div>
     <div class="city-meta">${t('Saved {date}', { date: esc(fmtGenerated(city.meta.generated)) })}${state.currentFile ? ' · ' + esc(state.currentFile) : ''}</div>
-    ${city.meta.source ? `<div class="city-source">${esc(t('Opened from {producer} (.vellummap, experimental)', { producer: city.meta.source.producer || 'Vellum' }))}${city.meta.source.lanes ? '' : ` <button class="link-btn" data-why-no-route>${esc(t('Directions are off for this map'))}</button>`}</div>` : ''}
+    ${city.meta.source ? `<div class="city-source">${esc(t('Opened from {producer} (.vellummap, experimental)', { producer: city.meta.source.producer || 'Vellum' }))}${city.meta.source.lanes ? '' : ` <button class="link-btn" data-why-no-route>${esc(city.meta.source.approxRoutes ? t('Directions on this map are approximate') : t('Directions are off for this map'))}</button>`}</div>` : ''}
     <div class="stats">
       <div class="stat"><b>${n(s.buildings)}</b><span>${t('Buildings')}</span></div>
       <div class="stat"><b>${n(s.roads)}</b><span>${t('Road segments')}</span></div>
@@ -369,7 +370,7 @@ function setSelection(features: { type: 'Feature'; geometry: any; properties: an
 let panelPlace: { label: string; ll: [number, number] } | null = null;
 function panel(html: string, accent?: string) {
   $('panelBody').innerHTML = (accent ? `<div class="p-hero" style="background:${accent}"></div>` : '') + html;
-  if (panelPlace && hasLanes()) {
+  if (panelPlace && canRoute()) {
     $('panelBody').querySelector('.p-head')?.insertAdjacentHTML('afterend', `<div class="p-quick">
       <button class="q-btn primary" data-dir="to"><span><svg viewBox="0 0 24 24"><path d="M21.7 11.3l-9-9a1 1 0 0 0-1.4 0l-9 9a1 1 0 0 0 0 1.4l9 9a1 1 0 0 0 1.4 0l9-9a1 1 0 0 0 0-1.4zM14 14.5V12h-4v3H8v-4a1 1 0 0 1 1-1h5V7.5l3.5 3.5-3.5 3.5z"/></svg></span>${t('Directions')}</button>
       <button class="q-btn" data-dir="from"><span><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-2.1A7 7 0 0 0 13 5.1V3h-2v2.1A7 7 0 0 0 5.1 11H3v2h2.1a7 7 0 0 0 5.9 5.9V21h2v-2.1a7 7 0 0 0 5.9-5.9H21v-2zm-9 6a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg></span>${t('Start here')}</button>
@@ -509,7 +510,7 @@ function inPoly(pt: [number, number], rings: [number, number][][]) {
 }
 /** "What if it closes?" button for a panel */
 function closeBtn(p: import('./closure').ClosurePick) {
-  if (!hasLanes()) return '';
+  if (!canRoute()) return '';
   return `<button class="pill" data-close-pick="${esc(JSON.stringify(p))}"><svg viewBox="0 0 24 24" width="16" height="16"><path fill-rule="evenodd" d="${CLOSURE_ICON}"/></svg>${t('What if it closes?')}</button>`;
 }
 function lineLen(c: [number, number][]) { let l = 0; for (let i = 1; i < c.length; i++) { const a = fromLngLat(c[i - 1][0], c[i - 1][1]), b = fromLngLat(c[i][0], c[i][1]); l += Math.hypot(a[0] - b[0], a[1] - b[1]); } return l; }
@@ -518,9 +519,9 @@ function coordText(lng: number, lat: number) { const [x, z] = fromLngLat(lng, la
 $('panelBody').addEventListener('click', (e) => {
   const t = e.target as HTMLElement;
   const cp = (t.closest('[data-close-pick]') as HTMLElement | null)?.dataset.closePick;
-  if (cp) return needLanes(() => closure.open(JSON.parse(cp)))();
+  if (cp) return needRouting(() => closure.open(JSON.parse(cp)))();
   const dd = (t.closest('[data-dir]') as HTMLElement | null)?.dataset.dir;
-  if (dd && panelPlace) { const pl = panelPlace; return needLanes(() => { closePanel(); dd === 'to' ? dir.setTo(pl) : dir.setFrom(pl); })(); }
+  if (dd && panelPlace) { const pl = panelPlace; return needRouting(() => { closePanel(); dd === 'to' ? dir.setTo(pl) : dir.setFrom(pl); })(); }
   const id = (t.closest('[data-line]') as HTMLElement | null)?.dataset.line;
   if (id) return selectLine(+id, true);
   const fare = (t.closest('[data-edit-fare]') as HTMLElement | null)?.dataset.editFare;
@@ -584,7 +585,7 @@ const schem = createSchematic({
     if (se) choose(se); else map.flyTo({ center: p.ll, zoom: 16.5, speed: 1.6 });
   },
   showLine: (id) => selectLine(id, true),
-  directions: (from, to) => { if (!hasLanes()) schem.close(); needLanes(() => dir.open({ from, to, mode: 'transit' }))(); },
+  directions: (from, to) => { if (!canRoute()) schem.close(); needRouting(() => dir.open({ from, to, mode: 'transit' }))(); },
   onOpen: () => { closeDrawer(); closePanel(); if (measure.isActive()) measure.close(); },
   onClose: () => {},
 });
@@ -593,6 +594,7 @@ $('schemChip').onclick = () => schem.open();
 
 // ------------------------------------------------------------------ directions
 const dir = createDirections({
+  approx: approxRoutes,
   map, worker, city: () => state.city,
   pricing, editPricing: (tab, focus) => pricingEd.open(tab, focus),
   showOnSchematic: (route) => schem.open({ route }),
@@ -603,7 +605,7 @@ const dir = createDirections({
   onOpen: () => { closePanel(); sim.close(); if (reach.isActive()) reach.close(); discoveries.close(); closure.close(); $('topbar').hidden = true; document.body.classList.add('dir-open'); },
   onClose: () => { $('topbar').hidden = false; document.body.classList.remove('dir-open'); },
 });
-$('dirBtn').onclick = $('dirFab').onclick = needLanes(() => dir.open());
+$('dirBtn').onclick = $('dirFab').onclick = needRouting(() => dir.open());
 const nav = createNav({
   map, roadLabel: (cls) => L(cls),
   onOpen: () => { closePanel(); hideCtx(); $('layerPop').hidden = true; },
@@ -617,13 +619,14 @@ const measure = createMeasure(map, {
 $('measureBtn').onclick = () => measure.toggle();
 
 const reach = createReach(map, {
+  approx: approxRoutes,
   worker,
   land: () => state.city?.districtField ?? null,
   night: () => state.mode === 'night',
   traffic: () => dir.trafficOn(),
   onOpen: () => { closeDrawer(); closePanel(); sim.close(); if (dir.isOpen()) dir.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); closure.close(); },
 });
-$('reachBtn').onclick = needLanes(() => { closeDrawer(); const c = map.getCenter(); reach.open([c.lng, c.lat]); });
+$('reachBtn').onclick = needRouting(() => { closeDrawer(); const c = map.getCenter(); reach.open([c.lng, c.lat]); });
 
 const timelapse = createTimelapse(map, {
   worker, city: () => state.city, currentFile: () => state.currentFile, toast,
@@ -638,13 +641,14 @@ $('discoverBtn').onclick = () => (discoveries.isActive() ? discoveries.close() :
 $('discoverMenu').onclick = () => discoveries.open();
 
 const closure = createClosure(map, {
+  approx: approxRoutes,
   worker, toast,
   land: () => state.city?.districtField ?? null,
   night: () => state.mode === 'night',
   traffic: () => dir.trafficOn(),
   onOpen: () => { sim.close(); closeDrawer(); closePanel(); hideCtx(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); },
 });
-$('closureMenu').onclick = needLanes(() => closure.open());
+$('closureMenu').onclick = needRouting(() => closure.open());
 
 const sim = createSim(map, {
   worker, toast, city: () => state.city,
@@ -690,7 +694,7 @@ map.on('contextmenu', (e) => {
   ctxPlace = { label: placeLabelAt(e.point), ll: [e.lngLat.lng, e.lngLat.lat] };
   const [x, z] = fromLngLat(e.lngLat.lng, e.lngLat.lat);
   ctx.innerHTML = `<div class="ctx-title">${esc(ctxPlace.label === t('Dropped pin') ? `x ${Math.round(x)}, z ${Math.round(z)}` : ctxPlace.label)}</div>
-    ${hasLanes() ? `<button data-c="from">${t('Directions from here')}</button><button data-c="to">${t('Directions to here')}</button>` : ''}<button data-c="measure">${t('Measure distance')}</button>${hasLanes() ? `<button data-c="reach">${t('How far can I get from here?')}</button>` : ''}`;
+    ${canRoute() ? `<button data-c="from">${t('Directions from here')}</button><button data-c="to">${t('Directions to here')}</button>` : ''}<button data-c="measure">${t('Measure distance')}</button>${canRoute() ? `<button data-c="reach">${t('How far can I get from here?')}</button>` : ''}`;
   const r = map.getContainer().getBoundingClientRect();
   ctx.style.left = Math.min(e.point.x + r.left, innerWidth - 230) + 'px';
   ctx.style.top = Math.min(e.point.y + r.top, innerHeight - 170) + 'px';
@@ -838,13 +842,20 @@ function updateExtrusion() {
 map.on('pitch', updateExtrusion);
 
 let toastT = 0;
-/** routing and bike lanes need the export's lane table; formats without one (.vellummap) switch those tools off */
+/** lane data in the file itself: bike lanes, save files and lane facts need it (.vellummap has none) */
 function hasLanes() { return state.city?.meta.source?.lanes !== false; }
+/** routing runs on lanes estimated from road types (.vellummap): every route, area and closure result is approximate */
+function approxRoutes() { return !!state.city?.meta.source?.approxRoutes; }
+/** directions, travel-time areas and closures: on with the file's lanes, or approximately with estimated ones */
+function canRoute() { return hasLanes() || approxRoutes(); }
 /** run `f`, or, on a map without lanes, explain why it is off */
-function needLanes(f: () => unknown) { return () => { if (hasLanes()) return void f(); closeDrawer(); explainNoLanes(); }; }
-function explainNoLanes() {
+function needLanes(f: () => unknown) { return () => { if (hasLanes()) return void f(); closeDrawer(); explainNoLanes(true); }; }
+function needRouting(f: () => unknown) { return () => { if (canRoute()) return void f(); closeDrawer(); explainNoLanes(); }; }
+function explainNoLanes(laneFeature = false) {
   panelPlace = null;
-  panel(head(t('Directions are off for this map'), '.vellummap') + `<p class="p-note">${esc(t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis, the cycling layer and save files need a .cslmap export of the same city."))}</p>`);
+  panel(approxRoutes()
+    ? head(laneFeature ? t('This needs a .cslmap export') : t('Directions on this map are approximate'), '.vellummap') + `<p class="p-note">${esc(t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use). Directions, travel-time areas and closure analysis estimate it from each road's type and width, so routes and times are approximate, and a route may use a one-way street the wrong way. The cycling layer and save files need a .cslmap export of the same city."))}</p>`
+    : head(t('Directions are off for this map'), '.vellummap') + `<p class="p-note">${esc(t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis, the cycling layer and save files need a .cslmap export of the same city."))}</p>`);
 }
 $('cityInfo').addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('[data-why-no-route]')) { closeDrawer(); explainNoLanes(); } });
 function toast(msg: string) { const el = $('toast'); el.textContent = msg; el.hidden = false; clearTimeout(toastT); toastT = window.setTimeout(() => (el.hidden = true), 4500); }

@@ -54,11 +54,11 @@ const svg = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path fi
 // i18n-keys: closure notes
 void ['Uses the export\'s network and the same routing as Directions. Lines through the closure are cut there; nothing reroutes them. No traffic or passenger numbers are involved: the export has none.', 'Uses the export\'s network and the same routing as Directions, with the traffic from your save as an estimate. Lines through the closure are cut there; nothing reroutes them.'];
 // end i18n-keys
-export function createClosure(map: MLMap, deps: { worker: Worker; land: () => DistrictField | null; night: () => boolean; onOpen: () => void; toast: (m: string) => void; traffic: () => boolean }) {
+export function createClosure(map: MLMap, deps: { worker: Worker; land: () => DistrictField | null; night: () => boolean; onOpen: () => void; toast: (m: string) => void; traffic: () => boolean; approx: () => boolean }) {
   /** traffic-aware routing (switched in Directions) changes the drive times shown here */
-  const note = () => deps.traffic()
+  const note = () => (deps.approx() ? t('Approximate: this map has no lane data, so speeds and one-way streets are estimated from road types.') + ' ' : '') + (deps.traffic()
     ? t('Uses the export\'s network and the same routing as Directions, with the traffic from your save as an estimate. Lines through the closure are cut there; nothing reroutes them.')
-    : t('Uses the export\'s network and the same routing as Directions. Lines through the closure are cut there; nothing reroutes them. No traffic or passenger numbers are involved: the export has none.');
+    : t('Uses the export\'s network and the same routing as Directions. Lines through the closure are cut there; nothing reroutes them. No traffic or passenger numbers are involved: the export has none.'));
   const st = {
     active: false, pick: null as ClosurePick | null, res: null as ClosureResult | null, busy: false, id: 0, sel: 0,
     rmode: 'drive' as RMode, view: 'change' as View, pin: null as LL | null, grids: null as { before: ReachGrid | null; after: ReachGrid | null } | null, rbusy: false, rid: 0, fit: false,

@@ -52,7 +52,7 @@ export interface CityData {
 export interface CityExtras {
   source: 'vellummap';
   /** what the file carries: lanes (routing, one-way streets, speeds) and sub-building chains */
-  caps: { lanes: boolean; buildingParts: boolean };
+  caps: { lanes: boolean; buildingParts: boolean; /** routing copy only: lanes estimated from road class and width (lane-infer.ts) */ lanesEstimated?: boolean };
   producer: string;
   /** 900² cells x (4 area ids + 4 alphas), the game's own district grid */
   districtGrid?: Uint8Array;
