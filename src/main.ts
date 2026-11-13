@@ -149,7 +149,7 @@ async function vellumNotice(f: File): Promise<boolean> {
     <p>${esc(t('Vellum Bridge exports carry less than CSLMapView .cslmap exports: no lane data and no multi-part buildings.'))}</p>
     <ul><li>${esc(t('Directions, travel-time areas and closure analysis are approximate: speeds and one-way streets are estimated from road types.'))}</li>
     <li>${esc(t('Lanes, speed limits, the cycling layer and save files aren\'t available, and some city discoveries are left out.'))}</li></ul>
-    <p class="vn-hint">${esc(t('For the full map, open a .cslmap export of the same city.'))}</p>
+    <p class="vn-hint">${esc(t('For the full map, open a .cslmap export of the same city.'))} <a href="/blog/cities-skylines-city-map.html" target="_blank" rel="noopener">${esc(t('How to export your city with CSLMapView'))}</a></p>
     <label class="vn-check"><input type="checkbox"> ${esc(t('Don\'t show this again'))}</label>
     <div class="vn-actions"><button type="button" class="pill" data-v="cancel">${esc(t('Cancel'))}</button><button type="button" class="pill primary" data-v="open" autofocus>${esc(t('Open map'))}</button></div>`;
   document.body.appendChild(dlg);

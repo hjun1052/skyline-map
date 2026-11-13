@@ -894,4 +894,5 @@ export const RU: Record<string, string> = {
   "For the full map, open a .cslmap export of the same city.": "Для полной карты откройте экспорт .cslmap того же города.",
   "Don't show this again": "Больше не показывать",
   "Open map": "Открыть карту",
+  "How to export your city with CSLMapView": "Как экспортировать город с помощью CSLMapView (на английском)",
 };

@@ -894,4 +894,5 @@ export const KO: Record<string, string> = {
   "For the full map, open a .cslmap export of the same city.": "모든 기능을 쓰려면 같은 도시의 .cslmap 내보내기를 여세요.",
   "Don't show this again": "다시 보지 않기",
   "Open map": "지도 열기",
+  "How to export your city with CSLMapView": "CSLMapView로 도시 내보내는 방법(영어)",
 };
