@@ -35,7 +35,7 @@ npm ci
 npm run dev
 ```
 
-Open the address Vite prints and click **Try a sample city**, or drop in your own `.cslmap` file.
+Open the address Vite prints and click **Try the sample city**, or choose or drop your own `.cslmap` file.
 
 The dev server also lists the exports in your CSLMapView folder on the start screen. On macOS it looks in `~/Library/Application Support/Steam/steamapps/common/Cities_Skylines/CSLMapView`; set `CSLMAP_DIR=/path/to/folder` to use another folder.
 

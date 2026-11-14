@@ -243,16 +243,27 @@ const fmtDate = (ms: number) => new Date(ms).toLocaleString(locale(), { dateStyl
 async function renderRecent() {
   const box = $('recentMaps'), list = await listRecent();
   box.hidden = !list.length;
+  // a first visit has no cities yet: a shorter top, so "Need your file?" shows above the fold
+  $('startHero').classList.toggle('first', !list.length);
   if (!list.length) { box.innerHTML = ''; return; }
-  const palette = ['#1a73e8', '#188038', '#e37400', '#a142f4', '#d93025'];
-  box.innerHTML = `<h3>${t('Recent cities')}</h3>` + list.map((r, i) => `
-    <div class="city-group">
-      <div class="city-row" role="button" tabindex="0" data-recent="${esc(r.name)}">
-        <span class="avatar" style="background:${palette[i % palette.length]}">${esc([...r.name][0] ?? '?')}</span>
-        <span class="grow"><div class="cname">${esc(r.name)}</div><div class="cmeta">${esc(t('Opened {date}', { date: fmtDate(r.opened) }))}${r.save ? ' · ' + esc(t('with save')) : ''}</div></span>
-        <button class="forget" data-forget="${esc(r.name)}" title="${esc(t('Forget'))}" aria-label="${esc(t('Forget {city}', { city: r.name }))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
-      </div>
-    </div>`).join('') + `<p class="recent-note">${esc(t('Kept in this browser only. Forget a city to remove it.'))}</p>`;
+  const palette = ['#188038', '#1a73e8', '#e37400', '#a142f4', '#d93025'];
+  const X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  const meta = (r: Recent) => esc(t('Opened {date}', { date: fmtDate(r.opened) })) + (r.save ? ' · ' + esc(t('with save')) : '');
+  const initial = (r: Recent) => esc([...r.name][0] ?? '?');
+  const forgetBtn = (r: Recent, small = '') => `<button type="button" class="forget${small}" data-forget="${esc(r.name)}" title="${esc(t('Forget'))}" aria-label="${esc(t('Forget {city}', { city: r.name }))}">${X}</button>`;
+  const [latest, ...rest] = list;
+  box.innerHTML = `
+    <div class="recent-latest">
+      <span class="avatar" style="background:${palette[0]}" aria-hidden="true">${initial(latest)}</span>
+      <div class="recent-who"><div class="recent-label">${esc(t('Continue where you left off'))}</div><div class="recent-name">${esc(latest.name)}</div><div class="recent-when">${meta(latest)}</div></div>
+      <button type="button" class="start-btn ghost small" data-recent="${esc(latest.name)}" aria-label="${esc(t('Open {city}', { city: latest.name }))}">${esc(t('Open'))}</button>
+      ${forgetBtn(latest)}
+    </div>
+    ${rest.length ? `<div class="recent-more"><div class="recent-more-label">${esc(t('Other recent cities'))}</div>
+      <ul class="recent-list${rest.length > 2 ? ' two' : ''}">${rest.map((r, i) => `<li class="recent-city">
+        <button type="button" class="recent-open" data-recent="${esc(r.name)}"><span class="mini" style="background:${palette[(i + 1) % palette.length]}" aria-hidden="true">${initial(r)}</span><span class="recent-text"><span class="recent-cname">${esc(r.name)}</span><span class="recent-cwhen">${meta(r)}</span></span></button>
+        ${forgetBtn(r, ' small')}</li>`).join('')}</ul></div>` : ''}
+    <p class="recent-note">${esc(t('Kept in this browser only. Forget a city to remove it.'))}</p>`;
   box.onclick = async (e) => {
     const el = e.target as HTMLElement;
     const f = (el.closest('[data-forget]') as HTMLElement | null)?.dataset.forget;
@@ -261,7 +272,6 @@ async function renderRecent() {
     const r = n !== undefined && list.find((x) => x.name === n);
     if (r) void openRecent(r);
   };
-  box.onkeydown = (e) => { if (e.key === 'Enter' && (e.target as HTMLElement).matches('[data-recent]')) (e.target as HTMLElement).click(); };
 }
 $('sampleBtn').onclick = () => { const u = new URL(location.href); u.searchParams.set('sample', ''); history.replaceState(null, '', u); void openSample(); };
 if (new URL(location.href).searchParams.has('sample')) void openSample();
@@ -307,7 +317,9 @@ $('lineList').addEventListener('click', (e) => {
 const openDrawer = () => { $('drawer').hidden = false; $('scrim').hidden = false; };
 const closeDrawer = () => { $('drawer').hidden = true; $('scrim').hidden = true; };
 $('menuBtn').onclick = openDrawer; $('drawerClose').onclick = closeDrawer; $('scrim').onclick = closeDrawer;
-$('openOther').onclick = () => { closeDrawer(); void renderRecent(); $('welcome').hidden = false; };
+$('openOther').onclick = () => { closeDrawer(); void renderRecent(); $('startBack').hidden = !state.city; $('welcome').hidden = false; $('welcome').scrollTop = 0; if (state.city) $('startBack').focus(); };
+// reopened over a map: a way back to it (button or Esc)
+$('startBack').onclick = () => { $('welcome').hidden = true; };
 $('fitCity').onclick = () => { closeDrawer(); if (state.city) map.fitBounds(state.city.meta.bounds, { padding: 40, bearing: 0, pitch: 0 }); };
 $('exportPng').onclick = () => {
   closeDrawer();
@@ -319,7 +331,6 @@ $('exportPng').onclick = () => {
   });
   map.triggerRepaint();
 };
-$('welcome').addEventListener('click', (e) => { if (e.target === $('welcome') && state.city) $('welcome').hidden = true; });
 
 // ------------------------------------------------------------------ selection / info panel
 // i18n-keys
@@ -767,7 +778,11 @@ searchInput.addEventListener('blur', () => setTimeout(() => $('searchbox').class
 $('searchClear').onclick = () => { searchInput.value = ''; runSearch(); searchInput.focus(); closePanel(); };
 window.addEventListener('keydown', (e) => {
   if (e.key === '/' && document.activeElement !== searchInput && state.city) { e.preventDefault(); searchInput.focus(); }
-  if (e.key === 'Escape') { closePanel(); closeDrawer(); hideCtx(); $('layerPop').hidden = true; }
+  if (e.key === 'Escape') {
+    // the start screen reopened over a map: Esc goes back to it (not while a map is loading)
+    if (!$('welcome').hidden && state.city && $('loading').hidden) { $('welcome').hidden = true; return; }
+    closePanel(); closeDrawer(); hideCtx(); $('layerPop').hidden = true;
+  }
 });
 
 // ------------------------------------------------------------------ chips, layers, controls
