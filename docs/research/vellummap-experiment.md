@@ -281,6 +281,20 @@ The 서랑시 save (`.crp`) that the CSLMapView export was written with also mat
 - 95% of driving roads get their real prefab lanes from the save; the rest stay estimated;
 - driving with the save matches CSLMapView + save within 5% for 98% of 60 trips.
 
+**Road facts, cycling and navigation** (same catalogue from the other 6 cities):
+- the save names a prefab for 13,436 matched roads and paths; for the 8,409 it knows, lanes, speed limit, one-way and bike lane equal the CSLMapView export on every one;
+- 95% of drivable road length is covered; 10 of the city's 39 bike-lane pieces are on covered roads (all 39 with the shipped catalogue, which includes this city);
+- navigation shows no limit without the save and only CSLMapView's own values with it (25–100 km/h).
+- TM:PE counts differ a little where roads stay estimated (speed 106 vs 98, turn bans 12 vs 6); with every prefab known they are identical, so lane-level rules on estimated roads are approximate.
+
+**Districts and stations:**
+- the Bridge district grid equals the save's DistrictManager grid on every cell the save stores (40,041 cells of the central 512² area; the 900² Bridge grid beyond it can't be checked against this save);
+- all 37 district populations equal the save's; ids, names and label positions equal CSLMapView;
+- buildings get their district from that grid, so 18% of buildings land in a different district than CSLMapView's estimate — the Bridge value is the game's;
+- 57 stations on both maps with the same names; 8 that CSLMapView leaves unnamed take the stop name the Bridge file carries.
+
+**Discoveries still off:** widest road, longest bridge and viaduct, biggest footprint and most parts. A save could feed some of them (prefab names mark bridges, lanes give width), but only one test city has a save, which can't show them reliable, so they stay off.
+
 In the browser (built catalogue, which includes this city) the save covers 100% of roads, the traffic layer draws, and every panel names where its lanes come from.
 
 **What this can't show:** one save on one city. A save from another game version, a city with many workshop road prefabs the catalogue doesn't know, or a Bridge export made long after the save will match fewer objects; the panel says so (close match / too far apart), as it does for `.cslmap`.
