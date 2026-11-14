@@ -1,41 +1,48 @@
 // A save (.crp) on a .vellummap: checked on a real matched set — a Vellum Bridge export, the save it was made from, and
-// the CSLMapView export written with that save. Local only (needs the three files), like check:sim.
+// the CSLMapView export written with that save. Local only (needs the three files), like check:sim; skips without them.
 //   npm run check:vellum-sim -- <bridge.vellummap> <save.crp> <export.cslmap>
-// With no arguments it looks for the newest 서랑시 files in the usual folders and skips when they are missing.
+// or set VELLUM_SIM_MAP, VELLUM_SIM_SAVE and VELLUM_SIM_CSLMAP, or put the three files in tools/fixtures/local/ as
+// match.vellummap, match.crp and match.cslmap (that folder is git-ignored).
+// The lane catalogue is built from the other cities' exports in $CSLMAP_DIR (default: CSLMapView's folder in the game
+// install), leaving this city out; without them it falls back to the shipped catalogue, which flatters the numbers.
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { readVellummap, vellumToCity, areaAt } from '../src/vellummap';
 import { readCrp, openSaveData, loadBytes, ASSET_DATA } from '../src/sim/reader';
 import { readDistrictData } from '../src/sim/city';
 import { parseCity } from '../src/parse';
 import { loadSim, type SimData } from '../src/sim/index';
-import { routingCopy, buildCatalog } from '../src/lane-infer';
+import { routingCopy, buildCatalog, type LaneCatalog } from '../src/lane-infer';
 import { Router } from '../src/router';
 import { inferOneWay } from '../src/oneway';
 import { detectTolls } from '../src/tolls';
 import { buildCity, laneInfo } from '../src/build';
+import shipped from '../src/lane-catalog.json';
 
-const home = os.homedir();
-const newest = (dir: string, re: RegExp) => (existsSync(dir) ? readdirSync(dir).filter((f) => re.test(f.normalize('NFC'))).map((f) => path.join(dir, f)).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0] : undefined);
-const exportDir = path.join(home, 'Library/Application Support/Steam/steamapps/common/Cities_Skylines/CSLMapView');
-const [vf, sf, cf] = process.argv.slice(2).length === 3 ? process.argv.slice(2) : [
-  newest(path.join(home, 'Vellum Bridge', '서랑시'), /\.vellummap$/),
-  path.join(home, 'Library/Application Support/Colossal Order/Cities_Skylines/Saves/!w_nweg_23%002E0%002E1.crp'),
-  newest(exportDir, /^서랑시-20261107-234707\.cslmap$/),
+const local = (f: string) => path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'local', f);
+const args = process.argv.slice(2);
+const [vf, sf, cf] = args.length === 3 ? args : [
+  process.env.VELLUM_SIM_MAP ?? local('match.vellummap'),
+  process.env.VELLUM_SIM_SAVE ?? local('match.crp'),
+  process.env.VELLUM_SIM_CSLMAP ?? local('match.cslmap'),
 ];
-if (!vf || !sf || !cf || ![vf, sf, cf].every((f) => existsSync(f))) { console.log('vellum sim check skipped: no matched Bridge export, save and CSLMapView export here'); process.exit(0); }
+if (![vf, sf, cf].every((f) => existsSync(f))) { console.log('vellum sim check skipped: no matched Bridge export, save and CSLMapView export (see the top of tools/vellum-sim-check.ts)'); process.exit(0); }
+const exportDir = process.env.CSLMAP_DIR ?? path.join(os.homedir(), 'Library/Application Support/Steam/steamapps/common/Cities_Skylines/CSLMapView');
 
 let failures = 0;
 const ok = (c: boolean, what: string, got?: unknown) => { console.log(`${c ? '  ✓' : '  ✗'} ${what}${got !== undefined ? '  → ' + JSON.stringify(got) : ''}`); if (!c) failures++; };
 const buf = (f: string) => { const b = readFileSync(f); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer; };
 const v = vellumToCity(await readVellummap(new Uint8Array(readFileSync(vf))));
 const c = parseCity(readFileSync(cf, 'utf8'));
-// the lane catalogue without this city, so lanes the save cannot name stay honest estimates
-const seen = new Set<string>([c.name]);
-const others = readdirSync(exportDir).filter((f) => /\.cslmap$/i.test(f)).sort((a, b) => statSync(path.join(exportDir, b)).mtimeMs - statSync(path.join(exportDir, a)).mtimeMs)
-  .filter((f) => { const k = f.normalize('NFC').replace(/-\d{8}-\d{6}\.cslmap$|\.cslmap$/i, ''); return !seen.has(k) && seen.add(k); });
-const cat = buildCatalog(others.map((f) => parseCity(readFileSync(path.join(exportDir, f), 'utf8'))));
+// the lane catalogue without this city, so lanes the save cannot name stay honest estimates (newest export per city)
+const seen = new Set<string>();
+const others = (existsSync(exportDir) ? readdirSync(exportDir) : []).filter((f) => /\.cslmap$/i.test(f)).sort((a, b) => statSync(path.join(exportDir, b)).mtimeMs - statSync(path.join(exportDir, a)).mtimeMs)
+  .filter((f) => { const k = f.normalize('NFC').replace(/-\d{8}-\d{6}\.cslmap$|\.cslmap$/i, ''); return !seen.has(k) && seen.add(k); })
+  .map((f) => parseCity(readFileSync(path.join(exportDir, f), 'utf8'))).filter((x) => x.name !== c.name);
+const cat: LaneCatalog = others.length ? buildCatalog(others) : (shipped as unknown as LaneCatalog);
+console.log(others.length ? `  lane catalogue from ${others.length} other cities` : '  no other cities in $CSLMAP_DIR: using the shipped catalogue (it may include this city)');
 
 const rv = await loadSim(buf(sf), v, () => {}, (saved) => routingCopy(v, cat, saved));
 const rc = await loadSim(buf(sf), c, () => {});

@@ -33,7 +33,7 @@ jobs:
         run: npm run check
       - name: Korean translations
         run: npm run check:i18n
-      - name: .vellummap reader (experimental)
+      - name: .vellummap reader
         run: npm run check:vellummap
 
   data:

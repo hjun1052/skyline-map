@@ -898,7 +898,6 @@ export const KO: Record<string, string> = {
   "{v} ft²": "{v} ft²",
   "{v} mi": "{v} mi",
   // start screen
-  "(.cslmap or .cslmap.gz)": "(.cslmap 또는 .cslmap.gz)",
   "Back to the map": "지도로 돌아가기",
   "Choose a .cslmap file": ".cslmap 파일 선택",
   "Click {button} at the top of the page. In the window that opens, press {keys} to jump to the address bar.": "페이지 위쪽의 {button}을 클릭하고, 열리는 창에서 {keys}를 눌러 주소 표시줄로 이동하세요.",

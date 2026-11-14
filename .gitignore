@@ -9,3 +9,6 @@ marketing/
 .dev.vars
 *.crp
 *.cslmap
+
+# local-only test files (tools/vellum-sim-check.ts)
+tools/fixtures/local/

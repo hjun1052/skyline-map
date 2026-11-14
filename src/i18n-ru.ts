@@ -898,7 +898,6 @@ export const RU: Record<string, string> = {
   "{v} ft²": "{v} фт²",
   "{v} mi": "{v} мили",
   // start screen
-  "(.cslmap or .cslmap.gz)": "(.cslmap или .cslmap.gz)",
   "Back to the map": "Вернуться к карте",
   "Choose a .cslmap file": "Выбрать файл .cslmap",
   "Click {button} at the top of the page. In the window that opens, press {keys} to jump to the address bar.": "Нажмите {button} вверху страницы. В открывшемся окне нажмите {keys}, чтобы перейти в адресную строку.",

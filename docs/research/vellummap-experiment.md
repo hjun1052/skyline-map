@@ -309,6 +309,7 @@ Found and fixed (most also affected .cslmap):
 - Esc from the map didn't close the closure, reach, discoveries or save panels.
 - Alternatives that drew the same line to the metre (but not the micrometre) were both shown.
 - The approximate-route note was five lines on a phone and mentioned one-way streets for walking and transit.
+- Recent cities kept one entry per city name, so a .cslmap and a .vellummap of the same city replaced each other; they are now separate entries, and older stored entries move over with their saves.
 
-Kept as is: the first-open notice shows on every file pick until "Don't show this again" (reopening from recent cities skips it); recent cities are keyed by city name, so a .cslmap and a .vellummap of the same city share one entry; station names that only the Bridge file carries (the game's own stop names) are shown.
+Kept as is: the first-open notice shows on every file pick until "Don't show this again" (reopening from recent cities skips it); station names that only the Bridge file carries (the game's own stop names) are shown.
 

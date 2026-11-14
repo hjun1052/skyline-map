@@ -21,7 +21,7 @@ import { createSchematic } from './schematic-view';
 import { createContextStore, createContextEditor, moneyField, parseMoney, describeRule } from './context-ui';
 import { bottomSheet, isPhone } from './sheet';
 import { mountFindFile } from './findfile';
-import { listRecent, rememberMap, rememberSave, forget, type Recent } from './recent';
+import { listRecent, rememberMap, rememberSave, forget, recentId, type Recent } from './recent';
 import { showDistrictGlow, clearDistrictGlow } from './district-glow';
 import { t, tn, initLang, setLang, onLang, applyStatic, getLang, LANGS, locale, fmtFixed, type Lang } from './i18n';
 import { getUnits, setUnits, onUnits, imperial, fmtLength, fmtHeight, fmtWidth, fmtAreaSmall, fmtAreaLarge, fmtSpeed, type Units } from './units';
@@ -41,6 +41,8 @@ const state = {
   city: null as BuiltCity | null,
   contoursLoaded: false,
   currentFile: '' as string,
+  /** this map's entry in recent cities (recent.ts), or null when it isn't remembered (the sample city) */
+  recentId: null as string | null,
 };
 const persist = () => { try { localStorage.setItem('atlas:opts', JSON.stringify({ mode: state.mode, opts: state.opts })); } catch { /* private mode */ } };
 const styleOpts = (): StyleOptions => ({ ...state.opts, ...(hasLanes() ? {} : { bikeFromSave: true }), theme: state.mode === 'night' ? 'dark' : 'light', terrain: state.mode === 'terrain', contours: state.opts.contours || state.mode === 'terrain' });
@@ -234,9 +236,12 @@ function showCity(city: BuiltCity) {
   void pricing.attach(city);
   schem.reset();
   closePanel();
+  state.recentId = null;
   if (pending) {
     const p = pending; pending = null;
-    void rememberMap(city.meta.name, p.file, city.meta.generated, p.blob);
+    const format = city.meta.source ? 'vellummap' : 'cslmap';
+    state.recentId = recentId(format, city.meta.name);
+    void rememberMap(format, city.meta.name, p.file, city.meta.generated, p.blob);
     if (p.save) void sim.load(new File([p.save.blob], p.save.file));
   }
   console.info(`[atlas] ${city.meta.name} ready in ${Math.round(performance.now() - loadT0)} ms`, city.meta.stats);
@@ -293,20 +298,22 @@ async function renderRecent() {
   if (!list.length) { box.innerHTML = ''; return; }
   const palette = ['#188038', '#1a73e8', '#e37400', '#a142f4', '#d93025'];
   const X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
-  const meta = (r: Recent) => esc(t('Opened {date}', { date: fmtDate(r.opened) })) + (r.save ? ' · ' + esc(t('with save')) : '');
+  const meta = (r: Recent) => esc(t('Opened {date}', { date: fmtDate(r.opened) })) + (r.save ? ' · ' + esc(t('with save')) : '') + (r.format === 'vellummap' ? ' · .vellummap' : '');
+  /** the city, and the format when it is a .vellummap (a .cslmap of the same city is a separate entry) */
+  const label = (r: Recent) => (r.format === 'vellummap' ? `${r.name} (.vellummap)` : r.name);
   const initial = (r: Recent) => esc([...r.name][0] ?? '?');
-  const forgetBtn = (r: Recent, small = '') => `<button type="button" class="forget${small}" data-forget="${esc(r.name)}" title="${esc(t('Forget'))}" aria-label="${esc(t('Forget {city}', { city: r.name }))}">${X}</button>`;
+  const forgetBtn = (r: Recent, small = '') => `<button type="button" class="forget${small}" data-forget="${esc(r.id)}" title="${esc(t('Forget'))}" aria-label="${esc(t('Forget {city}', { city: label(r) }))}">${X}</button>`;
   const [latest, ...rest] = list;
   box.innerHTML = `
     <div class="recent-latest">
       <span class="avatar" style="background:${palette[0]}" aria-hidden="true">${initial(latest)}</span>
       <div class="recent-who"><div class="recent-label">${esc(t('Continue where you left off'))}</div><div class="recent-name">${esc(latest.name)}</div><div class="recent-when">${meta(latest)}</div></div>
-      <button type="button" class="start-btn ghost small" data-recent="${esc(latest.name)}" aria-label="${esc(t('Open {city}', { city: latest.name }))}">${esc(t('Open'))}</button>
+      <button type="button" class="start-btn ghost small" data-recent="${esc(latest.id)}" aria-label="${esc(t('Open {city}', { city: label(latest) }))}">${esc(t('Open'))}</button>
       ${forgetBtn(latest)}
     </div>
     ${rest.length ? `<div class="recent-more"><div class="recent-more-label">${esc(t('Other recent cities'))}</div>
       <ul class="recent-list${rest.length > 2 ? ' two' : ''}">${rest.map((r, i) => `<li class="recent-city">
-        <button type="button" class="recent-open" data-recent="${esc(r.name)}"><span class="mini" style="background:${palette[(i + 1) % palette.length]}" aria-hidden="true">${initial(r)}</span><span class="recent-text"><span class="recent-cname">${esc(r.name)}</span><span class="recent-cwhen">${meta(r)}</span></span></button>
+        <button type="button" class="recent-open" data-recent="${esc(r.id)}"><span class="mini" style="background:${palette[(i + 1) % palette.length]}" aria-hidden="true">${initial(r)}</span><span class="recent-text"><span class="recent-cname">${esc(r.name)}</span><span class="recent-cwhen">${meta(r)}</span></span></button>
         ${forgetBtn(r, ' small')}</li>`).join('')}</ul></div>` : ''}
     <p class="recent-note">${esc(t('Kept in this browser only. Forget a city to remove it.'))}</p>`;
   box.onclick = async (e) => {
@@ -314,7 +321,7 @@ async function renderRecent() {
     const f = (el.closest('[data-forget]') as HTMLElement | null)?.dataset.forget;
     if (f !== undefined) { e.stopPropagation(); await forget(f); return renderRecent(); }
     const n = (el.closest('[data-recent]') as HTMLElement | null)?.dataset.recent;
-    const r = n !== undefined && list.find((x) => x.name === n);
+    const r = n !== undefined && list.find((x) => x.id === n);
     if (r) void openRecent(r);
   };
 }
@@ -699,7 +706,7 @@ const sim = createSim(map, {
   onRules: () => dir.rulesChanged(),
   // a save was loaded, replaced or cleared: panels, the cycling chip and layer follow it
   onData: () => { syncUi(); if (state.city) renderDrawer(state.city); if (!$('panel').hidden) panelRefresh?.(); },
-  onLoaded: (f) => { if (state.city) void rememberSave(state.city.meta.name, f.name, f); },
+  onLoaded: (f) => { if (state.recentId) void rememberSave(state.recentId, f.name, f); }, // the entry of the map it was loaded on
   selectLine: (id) => selectLine(id, true),
   onOpen: () => { closeDrawer(); closePanel(); hideCtx(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); closure.close(); },
 });
