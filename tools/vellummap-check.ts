@@ -70,12 +70,16 @@ function baseModules(): Mods {
     'water.json': enc({ seaLevel: 40, depth: { simulationPaused: true } }),
     'roads.json': enc({
       nodes: [{ sourceId: 1, position: P(-2000, 0), elevation: 0, underground: false }, { sourceId: 2, position: P(-1000, 0), elevation: 0, underground: false }, { sourceId: 3, position: P(0, 0), elevation: 12, underground: false },
-        { sourceId: 4, position: P(1000, 0), elevation: 0, underground: true }, { sourceId: 10, position: P(-1500, 10), elevation: 0, underground: false }, { sourceId: 11, position: P(-500, 10), elevation: 0, underground: false }],
+        { sourceId: 4, position: P(1000, 0), elevation: 0, underground: true }, { sourceId: 10, position: P(-1500, 10), elevation: 0, underground: false }, { sourceId: 11, position: P(-500, 10), elevation: 0, underground: false }, { sourceId: 20, position: P(-2000, 500), elevation: 0, underground: false }, { sourceId: 21, position: P(-1000, 500), elevation: 0, underground: false }],
       segments: [
         { sourceId: 100, startNodeSourceId: 1, endNodeSourceId: 2, itemClass: 'Medium Road', width: 16, name: 'Elm Street', points: [P(-2000, 0), P(-1500, 0), P(-1000, 0)] },
         { sourceId: 101, startNodeSourceId: 2, endNodeSourceId: 3, itemClass: 'Medium Road', width: 16, name: 'Elm Street', points: [P(-1000, 0), P(-500, 0), P(0, 0)] },
         { sourceId: 102, startNodeSourceId: 3, endNodeSourceId: 4, itemClass: 'Highway', width: 22, points: [P(0, 0), P(1000, 0)] },
         { sourceId: 103, startNodeSourceId: 1, endNodeSourceId: 4, itemClass: 'Water Pipe', width: 2, points: [P(-2000, 0), P(1000, 0)] },
+        // the lanes ships and planes travel: Bridge exports them, CSLMapView does not
+        { sourceId: 104, startNodeSourceId: 2, endNodeSourceId: 4, itemClass: 'Ship Path', width: 32, points: [P(-1000, 0), P(1000, 0)] },
+        { sourceId: 105, startNodeSourceId: 1, endNodeSourceId: 3, itemClass: 'Airplane Path', width: 32, points: [P(-2000, 0), P(0, 0)] },
+        { sourceId: 106, startNodeSourceId: 20, endNodeSourceId: 21, itemClass: 'Electricity Wire', width: 12, points: [P(-2000, 500), P(-1000, 500)] },
         // the bus line's own segments, as Bridge exports them (no path: that is in transit.json)
         { sourceId: 200, startNodeSourceId: 10, endNodeSourceId: 11, itemClass: 'Bus Line', width: 0, points: [P(-1500, 10), P(-500, 10)] },
       ],
@@ -85,6 +89,14 @@ function baseModules(): Mods {
     'buildings.json': enc({ buildings: [
       { sourceId: 900, prefab: 'Bus Station', name: 'Central', customName: true, itemClass: 'Bus Facility', serviceType: 'PublicTransportBus', footprint: [P(-520, 30), P(-480, 30), P(-480, 60), P(-520, 60)] },
       { sourceId: 901, name: 'H1 1x1 Sweatshop01', itemClass: 'Low Commercial - Level1', serviceType: 'CommercialLow', footprint: [P(-1900, 30), P(-1880, 30), P(-1880, 50), P(-1900, 50)] },
+      // network pieces Bridge exports as buildings (a median, a pipe junction): left out; a rock with the beautification class stays
+      { sourceId: 902, prefab: 'Modern Median', itemClass: 'Highway', serviceType: 'None', footprint: [P(100, 0), P(140, 0), P(140, 4), P(100, 4)] },
+      { sourceId: 903, prefab: 'Water Pipe Junction', itemClass: 'Water Pipe', serviceType: 'None', footprint: [P(200, 0), P(204, 0), P(204, 4), P(200, 4)] },
+      { sourceId: 904, prefab: 'Boulder 01', itemClass: 'Beautification Item', serviceType: 'None', footprint: [P(300, 0), P(310, 0), P(310, 10), P(300, 10)] },
+      // a workshop asset with a glass overlay inside it (linked as a part), and a neighbouring copy of the same tower (not)
+      { sourceId: 910, prefab: '123456789.Tower_Data', itemClass: 'High Residential - Level5', serviceType: 'ResidentialHigh', footprint: [P(600, 0), P(640, 0), P(640, 40), P(600, 40)] },
+      { sourceId: 911, prefab: '123456789.Tower glass_Data', itemClass: 'Beautification Item', serviceType: 'None', footprint: [P(605, 5), P(635, 5), P(635, 35), P(605, 35)] },
+      { sourceId: 912, prefab: '123456789.Tower_Data', itemClass: 'High Residential - Level5', serviceType: 'ResidentialHigh', footprint: [P(640, 0), P(680, 0), P(680, 40), P(640, 40)] },
     ] }),
     'districts.json': enc({ districts: [{ sourceId: 3, name: 'Westside', labelPosition: P(-4000, 0, 0), population: 1234, homes: 500, jobs: { commercial: 10, industrial: 20, office: 30 }, specializations: ['Tourist'] }] }),
     'parks.json': enc({ parks: [{ sourceId: 1, name: 'Zoo Park', labelPosition: P(-3000, 2000, 0), parkType: 'Zoo' }] }),
@@ -120,6 +132,11 @@ async function doc(mods: Mods, o: { version?: string; manifestExtra?: object; mo
   const b900 = city.buildings.find((b) => b.id === 900)!, b901 = city.buildings.find((b) => b.id === 901)!;
   ok(b900.name === 'Bus Station' && b900.myname === 'Central' && b900.srv === 'PublicTransport' && b900.subsrv === 'PublicTransportBus', 'buildings 1.1: prefab, shown name, service', b900);
   ok(b901.name === 'H1 1x1 Sweatshop01' && b901.myname === '' && b901.srv === 'Commercial', 'buildings 1.0: name is the prefab', b901);
+  ok(!city.buildings.some((b) => b.id === 902 || b.id === 903) && city.buildings.some((b) => b.id === 904), 'network pieces are not buildings; a beautification rock is', city.buildings.map((b) => b.id));
+  ok(!city.segs.some((s) => s.id === 104 || s.id === 105), 'ship and airplane lanes are left out');
+  { const by = (id: number) => city.buildings.find((b) => b.id === id)!;
+    ok(by(911).parent === 910 && !by(910).parent && !by(912).parent, 'an overlay inside its workshop asset is linked as a part; a neighbouring copy is not', [by(910).parent, by(911).parent, by(912).parent]); }
+  ok(city.nodes.get(20)!.srv === 'Electricity' && city.nodes.get(2)!.srv === 'Road', 'node service from its network (power line, road)', [city.nodes.get(20)!.srv, city.nodes.get(2)!.srv]);
   ok(city.districts[0].name === 'Westside' && city.parks[0].type === 'Zoo', 'districts and parks');
   const ex = city.extras!;
   ok(ex.source === 'vellummap' && !ex.caps.lanes && !ex.caps.buildingParts && ex.producer === 'Vellum Bridge 1.0.0', 'extras', { ...ex, districtGrid: undefined });
@@ -243,9 +260,13 @@ async function doc(mods: Mods, o: { version?: string; manifestExtra?: object; mo
   console.log(`  on-ground flag derived: ${ogSame}/${og.length} agree with the export`);
   const csRoads = cs.segs.filter((s) => !s.path && !/^Landscaping/.test(s.icls) && !/ Line$/.test(s.icls)), vmRoads = new Map(vm.segs.filter((s) => !s.path).map((s) => [s.id, s]));
   ok(csRoads.every((s) => { const m = vmRoads.get(s.id); return m && m.sn === s.sn && m.en === s.en && m.icls === s.icls && m.pts.length === s.pts.length; }), 'road segments: ids, ends, item class, geometry (the converter drops landscaping and line pieces)');
-  ok(cs.buildings.length === vm.buildings.length && cs.buildings.every((b, i) => vm.buildings[i].id === b.id && vm.buildings[i].name === b.name && vm.buildings[i].subsrv === b.subsrv && vm.buildings[i].pts.length === b.pts.length), 'buildings: ids, prefabs, sub-services, footprints');
-  const srvSame = cs.buildings.filter((b, i) => vm.buildings[i].srv === b.srv).length;
-  ok(srvSame / cs.buildings.length > 0.99, 'service derived from item class', `${srvSame}/${cs.buildings.length}`);
+  // network pieces exported as buildings (metro pillars here) are left out by the reader, as CSLMapView usually does
+  const netIcls = new Set(cs.segs.filter((s) => !s.path).map((s) => s.icls));
+  const csBuildings = cs.buildings.filter((b) => !netIcls.has(b.icls) || b.icls === 'Beautification Item' || /Dam\b/.test(b.icls));
+  console.log(`  network pieces left out of the buildings: ${cs.buildings.length - csBuildings.length}`);
+  ok(csBuildings.length === vm.buildings.length && csBuildings.every((b, i) => vm.buildings[i].id === b.id && vm.buildings[i].name === b.name && vm.buildings[i].subsrv === b.subsrv && vm.buildings[i].pts.length === b.pts.length), 'buildings: ids, prefabs, sub-services, footprints');
+  const srvSame = csBuildings.filter((b, i) => vm.buildings[i].srv === b.srv).length;
+  ok(srvSame / csBuildings.length > 0.99, 'service derived from item class', `${srvSame}/${csBuildings.length}`);
   ok(JSON.stringify(cs.districts) === JSON.stringify(vm.districts.map((d) => ({ ...d, type: undefined }))) || cs.districts.every((d, i) => vm.districts[i].id === d.id && vm.districts[i].name === d.name), 'districts');
   { const real = cs.parks.filter((p) => p.id); ok(real.length === vm.parks.length && real.every((p, i) => vm.parks[i].id === p.id && vm.parks[i].name === p.name && vm.parks[i].type === p.type), 'parks (the converter drops the id-0 placeholder)'); }
   ok(cs.transports.every((t, i) => { const v = vm.transports[i]; return v.id === t.id && v.name === t.name && v.type === t.type && v.stops.join() === t.stops.join() && v.color.join() === t.color.join(); }), 'transit lines: ids, names, modes, colours, stops');

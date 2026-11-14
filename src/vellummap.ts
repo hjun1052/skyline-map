@@ -302,6 +302,38 @@ export function roadTypeName(itemClass: string, width: number): string {
 }
 
 const LINE_SEG = (ic: string) => / Line$/.test(ic) && !/Pipe|Power/.test(ic);
+/** the lanes ships and planes travel (Vellum Bridge exports them, CSLMapView does not): not drawn, never routed */
+const VEHICLE_LANE = (ic: string) => /^(Ship|Airplane) Path$/.test(ic);
+/** service of a network's nodes, as CSLMapView reports it (checked on a matched pair of exports of one city) */
+const nodeService = (ic: string) => LINE_SEG(ic) || /Track|Metro|Monorail|Cable|Station|Stop|Ferry|Ship|Airplane|Transport Connection/i.test(ic) ? 'PublicTransport'
+  : /Water|Pipe|Heating/i.test(ic) ? 'Water' : /Electricity|Power|Wire/i.test(ic) ? 'Electricity' : /Beautification|Pedestrian|Landscaping/i.test(ic) ? 'Beautification' : 'Road';
+
+/**
+ * The format has no sub-building chains (CSLMapView's prntb/subb). The parts it can be sure of are linked back to their
+ * main building: a building from the same workshop item (same Steam id prefix) that lies mostly inside a bigger one of a
+ * different class, as glass, roof and platform overlays do. On 7 CSLMapView exports this is right for 212 of 215 links
+ * (a third of all parts); the rest stay separate buildings, so the records that add parts up stay off (caps.buildingParts).
+ */
+function linkOverlays(buildings: CBuilding[]) {
+  const prefix = (n: string) => /^(\d{6,})\./.exec(n)?.[1];
+  const box = (b: CBuilding) => { let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity; for (const p of b.pts) { x0 = Math.min(x0, p.x); z0 = Math.min(z0, p.z); x1 = Math.max(x1, p.x); z1 = Math.max(z1, p.z); } return [x0, z0, x1, z1]; };
+  const area = (a: number[]) => (a[2] - a[0]) * (a[3] - a[1]);
+  const byItem = new Map<string, CBuilding[]>();
+  for (const b of buildings) { const k = prefix(b.name); if (k && b.pts.length >= 3) (byItem.get(k) ?? byItem.set(k, []).get(k)!).push(b); }
+  for (const list of byItem.values()) {
+    if (list.length < 2) continue;
+    const bx = list.map(box);
+    list.forEach((b, i) => {
+      let best = -1;
+      for (let j = 0; j < list.length; j++) {
+        if (i === j || list[j].icls === b.icls || area(bx[j]) <= area(bx[i]) || (best >= 0 && area(bx[j]) <= area(bx[best]))) continue;
+        const ov = Math.max(0, Math.min(bx[i][2], bx[j][2]) - Math.max(bx[i][0], bx[j][0])) * Math.max(0, Math.min(bx[i][3], bx[j][3]) - Math.max(bx[i][1], bx[j][1]));
+        if (ov >= 0.5 * Math.max(1, area(bx[i]))) best = j;
+      }
+      if (best >= 0) b.parent = list[best].id;
+    });
+  }
+}
 
 export function vellumToCity(d: VellumDoc): CityData {
   const m = d.manifest;
@@ -332,17 +364,22 @@ export function vellumToCity(d: VellumDoc): CityData {
   const geom = new Map<number, Vec3[]>();
   const lineSegs = new Map<string, CSeg[]>(); // Bridge exports the lines' own segments; .cslmap carries the legs on them
   const offGround = (id: number) => { const nd = nodes.get(id); if (nd) nd.og = false; };
+  const netClasses = new Set<string>(), laneNodes: number[] = [];
   for (const s of list(roads, 'segments', 'roads.json')) {
     const id = sid(s?.sourceId, 'roads.json segment'), where = `roads.json segment ${id}`, ic = str(s.itemClass), width = Number(s.width) || 0;
     const seg: CSeg = { id, sn: sid(s.startNodeSourceId, where), en: sid(s.endNodeSourceId, where), icls: ic, width: width || 8,
       // no prefab name in the format: a road-type name from the item class and width stands in, and no lane table matches it
       name: roadTypeName(ic, width), customName: str(s.name), pts: list(s, 'points', where).map((p) => pos(p, where)), path: null };
-    const srv = LINE_SEG(ic) || /Track|Metro|Monorail|Cable|Station|Stop/i.test(ic) ? 'PublicTransport' : /Beautification/i.test(ic) ? 'Beautification' : 'Road';
+    netClasses.add(ic);
+    if (VEHICLE_LANE(ic)) { laneNodes.push(seg.sn, seg.en); continue; }
+    const srv = nodeService(ic);
     for (const n of [seg.sn, seg.en]) { const nd = nodes.get(n); if (nd && (!nd.srv || nd.srv === 'Road')) nd.srv = srv; }
     geom.set(id, seg.pts);
     if (LINE_SEG(ic)) { offGround(seg.sn); offGround(seg.en); const k = seg.sn + ',' + seg.en; (lineSegs.get(k) ?? lineSegs.set(k, []).get(k)!).push(seg); continue; }
     segs.push(seg);
   }
+  // nodes only ship or plane lanes use (stops, outside connections): transport, as CSLMapView reports them
+  for (const n of laneNodes) { const nd = nodes.get(n); if (nd && !nd.srv) nd.srv = 'PublicTransport'; }
 
   const stopInfo = new Map<number, StopInfo>();
   let synthetic = -1;
@@ -372,7 +409,11 @@ export function vellumToCity(d: VellumDoc): CityData {
     // module 1.1: `prefab` is the asset and `name` the name the player sees (renamed or unique buildings only)
     const prefab = str(b.prefab) || str(b.name), shown = b.prefab ? str(b.name).trim() : '';
     return { id, name: prefab, myname: shown, srv: serviceOf(ic, sub), subsrv: sub, icls: ic, parent: 0, sub: 0, pts: list(b, 'footprint', `building ${id}`).map((p) => pos(p, `building ${id}`)) };
-  });
+  })
+    // pieces of networks (pillars, medians, pipe junctions) that Vellum Bridge exports as buildings and CSLMapView leaves out:
+    // a building with a network's item class. Beautification Item (rocks, parking lots) and dams are real buildings too.
+    .filter((b) => !netClasses.has(b.icls) || b.icls === 'Beautification Item' || /Dam\b/.test(b.icls));
+  linkOverlays(buildings);
 
   const districtStats = new Map<number, DistrictStats>();
   const area = (a: any, where: string): CArea => {

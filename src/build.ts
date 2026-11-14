@@ -302,7 +302,13 @@ export function districtGrid(nodes: DistrictSample[], reach = 600, noneBias = 20
 
 // ------------------------------------------------------------------ main ----
 
-export function buildCity(city: CityData, progress: (msg: string) => void = () => {}, oneway?: OneWayResult, tolls?: TollData): BuiltCity {
+/**
+ * `drawAs`: for a file without lanes (.vellummap), the road type estimated for each segment (lane-infer.ts). It only picks
+ * the drawn class and width (88% of classes and 91% of widths match the .cslmap of the same city, against 66% and 77% from
+ * class and width alone); lanes, speeds, one-ways, tram tracks and bridges still come from the file, so nothing estimated
+ * is shown as a fact.
+ */
+export function buildCity(city: CityData, progress: (msg: string) => void = () => {}, oneway?: OneWayResult, tolls?: TollData, drawAs?: Map<number, CSegType>): BuiltCity {
   const T = makeTerrainSampler(city);
   const stats: Record<string, number> = {};
   const bump = (k: string) => (stats[k] = (stats[k] ?? 0) + 1);
@@ -335,7 +341,8 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
     if (seg.pts.length < 2) continue;
     const st = city.segTypes.get(seg.name);
     const lanes = laneInfo(st);
-    const c = classify(seg, st, lanes, city.segTypes.size === 0);
+    const est = drawAs?.get(seg.id), estLanes = est && laneInfo(est);
+    const c = est ? classify({ ...seg, name: est.name }, est, estLanes!) : classify(seg, st, lanes, city.segTypes.size === 0);
     if (c.cls === 'concourse') { concourses.push(seg); continue; }
     if (c.group === 'skip' || c.group === 'route') continue;
 
@@ -355,11 +362,14 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
     // a named elevated/bridge type wins over the height test (next to a dam the reservoir surface sits far above the road)
     if (/Tunnel/i.test(both) || (sn?.ug && en?.ug) || (dy < -6 && !atGrade && !/Elevated|Bridge/i.test(both))) brunnel = 'tunnel';
     else if (/Elevated|Bridge/i.test(both) || (dy > 4.5 && !atGrade)) brunnel = 'bridge';
+    // cable cars always hang above the ground; without prefab names (.vellummap) the height test would mark every one a bridge
+    if (city.extras && c.cls === 'cablecar') brunnel = '';
     const avgY = seg.pts.reduce((s, p) => s + p.y, 0) / seg.pts.length;
 
     const coords = seg.pts.map(ll);
     const pts2: XY[] = seg.pts.map((p) => [p.x, p.z]);
-    let w = lanes.span > 0 ? Math.min(seg.width, lanes.span + 0.6) : seg.width * 0.62;
+    const wl = estLanes ?? lanes;
+    let w = wl.span > 0 ? Math.min(seg.width, wl.span + 0.6) : seg.width * 0.62;
     if (c.group === 'path') w = c.cls === 'pedestrian' ? Math.max(6, seg.width * 0.7) : Math.min(4, Math.max(2, seg.width * 0.45));
     if (c.cls === 'track') w = Math.min(seg.width * 0.6, 6);
     if (c.group === 'rail') w = Math.max(2, seg.width * 0.35);

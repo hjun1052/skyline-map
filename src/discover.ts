@@ -343,7 +343,7 @@ export function discover(city: CityData, built: BuiltCity): DiscoveryResult {
     });
   const both = [...roadSegs, ...railSegs];
   const bridges = structs('bridge', both), tunnels = structs('tunnel', both);
-  // without prefab names (.vellummap) low bridges look like roads, so the longest one may be missed: no record
+  // without prefab names (.vellummap) low bridges look like roads, so the longest one may be missed: no bridge record
   if (!noLanes) {
     const wet = bridges.map((b) => ({ ...b, wet: overWater(b.pts) })).filter((b) => b.wet >= 40 && b.wet >= b.len * 0.25);
     // i18n-keys
@@ -365,6 +365,10 @@ export function discover(city: CityData, built: BuiltCity): DiscoveryResult {
           note: 'The longest continuous elevated stretch, {len}, mostly over dry land.', params: { len: lenText(v.len) }, geom: [lineF(v.pts)], bbox: bboxOf(v.pts, 150) });
       }
     }
+  }
+
+  // tunnels are found from the file's own class and underground flags (no prefab names needed)
+  {
     // i18n-keys
     void ['Longest road tunnel', 'Longest rail tunnel', 'Unbroken underground for {len}.', 'Unbroken underground for {len}, {w} of it under water.', 'Road tunnel', 'Rail tunnel'];
     // end i18n-keys

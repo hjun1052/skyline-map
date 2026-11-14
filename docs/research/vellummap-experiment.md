@@ -205,3 +205,66 @@ A follow-up to "no routing": how far can routes get without lane data?
 - one-way vs two-way versions of one class and width (Two Lane Highway, small one-way streets);
 - road mods with lanes unlike anything in the catalogue;
 - the numbers come from 7 cities and are not a guarantee for others.
+
+## A real matched pair
+
+A real Vellum Bridge 1.0.0 export of 서랑시 (2026-11-14) matches the 2026-11-07 CSLMapView export of the same city node for node: 14,321 nodes, and nothing was built in between. This is the first test on real Bridge output.
+
+**What matched exactly:**
+- every shared road's ends, item class and width (9,295 roads);
+- every shared building's prefab, class and derived service;
+- the 947 street names both exports have.
+
+Bridge also names 3,495 more roads with the game's automatic names, so the map shows about 10 times as many street labels. 418 of 438 transit legs are identical, as with converted files.
+
+**What it showed, now fixed in the reader:**
+- **Ship and airplane lanes** (154 + 213 pieces) were drawn as ferry routes and taxiways. CSLMapView doesn't export them, so they're now skipped.
+- **Network pieces exported as buildings** (pillars, medians, pipe junctions; 1,941, of which 108 were drawn) are now dropped. The rule: a building with a network's item class, except Beautification Item and dams.
+  - Across the 7 CSLMapView exports this never removes a building those maps draw.
+  - Drawn buildings now match the converted-file numbers (6,215 vs 6,248). The remaining 33 are parts of multi-part assets.
+- **Node service** from the network class: 48% → 89% agreement. It only feeds the estimated-district fallback, which this format doesn't use.
+
+**Map drawing.** Each road's drawn class and width now come from its estimated road type; lanes, speeds, one-ways, tram tracks and bridges still come from the file.
+
+| Measure | Class + width rules | Estimated road type |
+|---|---|---|
+| Drawn class matches | 66% | 88% |
+| Width within 1 m | 77% | 91% |
+| Roads missing | 115 | 26 |
+| False bridges | 74 | 74 |
+
+The catalogue here was built from the other 6 cities.
+
+**Approximate directions on the real file** (catalogue from the other 6 cities):
+- every trip found: 80 drives, 80 walks, 80 transit trips;
+- drive times within 10% for 98% and within 25% for 100%;
+- walking and transit identical.
+- A fallback that matches another variant of the same network by name ("Highway2L2W Tunnel" → "Highway2L2W") cut the roads whose estimate differs from 411 to 189.
+
+What remains can't be told apart from the file:
+- the R69 racetrack, which is Highway at 12 m, exactly like a ramp;
+- small one-way streets;
+- bus-only roads, which are Small Road at 16 m, like any small road.
+
+**Discoveries:**
+- 28 records, against 33 from CSLMapView;
+- 20 identical, and 4 now name their road;
+- longest road and rail tunnel come back: they come from the file's own tunnel classes and flags, and both match exactly;
+- still left out without the data: longest bridge and viaduct (low bridges), widest road (lanes), biggest footprint and most parts (building chains).
+
+**Tested before deciding:**
+
+| Records | Test | Outcome |
+|---|---|---|
+| Road and rail tunnel | Each of the 7 CSLMapView cities, stripped to what a .vellummap holds | Identical in all 14 cases: kept |
+| Bridge and viaduct | The same test | Wrong in 5 of 7 cities (one longest bridge 1.27 km instead of 3.09 km): still left out |
+
+- **Bridges from node height:** missed 310 instead of 166, so not used. Most misses are low bridges whose nodes sit at ground level; only the prefab name marks them.
+- **Cable car lines** no longer count as bridges (41 false ones), which halves false bridges to 33.
+
+**Multi-part assets:**
+- A part shares its main building's workshop prefix 80% of the time.
+- Grouping by prefix and touching footprints is wrong for 59% of the pairs it makes, because neighbouring buildings from one asset pack share a prefix.
+- What is reliable: a same-prefix building mostly inside a bigger one of a different class, as glass, roof and platform overlays are. That is right for 212 of 215 links on 7 cities, a third of all parts. These are linked; the rest stay separate.
+- On the real file, buildings drawn only on the Bridge map dropped from 127 to 1.
+- The records that add parts up stay off.

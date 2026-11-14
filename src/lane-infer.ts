@@ -78,8 +78,27 @@ const NOT_A_WAY = /ship|ferry|airplane|plane|blimp|helicopter|cable ?car|pipe|po
 const words = (s: string, re: RegExp) => new Set(s.toLowerCase().match(re) ?? []);
 const carLanes = (lanes: LaneCatalog['types'][string]['lanes']) => lanes.some((l) => l[0].includes('Vehicle') && l[1].split(',').some((v) => v.trim() === 'Car'));
 
-function fallback(cat: LaneCatalog, icls: string, width: number): string | undefined {
+/** a network class without its variant word: "Highway2L2W TunnelTunnelClass" and "Highway2L2WGroundClass" are both "highway2l2w" */
+const stem = (ic: string) => ic.replace(/[\s_-]*(Ground|Elevated|Bridge|Tunnel|Slope)\b.*$|[\s_-]*(Ground|Elevated|Bridge|Tunnel|Slope)[A-Z]\w*$/, '').trim().toLowerCase();
+
+/**
+ * Lanes for a class the catalogue has never seen: first another variant of the same network (its ground, tunnel or
+ * elevated version, by name), whose one-way share is then known; else the nearest width in the same family, which
+ * leaves one-way to the evidence rules (`share` undefined).
+ */
+function fallback(cat: LaneCatalog, icls: string, width: number): { name: string; share?: number } | undefined {
   if (NOT_A_WAY.test(icls)) return undefined;
+  const mine = stem(icls);
+  if (mine.length >= 4) {
+    let hit: { name: string; share: number } | undefined, gap = Infinity;
+    for (const [k, [name, share]] of Object.entries(cat.keys)) {
+      const bar = k.lastIndexOf('|');
+      if (bar < 0 || /\.\d$/.test(k) || stem(k.slice(0, bar)) !== mine) continue;
+      const d = Math.abs(+k.slice(bar + 1) - width) + (/Station/i.test(name) && !/Station/i.test(icls) ? 5 : 0);
+      if (d < gap || (d === gap && hit && name < hit.name)) { gap = d; hit = { name, share }; }
+    }
+    if (hit) return hit;
+  }
   const rail = words(icls, RAILS), road = words(icls, FAMILY);
   const kind = rail.size && !/road|avenue|highway/i.test(icls) ? 'rail' : road.size ? 'road' : PATHS.test(icls) ? 'path' : null;
   if (!kind) return undefined;
@@ -98,7 +117,7 @@ function fallback(cat: LaneCatalog, icls: string, width: number): string | undef
     const sc = shared * 10 - Math.abs(w - width) - (/Station/i.test(name) && !/Station/i.test(icls) ? 5 : 0);
     if (sc > score || (sc === score && best !== undefined && name < best)) { score = sc; best = name; }
   }
-  return best;
+  return best === undefined ? undefined : { name: best };
 }
 
 /** rewrite a road's vehicle lanes as one-way (all forward along the segment) or two-way (alternating) */
@@ -116,7 +135,7 @@ export interface InferStats { segments: number; known: number; family: number; n
 export function inferLanes(city: CityData, cat: LaneCatalog): { city: CityData; stats: InferStats } {
   const stats: InferStats = { segments: 0, known: 0, family: 0, none: 0, onewayByEvidence: 0, twowayByEvidence: 0 };
   const base = new Map<number, { name: string; key: string; share?: number; family: boolean }>();
-  const memo = new Map<string, string | undefined>();
+  const memo = new Map<string, { name: string; share?: number } | undefined>();
   for (const s of city.segs) {
     if (s.path || s.pts.length < 2) continue;
     stats.segments++;
@@ -125,7 +144,7 @@ export function inferLanes(city: CityData, cat: LaneCatalog): { city: CityData; 
     const fk = roundKey(s.icls, s.width);
     if (!memo.has(fk)) memo.set(fk, fallback(cat, s.icls, s.width));
     const f = memo.get(fk);
-    if (f) { stats.family++; base.set(s.id, { name: f, key: exactKey(s.icls, s.width), family: true }); } else stats.none++;
+    if (f) { stats.family++; base.set(s.id, { name: f.name, key: exactKey(s.icls, s.width), share: f.share, family: f.share === undefined }); } else stats.none++;
   }
   const isRoad = (id: number) => { const b = base.get(id); return !!b && cat.types[b.name].lanes.some((l) => l[0].includes('Vehicle') && l[1].split(',').some((v) => v.trim() === 'Car')); };
   const want = new Map<number, boolean>(); // segment id → one-way?

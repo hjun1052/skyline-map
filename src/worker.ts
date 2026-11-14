@@ -58,27 +58,28 @@ self.onmessage = async (e: MessageEvent) => {
       lastCity = city; history = null;
       const oneway = inferOneWay(city);
       const tolls = detectTolls(city);
-      const built = buildCity(city, p, oneway, tolls);
+      // a file without lanes (.vellummap) gets lanes estimated from each road's class and width (lane-infer.ts): the router
+      // runs on that separate copy, and the map takes only each road's drawn class and width from it, so the map, records
+      // and road panels keep showing what the file holds. If it fails (a stale page after a deploy, odd data) the map still
+      // opens as before, with directions off.
+      let est: Awaited<ReturnType<typeof import('./lane-infer')['routingCopy']>> | null = null;
+      if (city.extras && !city.extras.caps.lanes) {
+        try {
+          const [{ routingCopy }, cat] = await Promise.all([import('./lane-infer'), import('./lane-catalog.json')]);
+          const e = routingCopy(city, (cat.default ?? cat) as unknown as LaneCatalog);
+          if (e.stats.known + e.stats.family > 0) est = e;
+        } catch (err) { console.warn('[atlas] estimated lanes failed; directions stay off', err); }
+      }
+      const drawAs = est ? new Map(est.city.segs.flatMap((s) => { const st = est!.city.segTypes.get(s.name); return st && !s.path ? [[s.id, st] as const] : []; })) : undefined;
+      const built = buildCity(city, p, oneway, tolls, drawAs);
       progress('Finding discoveries', 92);
       // a record that throws must not stop the city from opening
       try { built.discoveries = discover(city, built); } catch (err) { console.warn('[atlas] discoveries failed', err); built.discoveries = null; }
       progress('Preparing directions', 94);
-      // a file without lanes (.vellummap) routes on lanes estimated from each road's class and width: a separate
-      // copy of the city for the router only, so the map, records and road panels keep showing what the file holds
-      let rCity = city, rOneway = oneway, rTolls = tolls, estRoads: Set<number> | undefined;
-      if (city.extras && !city.extras.caps.lanes) {
-        // if this fails (a stale page after a deploy, odd data) the map still opens, with directions off as before
-        try {
-          const [{ routingCopy }, cat] = await Promise.all([import('./lane-infer'), import('./lane-catalog.json')]);
-          const est = routingCopy(city, (cat.default ?? cat) as unknown as LaneCatalog);
-          if (est.stats.known + est.stats.family > 0 && built.meta.source) {
-            rCity = est.city; rOneway = est.oneway; rTolls = est.tolls; estRoads = est.roads;
-            built.meta.source.approxRoutes = true;
-          }
-        } catch (err) { console.warn('[atlas] estimated lanes failed; directions stay off', err); }
-      }
+      const rCity = est?.city ?? city, rOneway = est?.oneway ?? oneway, rTolls = est?.tolls ?? tolls;
+      if (est && built.meta.source) built.meta.source.approxRoutes = true;
       router = new Router(rCity, built.stopNames ?? new Map(), rOneway, rTolls);
-      closures = createClosures(rCity, router, segInfoFrom(built, estRoads), built.stopNames ?? new Map());
+      closures = createClosures(rCity, router, segInfoFrom(built, est?.roads), built.stopNames ?? new Map());
       delete built.stopNames;
       schemInput = built.schem ?? null; schemCache.clear();
       delete built.schem;
