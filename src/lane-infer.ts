@@ -23,7 +23,7 @@ import { detectTolls, type TollData } from './tolls';
 
 export interface LaneCatalog {
   v: 1;
-  /** prefab name → highway flag + lanes [type, vType, dir, pos, width, speed] */
+  /** prefab name → highway flag + lanes [type, vType, dir, pos, width, speed]; every prefab seen in the exports */
   types: Record<string, { h?: 1; lanes: [string, string, string, number, number, number][] }>;
   /** "itemClass|width" (width to 0.1 m and rounded), or "itemClass": [prefab most used, share of length that is one-way] */
   keys: Record<string, [string, number]>;
@@ -58,9 +58,7 @@ export function buildCatalog(cities: CityData[]): LaneCatalog {
     const o = oneway.get(k);
     keys[k] = [best, o && o[1] ? Math.round((1000 * o[0]) / o[1]) / 1000 : 0];
   }
-  // keep only the prefabs some key points to
-  const used = new Set(Object.values(keys).map((v) => v[0]));
-  for (const n of Object.keys(types)) if (!used.has(n)) delete types[n];
+  // every prefab is kept, not only the ones a key points to: a matched save names each road's real prefab (sim/index.ts)
   return { v: 1, types, keys };
 }
 
@@ -126,31 +124,47 @@ function withDirection(st: CSegType, oneway: boolean): CLane[] {
   return st.lanes.map((l) => (l.type.includes('Vehicle') ? { ...l, dir: oneway ? 'Forward' : i++ % 2 ? 'Backward' : 'Forward' } : l));
 }
 
-export interface InferStats { segments: number; known: number; family: number; none: number; onewayByEvidence: number; twowayByEvidence: number }
+export interface InferStats { segments: number; known: number; family: number; none: number; onewayByEvidence: number; twowayByEvidence: number; /** roads whose lanes are their real prefab's, named by a matched save */ fromSave: number }
+
+/** From a save that matches the map (sim/index.ts): each matched segment's real prefab and the length of its lane chain. */
+export type SavePrefabs = Map<number, { name: string; lanes: number }>;
+/** a prefab name without its variant word: "HighwayRampElevated" and "Basic Road Decoration Trees" have their base road's lanes */
+const prefabStem = (n: string) => n.replace(/\s*(Decoration (Trees|Grass)|Elevated|Bridge|Tunnel|Slope)$/i, '').replace(/(Elevated|Bridge|Tunnel|Slope)$/, '').trim();
+/** a catalogue road type for a save's prefab, only if its lane list lines up with the save's own lane chain */
+function savedType(cat: LaneCatalog, name: string, lanes: number): string | undefined {
+  for (const n of [name, prefabStem(name)]) if (cat.types[n] && cat.types[n].lanes.length === lanes) return n;
+  return undefined;
+}
 
 /**
  * A copy of `city` with estimated prefab names and lane types, for the router only. Segment names become the
  * catalogue's prefab names (the router and access rules read them, as for a .cslmap); the map keeps the original.
  */
-export function inferLanes(city: CityData, cat: LaneCatalog): { city: CityData; stats: InferStats } {
-  const stats: InferStats = { segments: 0, known: 0, family: 0, none: 0, onewayByEvidence: 0, twowayByEvidence: 0 };
-  const base = new Map<number, { name: string; key: string; share?: number; family: boolean }>();
+export function inferLanes(city: CityData, cat: LaneCatalog, saved?: SavePrefabs): { city: CityData; stats: InferStats; exact: Set<number> } {
+  const stats: InferStats = { segments: 0, known: 0, family: 0, none: 0, onewayByEvidence: 0, twowayByEvidence: 0, fromSave: 0 };
+  /** name: the segment's road type name; type: the catalogue entry whose lanes it takes; exact: the real prefab, from a save */
+  const base = new Map<number, { name: string; type: string; key: string; share?: number; family: boolean; exact?: true }>();
   const memo = new Map<string, { name: string; share?: number } | undefined>();
   for (const s of city.segs) {
     if (s.path || s.pts.length < 2) continue;
     stats.segments++;
+    const sp = saved?.get(s.id), st = sp && savedType(cat, sp.name, sp.lanes);
+    if (sp && st) { stats.fromSave++; base.set(s.id, { name: sp.name, type: st, key: exactKey(s.icls, s.width), family: false, exact: true }); continue; }
     const k = [exactKey(s.icls, s.width), roundKey(s.icls, s.width), s.icls].find((x) => cat.keys[x]);
-    if (k) { stats.known++; base.set(s.id, { name: cat.keys[k][0], key: exactKey(s.icls, s.width), share: cat.keys[k][1], family: false }); continue; }
+    if (k) { stats.known++; base.set(s.id, { name: cat.keys[k][0], type: cat.keys[k][0], key: exactKey(s.icls, s.width), share: cat.keys[k][1], family: false }); continue; }
     const fk = roundKey(s.icls, s.width);
     if (!memo.has(fk)) memo.set(fk, fallback(cat, s.icls, s.width));
     const f = memo.get(fk);
-    if (f) { stats.family++; base.set(s.id, { name: f.name, key: exactKey(s.icls, s.width), share: f.share, family: f.share === undefined }); } else stats.none++;
+    if (f) { stats.family++; base.set(s.id, { name: f.name, type: f.name, key: exactKey(s.icls, s.width), share: f.share, family: f.share === undefined }); } else stats.none++;
   }
-  const isRoad = (id: number) => { const b = base.get(id); return !!b && cat.types[b.name].lanes.some((l) => l[0].includes('Vehicle') && l[1].split(',').some((v) => v.trim() === 'Car')); };
+  const isRoad = (id: number) => { const b = base.get(id); return !!b && cat.types[b.type].lanes.some((l) => l[0].includes('Vehicle') && l[1].split(',').some((v) => v.trim() === 'Car')); };
+  // a road with its real prefab needs no guessing: its lanes, one-way included, are the game's (the save's Invert flag
+  // sets the direction: sim/rules.ts)
+  const isExact = (id: number) => !!base.get(id)?.exact;
   const want = new Map<number, boolean>(); // segment id → one-way?
 
   // 1. class names that say it
-  for (const s of city.segs) if (isRoad(s.id)) {
+  for (const s of city.segs) if (isRoad(s.id) && !isExact(s.id)) {
     if (/2L2W|2W\b|Two ?way/i.test(s.icls)) want.set(s.id, false);
     else if (/1W\b|One ?way/i.test(s.icls)) want.set(s.id, true);
   }
@@ -158,7 +172,7 @@ export function inferLanes(city: CityData, cat: LaneCatalog): { city: CityData; 
   const booths = city.buildings.filter((b) => /Toll Booth/i.test(b.name) && b.pts.length >= 3)
     .map((b) => ({ oneway: /One ?way/i.test(b.name), x: b.pts.reduce((t, p) => t + p.x, 0) / b.pts.length, z: b.pts.reduce((t, p) => t + p.z, 0) / b.pts.length }));
   for (const s of city.segs) {
-    if (want.has(s.id) || !/Toll/i.test(base.get(s.id)?.name ?? '')) continue;
+    if (want.has(s.id) || isExact(s.id) || !/Toll/i.test(base.get(s.id)?.name ?? '')) continue;
     const m = s.pts[s.pts.length >> 1];
     let near: (typeof booths)[number] | undefined, d = 40;
     for (const b of booths) { const e = Math.hypot(b.x - m.x, b.z - m.z); if (e < d) { d = e; near = b; } }
@@ -224,7 +238,7 @@ export function inferLanes(city: CityData, cat: LaneCatalog): { city: CityData; 
     if (fwd.has(s.id) !== bwd.has(s.id) || twin.has(s.id)) oneHint.add(r);
   }
   for (const s of roads) {
-    if (want.has(s.id)) continue;
+    if (want.has(s.id) || isExact(s.id)) continue;
     const b = base.get(s.id)!, r = run.get(s.id)!;
     if (both.has(r)) { want.set(s.id, false); stats.twowayByEvidence++; continue; }
     const ambiguous = b.family || (b.share !== undefined && b.share > 0.15 && b.share < 0.85);
@@ -236,7 +250,7 @@ export function inferLanes(city: CityData, cat: LaneCatalog): { city: CityData; 
   const segs = city.segs.map((s) => {
     const b = base.get(s.id);
     if (!b) return s;
-    const plain = segTypes.get(b.name) ?? typeOf(cat, b.name);
+    const plain = segTypes.get(b.name) ?? { ...typeOf(cat, b.type), name: b.name };
     if (!segTypes.has(b.name)) segTypes.set(b.name, plain);
     let name = b.name;
     const w = want.get(s.id);
@@ -246,16 +260,17 @@ export function inferLanes(city: CityData, cat: LaneCatalog): { city: CityData; 
     }
     return { ...s, name };
   });
-  return { city: { ...city, segs, segTypes }, stats };
+  return { city: { ...city, segs, segTypes }, stats, exact: new Set([...base].filter(([, b]) => b.exact).map(([id]) => id)) };
 }
 
 /**
  * What the router gets for a city without lane data: the copy with estimated lanes, its one-way streets (none treated
  * as confirmed by traffic, since even "is it one-way" is a guess, so a route may break one with a warning) and tolls.
  */
-export function routingCopy(city: CityData, cat: LaneCatalog): { city: CityData; oneway: OneWayResult; tolls: TollData; roads: Set<number>; stats: InferStats } {
-  const est = inferLanes(city, cat);
-  const rCity: CityData = { ...est.city, ...(city.extras ? { extras: { ...city.extras, caps: { ...city.extras.caps, lanesEstimated: true } } } : {}) };
+export function routingCopy(city: CityData, cat: LaneCatalog, saved?: SavePrefabs): { city: CityData; oneway: OneWayResult; tolls: TollData; roads: Set<number>; stats: InferStats } {
+  const est = inferLanes(city, cat, saved);
+  const exactLanes = est.exact;
+  const rCity: CityData = { ...est.city, ...(city.extras ? { extras: { ...city.extras, caps: { ...city.extras.caps, lanesEstimated: true }, exactLanes } } : {}) };
   const ow = inferOneWay(rCity);
   const oneway = { ...ow, source: new Map([...ow.source].map(([id, src]) => [id, src === 'transit' ? 'keepright' as const : src])) };
   // toll lanes count only next to a real booth building: estimated toll widths with no booth would invent tolls

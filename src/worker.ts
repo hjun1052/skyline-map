@@ -17,6 +17,14 @@ import { readVellummap, vellumToCity, vellumIdentities, isZip, FormatError } fro
 
 let router: Router | null = null;
 let closures: ReturnType<typeof createClosures> | null = null;
+/** a map without lanes (.vellummap): what rebuilding the router needs when a save names the real prefabs (see 'sim') */
+let vellumCtx: { cat: LaneCatalog; routingCopy: typeof import('./lane-infer')['routingCopy']; est: ReturnType<typeof import('./lane-infer')['routingCopy']>;
+  stopNames: Map<number, string>; closable: Parameters<typeof segInfoFrom>[0]; savedRouter: boolean } | null = null;
+/** the router and closure tools for a routing copy (estimated lanes, or the real prefabs of a matched save) */
+function routeOn(rc: { city: CityData; oneway: ReturnType<typeof inferOneWay>; tolls: ReturnType<typeof detectTolls>; roads: Set<number> }, stopNames: Map<number, string>, closable: Parameters<typeof segInfoFrom>[0]) {
+  router = new Router(rc.city, stopNames, rc.oneway, rc.tolls);
+  closures = createClosures(rc.city, router, segInfoFrom(closable, rc.roads), stopNames);
+}
 let schemInput: SchemInput | null = null;
 const schemCache = new Map<string, unknown>();
 
@@ -55,7 +63,7 @@ self.onmessage = async (e: MessageEvent) => {
       const p = (s: string) => progress(s, 8 + (steps.indexOf(s) + 1) * 8.5);
       const city = await readCity(msg.buffer, p);
       lastHeight = { h: city.height, size: city.terrainSize };
-      lastCity = city; history = null;
+      lastCity = city; history = null; vellumCtx = null;
       const oneway = inferOneWay(city);
       const tolls = detectTolls(city);
       // a file without lanes (.vellummap) gets lanes estimated from each road's class and width (lane-infer.ts): the router
@@ -65,9 +73,10 @@ self.onmessage = async (e: MessageEvent) => {
       let est: Awaited<ReturnType<typeof import('./lane-infer')['routingCopy']>> | null = null;
       if (city.extras && !city.extras.caps.lanes) {
         try {
-          const [{ routingCopy }, cat] = await Promise.all([import('./lane-infer'), import('./lane-catalog.json')]);
-          const e = routingCopy(city, (cat.default ?? cat) as unknown as LaneCatalog);
-          if (e.stats.known + e.stats.family > 0) est = e;
+          const [{ routingCopy }, catMod] = await Promise.all([import('./lane-infer'), import('./lane-catalog.json')]);
+          const cat = (catMod.default ?? catMod) as unknown as LaneCatalog;
+          const e = routingCopy(city, cat);
+          if (e.stats.known + e.stats.family > 0) { est = e; vellumCtx = { cat, routingCopy, est: e, stopNames: new Map(), closable: { sources: {} }, savedRouter: false }; }
         } catch (err) { console.warn('[atlas] estimated lanes failed; directions stay off', err); }
       }
       const drawAs = est ? new Map(est.city.segs.flatMap((s) => { const st = est!.city.segTypes.get(s.name); return st && !s.path ? [[s.id, st] as const] : []; })) : undefined;
@@ -80,6 +89,11 @@ self.onmessage = async (e: MessageEvent) => {
       if (est && built.meta.source) built.meta.source.approxRoutes = true;
       router = new Router(rCity, built.stopNames ?? new Map(), rOneway, rTolls);
       closures = createClosures(rCity, router, segInfoFrom(built, est?.roads), built.stopNames ?? new Map());
+      if (vellumCtx) {
+        // kept for rebuilding the router on a matched save: stop names and the closable roads and rails (not the whole map)
+        vellumCtx.stopNames = built.stopNames ?? new Map();
+        vellumCtx.closable = { sources: { roads: { features: built.sources.roads.features.map((f) => ({ properties: f.properties })) }, rails: { features: built.sources.rails.features.map((f) => ({ properties: f.properties })) } } };
+      }
       delete built.stopNames;
       schemInput = built.schem ?? null; schemCache.clear();
       delete built.schem;
@@ -123,12 +137,19 @@ self.onmessage = async (e: MessageEvent) => {
       // end i18n-keys
       if (!lastCity) { self.postMessage({ type: 'sim', id: msg.id, result: { ok: false, code: 'corrupt', detail: 'no map open' } }); return; }
       router?.clearRules(); router?.clearTraffic();
+      // a new save starts from the estimated lanes again (.vellummap), whatever an earlier save did
+      if (vellumCtx?.savedRouter) { routeOn(vellumCtx.est, vellumCtx.stopNames, vellumCtx.closable); vellumCtx.savedRouter = false; }
       // parsing can await (gzip): remember what this load was for, so a stale one never applies its rules
       const token = ++simToken, forRouter = router, forCity = lastCity;
-      const result = await loadSim(msg.buffer, forCity, (step) => self.postMessage({ type: 'simProgress', id: msg.id, step }));
+      const vc = vellumCtx;
+      const result = await loadSim(msg.buffer, forCity, (step) => self.postMessage({ type: 'simProgress', id: msg.id, step }),
+        vc ? (saved) => vc.routingCopy(forCity, vc.cat, saved) : undefined);
       // a matched save's traffic rules drive routing from now on (directions, reach, closures, transit times)
       if (result.ok) {
         const current = router && router === forRouter && lastCity === forCity && token === simToken;
+        // .vellummap: the router moves onto the save's real prefabs (lanes, one-ways) before its rules apply
+        if (current && vc && result.routing) { routeOn(result.routing as never, vc.stopNames, vc.closable); vc.savedRouter = true; }
+        delete result.routing;
         if (current && result.rules) router!.applyRules(result.rules);
         // densities of matched segments, for traffic-aware routing (used only once the page switches it on)
         if (current && result.traffic) router!.applyTraffic(result.traffic.ids, result.traffic.pct);
@@ -138,6 +159,8 @@ self.onmessage = async (e: MessageEvent) => {
     } else if (msg.type === 'simClear') {
       simToken++;
       router?.clearRules(); router?.clearTraffic();
+      // .vellummap: back to the estimated lanes
+      if (vellumCtx?.savedRouter) { routeOn(vellumCtx.est, vellumCtx.stopNames, vellumCtx.closable); vellumCtx.savedRouter = false; }
     } else if (msg.type === 'traffic') {
       router?.setTraffic(!!msg.on);
     } else if (msg.type === 'lang') {

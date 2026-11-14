@@ -155,12 +155,14 @@ export class Router {
       // class only names the edge in instructions and sets default speeds; access comes from lanes
       const c = c0.group === 'road' || c0.group === 'path' ? c0 : { ...c0, cls: acc.drive ? 'minor' : 'footway' };
       const pts: XY[] = seg.pts.map((p) => [p.x, p.z]);
-      // on estimated lanes the prefab name is a guess: bridges and tunnels come from the file's own class only
-      const both = city.extras?.caps.lanesEstimated ? seg.icls : seg.name + ' ' + seg.icls;
+      // on estimated lanes the prefab name is a guess: bridges, tunnels and posted limits come from the file only (roads a
+      // matched save names have their real prefab, so those count as known)
+      const guessed = !!city.extras?.caps.lanesEstimated && !city.extras.exactLanes?.has(seg.id);
+      const both = guessed ? seg.icls : seg.name + ' ' + seg.icls;
       const e: Edge = {
         id: seg.id, a: node(seg.sn), b: node(seg.en), len: Math.max(1, len(pts)), pts, cls: c.cls, name: seg.customName,
         // estimated lanes (.vellummap) give a speed to drive at, never a posted limit to show
-        speed: (lanes.speed > 0 && lanes.speed < 200 ? lanes.speed : DRIVE_DEFAULT[c.cls] ?? 30) / 3.6, limKnown: lanes.speed > 0 && lanes.speed < 200 && !city.extras?.caps.lanesEstimated,
+        speed: (lanes.speed > 0 && lanes.speed < 200 ? lanes.speed : DRIVE_DEFAULT[c.cls] ?? 30) / 3.6, limKnown: lanes.speed > 0 && lanes.speed < 200 && !guessed,
         bike: lanes.bike || /Bicycle|Bike/i.test(seg.name), brunnel: /Tunnel/i.test(both) ? 'tunnel' : /Elevated|Bridge/i.test(both) ? 'bridge' : '',
         acc, gate: tolls?.gateOf.get(seg.id) ?? 0, ow: oneway?.dir.get(seg.id) ?? 0, sure: !!oneway && oneway.source.get(seg.id) !== 'prior' && oneway.source.has(seg.id), confirmed: oneway?.source.get(seg.id) === 'transit',
         hA: headRad(pts), hB: headRad([...pts].reverse()),

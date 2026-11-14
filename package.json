@@ -27,6 +27,7 @@
     "check:data": "node tools/check-sample.mjs",
     "check:vellummap": "tsx tools/vellummap-check.ts",
     "check:vellum-routes": "tsx tools/vellum-route-check.ts",
+    "check:vellum-sim": "tsx tools/vellum-sim-check.ts",
     "lane-catalog": "tsx tools/lane-catalog.ts"
   },
   "author": "",

@@ -158,6 +158,21 @@ export function segmentPoints(net: SaveNet, seg: number): number[] {
   return out;
 }
 
+/** A segment's curve sampled at `steps`+1 points ([x,y,z, ...]), from the save's node positions and directions as the
+ *  game draws it. Used to check geometry exported at another sampling (Vellum Bridge writes a point every ~25 m). */
+export function segmentCurve(net: SaveNet, seg: number, steps = 32): number[] {
+  const a = net.segStart[seg], b = net.segEnd[seg];
+  const sp: V3 = [net.nodeX[a], net.nodeY[a], net.nodeZ[a]], ep: V3 = [net.nodeX[b], net.nodeY[b], net.nodeZ[b]];
+  const D = net.segStartDir, E = net.segEndDir, o = 3 * seg;
+  const sd: V3 = [D[o], D[o + 1], D[o + 2]], ed: V3 = [E[o], E[o + 1], E[o + 2]];
+  const dv = sub(sd, [f(0 - ed[0]), f(0 - ed[1]), f(0 - ed[2])]);
+  if (f(dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]) < EPS) return [...sp, ...ep];
+  const [m1, m2] = middlePoints(sp, sd, ep, ed);
+  const out: number[] = [];
+  for (let i = 0; i <= steps; i++) bezier(sp, m1, m2, ep, i / steps, out);
+  return out;
+}
+
 /** lane ids of a segment in NetInfo.m_lanes order (follow m_lanes -> m_nextLane) */
 export function segmentLanes(net: SaveNet, seg: number): number[] {
   const out: number[] = [];

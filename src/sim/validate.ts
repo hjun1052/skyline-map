@@ -3,7 +3,7 @@
 // bit for bit). Identical ids are never trusted on their own: an object counts as matched only when its
 // prefab, connections and geometry all agree. Simulation values are attached only to matched objects.
 import type { CityData } from '../parse';
-import { type SaveNet, segmentPoints } from './net';
+import { type SaveNet, segmentPoints, segmentCurve } from './net';
 import { type SaveBuildings, buildingCorners } from './buildings';
 
 /** per-object outcome */
@@ -40,7 +40,32 @@ const CREATED = 1;
 function tally(): Tally { return { exported: 0, verified: 0, changed: 0, replaced: 0, missing: 0 }; }
 function count(t: Tally, m: M) { t.exported++; if (m === M.Verified) t.verified++; else if (m === M.Changed) t.changed++; else if (m === M.Replaced) t.replaced++; else t.missing++; }
 
+/**
+ * Tolerances for a Vellum Bridge export, which has no prefab names and samples curves on its own (a point every ~25 m):
+ * on a real save/export pair of one city state, 13,978 of 14,321 nodes are bit-identical and the rest within 1.1 m,
+ * every road's points lie within 0.5 m of the save's curve but one (2.1 m), and every building's corners within 1 mm.
+ */
+const VELLUM = { node: 1.5, curve: 2.5, corner: 0.05 };
+
+/** largest distance (m, ground plane) from any of `pts` to the save's curve of segment `id` */
+function offCurve(net: SaveNet, id: number, pts: { x: number; z: number }[]) {
+  const c = segmentCurve(net, id, 32);
+  let worst = 0;
+  for (const p of pts) {
+    let best = Infinity;
+    for (let i = 0; i + 5 < c.length; i += 3) {
+      const ax = c[i], az = c[i + 2], dx = c[i + 3] - ax, dz = c[i + 5] - az, L = dx * dx + dz * dz || 1;
+      const t = Math.max(0, Math.min(1, ((p.x - ax) * dx + (p.z - az) * dz) / L));
+      best = Math.min(best, Math.hypot(p.x - ax - t * dx, p.z - az - t * dz));
+    }
+    worst = Math.max(worst, best);
+  }
+  return worst;
+}
+
 export function validate(city: CityData, net: SaveNet, bld: SaveBuildings, lines: { id: number; created: boolean; firstStop: number }[] | null): { v: Validation; m: Matches } {
+  // a .vellummap has no prefab names and its own curve sampling: matched by connections and geometry within tolerance
+  const vellum = city.extras?.source === 'vellummap';
   // ---- nodes: the export writes every created node, so this comparison is complete in both directions
   const nodes = { ...tally(), extraInSave: 0 };
   const nodeOk = new Uint8Array(net.nodeCount);
@@ -48,6 +73,7 @@ export function validate(city: CityData, net: SaveNet, bld: SaveBuildings, lines
     let m: M;
     if (n.id >= net.nodeCount || !(net.nodeFlags[n.id] & CREATED)) m = M.Missing;
     else if (f(n.x) === net.nodeX[n.id] && f(n.y) === net.nodeY[n.id] && f(n.z) === net.nodeZ[n.id]) m = M.Verified;
+    else if (vellum && Math.hypot(n.x - net.nodeX[n.id], n.y - net.nodeY[n.id], n.z - net.nodeZ[n.id]) <= VELLUM.node) m = M.Verified;
     else m = M.Changed;
     count(nodes, m);
     if (m === M.Verified) nodeOk[n.id] = 1;
@@ -62,10 +88,11 @@ export function validate(city: CityData, net: SaveNet, bld: SaveBuildings, lines
     let m: M;
     if (s.id >= net.segCount || !(net.segFlags[s.id] & CREATED)) m = M.Missing;
     else {
-      const sameType = net.prefabNames[net.segPrefab[s.id]] === s.name;
+      const sameType = vellum || net.prefabNames[net.segPrefab[s.id]] === s.name;
       const sameEnds = net.segStart[s.id] === s.sn && net.segEnd[s.id] === s.en && nodeOk[s.sn] === 1 && nodeOk[s.en] === 1;
       if (!sameType && !sameEnds) m = M.Replaced;
       else if (!sameType || !sameEnds) m = M.Changed;
+      else if (vellum) m = offCurve(net, s.id, s.pts) <= VELLUM.curve ? M.Verified : M.Changed;
       else {
         const p = segmentPoints(net, s.id);
         let same = p.length === s.pts.length * 3;
@@ -87,7 +114,8 @@ export function validate(city: CityData, net: SaveNet, bld: SaveBuildings, lines
       const sameType = bld.prefabNames[bld.prefab[b.id]] === b.name;
       const c = buildingCorners(bld, b.id);
       let same = b.pts.length === 4;
-      for (let i = 0; same && i < 4; i++) same = f(b.pts[i].x) === c[i * 2] && f(b.pts[i].z) === c[i * 2 + 1];
+      if (vellum) for (let i = 0; same && i < 4; i++) { let best = Infinity; for (let k = 0; k < 8; k += 2) best = Math.min(best, Math.hypot(b.pts[i].x - c[k], b.pts[i].z - c[k + 1])); same = best <= VELLUM.corner; }
+      else for (let i = 0; same && i < 4; i++) same = f(b.pts[i].x) === c[i * 2] && f(b.pts[i].z) === c[i * 2 + 1];
       m = sameType && same ? M.Verified : !sameType && !same ? M.Replaced : M.Changed;
     }
     count(buildings, m);
