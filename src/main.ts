@@ -43,7 +43,7 @@ const state = {
   currentFile: '' as string,
 };
 const persist = () => { try { localStorage.setItem('atlas:opts', JSON.stringify({ mode: state.mode, opts: state.opts })); } catch { /* private mode */ } };
-const styleOpts = (): StyleOptions => ({ ...state.opts, theme: state.mode === 'night' ? 'dark' : 'light', terrain: state.mode === 'terrain', contours: state.opts.contours || state.mode === 'terrain' });
+const styleOpts = (): StyleOptions => ({ ...state.opts, ...(hasLanes() ? {} : { bikeFromSave: true }), theme: state.mode === 'night' ? 'dark' : 'light', terrain: state.mode === 'terrain', contours: state.opts.contours || state.mode === 'terrain' });
 
 // ------------------------------------------------------------------ map
 const initialHash = location.hash; // a shared link's position wins over fit-to-city
@@ -226,7 +226,7 @@ function showCity(city: BuiltCity) {
   $('cityChip').textContent = city.meta.name;
   cityTexts(city);
   creditExporter(city.meta.source ? 'Vellum Bridge' : 'CSLMapView');
-  syncUi();
+  syncUi(); applyStyle(); // bike lanes from the file or from a save (bikeFromSave)
   for (const id of ['dirFab', 'dirBtn', 'reachBtn', 'closureMenu']) { $(id).classList.toggle('off', !canRoute()); $(id).setAttribute('aria-disabled', String(!canRoute())); }
   if (!hasLanes()) toast(canRoute() ? t('Directions on this map are approximate') : t('Directions are off for this map'));
   renderDrawer(city);
@@ -340,7 +340,7 @@ function renderDrawer(city: BuiltCity) {
   $('cityInfo').innerHTML = `
     <div class="city-title">${esc(city.meta.name)}</div>
     <div class="city-meta">${t('Saved {date}', { date: esc(fmtGenerated(city.meta.generated)) })}${state.currentFile ? ' · ' + esc(state.currentFile) : ''}</div>
-    ${city.meta.source ? `<div class="city-source">${esc(t('Opened from {producer} (.vellummap)', { producer: city.meta.source.producer || 'Vellum' }))}${city.meta.source.lanes ? '' : ` <button class="link-btn" data-why-no-route>${esc(city.meta.source.approxRoutes ? t('Directions on this map are approximate') : t('Directions are off for this map'))}</button>`}</div>` : ''}
+    ${city.meta.source ? `<div class="city-source">${esc(t('Opened from {producer} (.vellummap)', { producer: city.meta.source.producer || 'Vellum' }))}${city.meta.source.lanes ? '' : ` <button class="link-btn" data-why-no-route>${esc(!city.meta.source.approxRoutes ? t('Directions are off for this map') : sim.savedLanes() !== null ? t('Directions use lanes from your save') : t('Directions on this map are approximate'))}</button>`}</div>` : ''}
     <div class="stats">
       <div class="stat"><b>${n(s.buildings)}</b><span>${t('Buildings')}</span></div>
       <div class="stat"><b>${n(s.roads)}</b><span>${t('Road segments')}</span></div>
@@ -515,7 +515,7 @@ function describeRest(f: MapGeoJSONFeature, p: any, layer: string, geom: any, ln
   setSelection(sel);
   const totalLen = p.name ? Math.round(sel.reduce((s, x) => s + lineLen(x.geometry.coordinates), 0)) : p.len;
   panel(head(name, (L(p.cls) ?? p.cls) + (p.brunnel === 'bridge' ? ' · ' + t('Bridge / elevated') : p.brunnel === 'tunnel' ? ' · ' + t('Tunnel') : '')) +
-    `<div class="p-rows">${row('Road type', p.type)}${row('District', p.district)}${row('Lanes', p.lanes || null)}${row('Speed limit', p.speed ? fmtSpeed(p.speed) : null)}${row('Bike lane', p.bike ? t('Yes') : null)}${row('Carriageway', p.w ? fmtWidth(p.w) : null)}${row('One-way', p.oneway ? t('Yes') : null)}${row(p.name ? t('Total length') : t('Segment length'), totalLen ? panelLen(totalLen) : null)}${row('Elevation', p.z !== undefined ? fmtHeight(p.z) : null)}</div>${hasLanes() ? '' : `<p class="p-note">${esc(t('Road type is the class in the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.'))}</p>`}${p.id !== undefined && !/rail|subway|monorail|tram|cablecar/.test(p.cls) ? sim.roadHtml(Number(p.id)) : ''}${p.id !== undefined && !['runway', 'taxiway', 'canal', 'ferry'].includes(p.cls) ? `<div class="p-actions">${closeBtn({ kind: /rail|subway|monorail|tram|cablecar/.test(p.cls) ? 'rail' : 'road', seg: Number(p.id) })}</div>` : ''}`);
+    `<div class="p-rows">${row(hasLanes() ? 'Road type' : 'Road class', p.type)}${row('District', p.district)}${row('Lanes', p.lanes || null)}${row('Speed limit', p.speed ? fmtSpeed(p.speed) : null)}${row('Bike lane', p.bike ? t('Yes') : null)}${row('Carriageway', p.w ? fmtWidth(p.w) : null)}${row('One-way', p.oneway ? t('Yes') : null)}${row(p.name ? t('Total length') : t('Segment length'), totalLen ? panelLen(totalLen) : null)}${row('Elevation', p.z !== undefined ? fmtHeight(p.z) : null)}</div>${hasLanes() ? '' : `<p class="p-note">${esc(p.id !== undefined && sim.roadFact(Number(p.id)) ? t('Road class is from the .vellummap file, which has no lanes. The road type, lanes and speed limit below come from your save.') : t('Road class is from the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.'))}</p>`}${p.id !== undefined && !/rail|subway|monorail|tram|cablecar/.test(p.cls) ? sim.roadHtml(Number(p.id)) : ''}${p.id !== undefined && !['runway', 'taxiway', 'canal', 'ferry'].includes(p.cls) ? `<div class="p-actions">${closeBtn({ kind: /rail|subway|monorail|tram|cablecar/.test(p.cls) ? 'rail' : 'road', seg: Number(p.id) })}</div>` : ''}`);
 }
 /** The district shown as a soft region (estimated: no district shapes in the export), redrawn on theme changes. */
 let glowDistrict: number | null = null;
@@ -696,6 +696,8 @@ $('closureMenu').onclick = needRouting(() => closure.open());
 const sim = createSim(map, {
   worker, toast, city: () => state.city,
   onRules: () => dir.rulesChanged(),
+  // a save was loaded, replaced or cleared: panels, the cycling chip and layer follow it
+  onData: () => { syncUi(); if (state.city) renderDrawer(state.city); if (!$('panel').hidden) panelRefresh?.(); },
   onLoaded: (f) => { if (state.city) void rememberSave(state.city.meta.name, f.name, f); },
   selectLine: (id) => selectLine(id, true),
   onOpen: () => { closeDrawer(); closePanel(); hideCtx(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); closure.close(); },
@@ -840,7 +842,7 @@ function syncUi() {
   document.querySelectorAll<HTMLElement>('#chips .chip[data-opt]').forEach((c) => {
     const k = c.dataset.opt as keyof typeof state.opts;
     c.classList.toggle('on', !!state.opts[k] || (k === 'contours' && state.mode === 'terrain'));
-    if (k === 'cycling') { c.classList.toggle('off', !hasLanes()); c.setAttribute('aria-disabled', String(!hasLanes())); }
+    if (k === 'cycling') { c.classList.toggle('off', !canCycle()); c.setAttribute('aria-disabled', String(!canCycle())); }
   });
   document.querySelectorAll<HTMLElement>('.layer-opt').forEach((b) => b.classList.toggle('on', b.dataset.mode === state.mode));
   $('layerThumb').className = 'thumb ' + (state.mode === 'night' ? 't-map' : state.mode === 'terrain' ? 't-map' : 't-terrain');
@@ -852,12 +854,13 @@ $('chips').addEventListener('click', (e) => {
   const c = (e.target as HTMLElement).closest('.chip[data-opt]') as HTMLElement | null;
   if (!c) return;
   const k = c.dataset.opt as keyof typeof state.opts;
-  if (k === 'cycling' && !hasLanes()) return needLanes(() => {})(); // bike lanes are lane data
+  if (k === 'cycling' && !canCycle()) return needLanes(() => {})(); // bike lanes are lane data (a .vellummap gets them from a matched save)
   (state.opts as any)[k] = !state.opts[k];
   if (k === 'bus' && state.opts.bus) state.opts.transit = true;
   if (k === 'transit' && !state.opts.transit) state.opts.bus = false;
   if (k === 'buildings3d' && state.opts.buildings3d && map.getPitch() < 10 && map.getZoom() > 15) map.easeTo({ pitch: 50, duration: 600 });
   applyStyle();
+  if (k === 'cycling' && state.opts.cycling && !hasLanes()) cyclingNote();
 });
 $('layerBtn').onclick = (e) => { e.stopPropagation(); $('layerPop').hidden = !$('layerPop').hidden; };
 document.addEventListener('click', (e) => { if (!$('layerSwitch').contains(e.target as Node)) $('layerPop').hidden = true; });
@@ -898,6 +901,13 @@ function hasLanes() { return state.city?.meta.source?.lanes !== false; }
 function approxRoutes() { return !!state.city?.meta.source?.approxRoutes; }
 /** directions, travel-time areas and closures: on with the file's lanes, or approximately with estimated ones */
 function canRoute() { return hasLanes() || approxRoutes(); }
+/** the cycling layer: the file's bike lanes, or on a .vellummap those of the roads a matched save names */
+function canCycle() { return hasLanes() || sim.bikeShare() !== null; }
+/** .vellummap: which roads the cycling layer can show */
+function cyclingNote() {
+  const s = sim.bikeShare();
+  if (s !== null) toast(s >= 1 ? t('Bike lanes from your save.') : t('Bike lanes from your save, where it names a road type Skyline Map knows: {pct}% of the road network by length. Roads elsewhere may have bike lanes too.', { pct: Math.floor(100 * s) }));
+}
 /** run `f`, or, on a map without lanes, explain why it is off */
 function needLanes(f: () => unknown) { return () => { if (hasLanes()) return void f(); closeDrawer(); explainNoLanes(true); }; }
 function needRouting(f: () => unknown) { return () => { if (canRoute()) return void f(); closeDrawer(); explainNoLanes(); }; }
@@ -905,10 +915,10 @@ function explainNoLanes(laneFeature = false) {
   panelPlace = null;
   const saved = sim.savedLanes();
   panel(approxRoutes()
-    ? head(laneFeature ? t('This needs a .cslmap export') : t('Directions on this map are approximate'), '.vellummap') + `<p class="p-note">${esc(saved !== null && saved >= 1
-      ? t("This .vellummap file has no lane data. The save you added fills it in, so directions, travel-time areas and closure analysis use its lanes and one-way streets. Bike lanes still need a .cslmap export of the same city (from CSLMapView).")
+    ? head(laneFeature ? t('This needs a .cslmap export or a save') : saved !== null ? t('Directions use lanes from your save') : t('Directions on this map are approximate'), '.vellummap') + `<p class="p-note">${esc(saved !== null && saved >= 1
+      ? t("This .vellummap file has no lane data. The save you added fills it in, so directions, travel-time areas, closure analysis and the cycling layer use its lanes, one-way streets and bike lanes. Results can still differ a little from the game.")
       : saved !== null
-      ? t("This .vellummap file has no lane data. The save you added fills it in: lanes and one-way streets come from the save for {pct}% of roads, and the rest are estimated from each road's type and width, so routes and times are close but not exact. Bike lanes still need a .cslmap export of the same city (from CSLMapView).", { pct: Math.floor(100 * saved) })
+      ? t("This .vellummap file has no lane data. The save you added fills it in where it names a road type Skyline Map knows: lanes, one-way streets and bike lanes come from the save on {pct}% of the road network (by length), and the rest are estimated from each road's type and width. Routes and times are close but not exact.", { pct: Math.floor(100 * saved) })
       : t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use). Directions, travel-time areas and closure analysis estimate it from each road's type and width, so routes and times are approximate, and a route may use a one-way street the wrong way. Add the save (.crp) the export was made from to route on its real lanes, or open a .cslmap export of the same city (from CSLMapView) for the full lane data and the cycling layer."))}</p>`
     : head(t('Directions are off for this map'), '.vellummap') + `<p class="p-note">${esc(t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis and the cycling layer need a .cslmap export of the same city."))}</p>`);
 }

@@ -3,7 +3,9 @@ import { t } from './i18n';
 import type { StyleSpecification, LayerSpecification, ExpressionSpecification } from 'maplibre-gl';
 
 export type Theme = 'light' | 'dark';
-export interface StyleOptions { theme: Theme; terrain: boolean; transit: boolean; bus: boolean; cycling: boolean; buildings3d: boolean; grid: boolean; labels: boolean; contours: boolean }
+export interface StyleOptions { theme: Theme; terrain: boolean; transit: boolean; bus: boolean; cycling: boolean; buildings3d: boolean; grid: boolean; labels: boolean; contours: boolean;
+  /** the file has no lanes (.vellummap): bike lanes come only from a matched save, as feature state `bike` (sim-ui.ts) */
+  bikeFromSave?: boolean }
 
 type E = ExpressionSpecification;
 
@@ -222,8 +224,8 @@ export function buildStyle(o: StyleOptions, fontBase: string): StyleSpecificatio
 
     {
       id: 'cycling', type: 'line', source: 'roads', layout: { visibility: vis(o.cycling), 'line-join': 'round', 'line-cap': 'round' },
-      filter: ['any', ['==', ['get', 'bike'], 1], ['all', ['==', ['get', 'cls'], 'footway'], ['in', 'Bicycle', ['get', 'type']]]],
-      paint: { 'line-color': o.theme === 'light' ? '#1e8e3e' : '#5bb974', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.4, 16, 3, 19, 5], 'line-opacity': 0.9 },
+      ...(o.bikeFromSave ? {} : { filter: ['any', ['==', ['get', 'bike'], 1], ['all', ['==', ['get', 'cls'], 'footway'], ['in', 'Bicycle', ['get', 'type']]]] }),
+      paint: { 'line-color': o.theme === 'light' ? '#1e8e3e' : '#5bb974', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.4, 16, 3, 19, 5], 'line-opacity': o.bikeFromSave ? ['case', ['boolean', ['feature-state', 'bike'], false], 0.9, 0] : 0.9 },
     } as LayerSpecification,
     { id: 'grid', type: 'line', source: 'grid', layout: { visibility: vis(o.grid) }, paint: { 'line-color': p.grid, 'line-width': 1, 'line-dasharray': [4, 3] } },
 

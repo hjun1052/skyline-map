@@ -279,7 +279,7 @@ export function createDirections(d: DirectionsDeps) {
   /** Maps without lane data: every route is worked out on estimated lanes. */
   function approxNote(): string {
     const saved = d.approx() ? d.savedLanes() : null;
-    if (saved !== null) return `<div class="toll-note approx-note">${esc(t(saved >= 1 ? 'Route on your save\'s lanes' : 'Approximate route'))}<div class="small">${esc(saved >= 1 ? t('Lanes and one-way streets come from your save. Times may still differ a little from the game.') : t('Lanes and one-way streets come from your save for {pct}% of roads; the rest are estimated from road types, so times may be a little off.', { pct: Math.floor(100 * saved) }))}</div></div>`;
+    if (saved !== null) return `<div class="toll-note approx-note">${esc(t('Approximate route'))}<div class="small">${esc(saved >= 1 ? t('Lanes and one-way streets come from your save. Times may still differ a little from the game.') : t('Lanes and one-way streets come from your save on {pct}% of the road network (by length); the rest are estimated from road types, so times may be a little off.', { pct: Math.floor(100 * saved) }))}</div></div>`;
     return d.approx() ? `<div class="toll-note approx-note">${esc(t('Approximate route'))}<div class="small">${esc(t('This map has no lane data: speeds and one-way streets are estimated from each road\'s type, so times may be off and a route may use a one-way street the wrong way. Check in game. For more accurate directions, open a .cslmap export of the same city.'))}</div></div>` : '';
   }
   /** Traffic-aware driving: what traffic adds, against the same route without it, and how much of it has data. */

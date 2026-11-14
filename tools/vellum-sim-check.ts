@@ -12,7 +12,7 @@ import { routingCopy, buildCatalog } from '../src/lane-infer';
 import { Router } from '../src/router';
 import { inferOneWay } from '../src/oneway';
 import { detectTolls } from '../src/tolls';
-import { buildCity } from '../src/build';
+import { buildCity, laneInfo } from '../src/build';
 
 const home = os.homedir();
 const newest = (dir: string, re: RegExp) => (existsSync(dir) ? readdirSync(dir).filter((f) => re.test(f.normalize('NFC'))).map((f) => path.join(dir, f)).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0] : undefined);
@@ -54,6 +54,23 @@ ok(V.lines!.length === C.lines!.filter((l) => V.lines!.some((x) => x.id === l.id
 ok(!!V.grids && !!V.city && V.unavailable.length === 0, 'grids and city statistics read', V.unavailable);
 ok(V.rulesSummary!.oneway === C.rulesSummary!.oneway && V.rulesSummary!.uturnBan >= C.rulesSummary!.uturnBan * 0.98 && V.tmpe!.segs.length >= C.tmpe!.segs.length * 0.95, 'one-ways exact; TM:PE and U-turn rules placed', { vellum: V.rulesSummary, cslmap: C.rulesSummary, tmpe: [V.tmpe!.segs.length, C.tmpe!.segs.length] });
 ok(!!V.savedLanes && V.savedLanes.exact / V.savedLanes.roads > 0.9, 'most driving roads get their real lanes from the save', V.savedLanes);
+// what the road panel shows from the save: the CSLMapView export's own values for the same road, wherever it shows any
+{
+  const cs = new Map(c.segs.map((x) => [x.id, x]));
+  let known = 0, same = 0, unknownWithLanes = 0, bikeKnownRoads = 0, bikeSame = 0;
+  for (const [id, f] of V.roadFacts!) {
+    const x = cs.get(id); if (!x) continue;
+    const li = laneInfo(c.segTypes.get(x.name));
+    if (f.prefab !== x.name) continue;
+    if (f.lanes === undefined) { if (f.speed !== undefined || f.oneway !== undefined) unknownWithLanes++; continue; }
+    known++;
+    if (f.lanes === li.vehicle && (f.speed ?? 0) === (li.speed > 0 && li.speed < 200 ? li.speed : 0) && f.oneway === li.oneway) same++;
+    bikeKnownRoads++; if (!!f.bike === (li.bike || /Bicycle|Bike/i.test(x.name))) bikeSame++;
+  }
+  ok(known > 8000 && same === known && unknownWithLanes === 0, 'road panel facts from the save equal the CSLMapView export (lanes, speed limit, one-way)', `${same}/${known}`);
+  ok(bikeSame === bikeKnownRoads, 'bike lanes from the save equal the CSLMapView export wherever the road type is known', `${bikeSame}/${bikeKnownRoads}`);
+  ok(V.savedLanes!.lenShare > 0.9 && V.savedLanes!.lenShare <= 1, 'coverage is a share of road length', V.savedLanes!.lenShare.toFixed(3));
+}
 // driving on the save's lanes and rules against the CSLMapView export with the same save
 const built = buildCity(v, () => {}, inferOneWay(v), detectTolls(v));
 const RV = new Router(V.routing!.city, built.stopNames ?? new Map(), V.routing!.oneway, V.routing!.tolls); RV.applyRules(V.rules!);
@@ -68,6 +85,23 @@ for (let i = 0; i < 500 && trips < 60; i++) {
   const S = RV.route([a.x, a.z], [b.x, b.z], 'drive', {})[0]; if (S) ratio.push(S.time / T.time);
 }
 const within = ratio.filter((r) => Math.abs(r - 1) <= 0.05).length / Math.max(1, trips);
+// navigation: posted limits only from game data. Without the save none are shown; with it, every limit is one the
+// CSLMapView + save router also shows somewhere on the network (prefab limits and TM:PE ones)
+{
+  const est = routingCopy(v, cat);
+  const RE = new Router(est.city, built.stopNames ?? new Map(), est.oneway, est.tolls);
+  const limits = (R: Router, a: number[], b: number[]) => (R.route(a as never, b as never, 'drive', {})[0]?.legs ?? []).flatMap((l) => l.spans ?? []).map((sp) => sp.limit).filter((x): x is number => !!x);
+  let noSave = 0, withSave = 0, cslLimits = new Set<number>(), saveLimits = new Set<number>(); seed = 7;
+  for (let i = 0; i < 40; i++) {
+    const a = nodes[Math.floor(rnd() * nodes.length)], b = nodes[Math.floor(rnd() * nodes.length)];
+    const p = [a.x, a.z], q = [b.x, b.z];
+    noSave += limits(RE, p, q).length;
+    const ls = limits(RV, p, q); withSave += ls.length; ls.forEach((x) => saveLimits.add(x));
+    limits(RC, p, q).forEach((x) => cslLimits.add(x));
+  }
+  ok(noSave === 0, 'navigation shows no speed limit without a save (estimated speeds are never posted limits)', noSave);
+  ok(withSave > 0 && [...saveLimits].every((x) => cslLimits.has(x)), 'navigation shows real limits with the save, the same values as CSLMapView + save', { withSave, save: [...saveLimits].sort((a, b) => a - b), cslmap: [...cslLimits].sort((a, b) => a - b) });
+}
 ok(within >= 0.95, `driving with the save matches CSLMapView + save (${trips} trips, within 5%)`, `${Math.round(100 * within)}%`);
 if (failures) { console.error(`${failures} problems`); process.exit(1); }
 console.log('vellum sim checks passed');
