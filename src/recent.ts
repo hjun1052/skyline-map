@@ -5,7 +5,7 @@
 // One entry per city and file format: a newer export of the same city in the same format replaces the older one (and
 // keeps its save only when it is the very same export), while a .cslmap and a .vellummap of one city are separate.
 
-export type MapFormat = 'cslmap' | 'vellummap';
+export type MapFormat = 'cslmap' | 'vellummap' | 'cmm';
 
 export interface Recent {
   id: string; // `${format}:${name}`, see recentId

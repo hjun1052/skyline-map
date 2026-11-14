@@ -13,7 +13,8 @@
 // See `npm run check:oneway` for the accuracy test against transit routes.
 import type { CityData, CSeg } from './parse';
 
-export type OneWaySource = 'transit' | 'keepright' | 'prior';
+/** `exact`: stated by the file itself (.cmm: the game's lanes with the per-segment Invert flag applied) */
+export type OneWaySource = 'transit' | 'keepright' | 'prior' | 'exact';
 export interface OneWayResult {
   /** +1: travel goes start→end node, -1: end→start. Only one-way segments are present. */
   dir: Map<number, 1 | -1>;
@@ -136,7 +137,7 @@ export function inferOneWay(city: CityData, opts: { hideTruth?: Set<number> } = 
   const groups = new Map<number, [number, number][]>();
   for (const id of ow) { const [r, k] = find(id); const g = groups.get(r); if (g) g.push([id, k]); else groups.set(r, [[id, k]]); }
   const dir = new Map<number, 1 | -1>(), source = new Map<number, OneWaySource>();
-  const bySource: Record<OneWaySource, number> = { transit: 0, keepright: 0, prior: 0 };
+  const bySource: Record<OneWaySource, number> = { transit: 0, keepright: 0, prior: 0, exact: 0 };
   for (const members of groups.values()) {
     let tv = 0, kr = 0, pr = 0;
     for (const [id, k] of members) {

@@ -937,7 +937,6 @@ export const RU: Record<string, string> = {
   "This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis and the cycling layer need a .cslmap export of the same city.": "В этом файле .vellummap нет данных о полосах (одностороннее движение, ограничения скорости, велодорожки, какие полосы доступны машинам, автобусам и пешеходам), поэтому маршруты нельзя надёжно построить. Для маршрутов, зон доступности, анализа перекрытий и велослоя нужен экспорт .cslmap того же города.",
   "Tip: export the city with Vellum Bridge right after you save the game (or save right after exporting), so the save and the export show the same moment.": "Совет: экспортируйте город через Vellum Bridge сразу после сохранения игры (или сохраняйтесь сразу после экспорта), чтобы сохранение и экспорт показывали один и тот же момент.",
   "Directions now use this save's lanes and one-way streets on {pct}% of the road network (by length). The rest are still estimated from road types.": "Теперь маршруты используют полосы и одностороннее движение из этого сохранения на {pct}% дорожной сети (по длине). Остальное по-прежнему оценивается по типу дороги.",
-  "(.cslmap, .cslmap.gz or .vellummap)": "(.cslmap, .cslmap.gz или .vellummap)",
   "Lanes and one-way streets come from your save.": "Полосы и одностороннее движение взяты из сохранения.",
   "Lanes and one-way streets come from your save. Times may still differ a little from the game.": "Полосы и одностороннее движение взяты из сохранения. Время всё же может немного отличаться от игры.",
   "Directions now use this save's lanes and one-way streets.": "Теперь маршруты используют полосы и одностороннее движение из этого сохранения.",
@@ -974,4 +973,15 @@ export const RU: Record<string, string> = {
   "Not available for this road": "Для этой дороги недоступно",
   "Not available for this save": "Для этого сохранения недоступно",
   "Traffic, directions where estimated": "Трафик, по направлениям где есть оценка",
+  // ---------------------------------------------------------------- .cmm (CSLModernMap)
+  "This .cmm is damaged: {detail}": "Файл .cmm повреждён: {detail}",
+  "This .cmm uses format {version}, which Skyline Map does not read yet. It reads cmm-v1.": "Этот файл .cmm в формате {version}, который Skyline Map пока не читает. Skyline Map читает cmm-v1.",
+  "Opened from {producer} (.cmm)": "Открыто из {producer} (.cmm)",
+  "(.cslmap, .cslmap.gz, .vellummap or .cmm.gz)": "(.cslmap, .cslmap.gz, .vellummap или .cmm.gz)",
+  "Boundaries come from the game itself (CSLModernMap export).": "Границы взяты из самой игры (экспорт CSLModernMap).",
+  "Rendered from a CSLModernMap export. Map data © the city's mayor. Fonts: Pretendard (OFL).": "Отображено по данным, экспортированным с помощью CSLModernMap. Права на данные карты принадлежат мэру города. Шрифты: Pretendard (OFL).",
+  "Part of this line's path is estimated from the network it runs on, because the export doesn't include it.": "Часть маршрута этой линии рассчитана по сети, по которой она ходит, потому что в экспорте её нет.",
+  "The export has no path for this line, so it isn't drawn on the map.": "В экспорте нет маршрута этой линии, поэтому она не нарисована на карте.",
+  "Tip: export the city with CSLModernMap right after you save the game (or save right after exporting), so the save and the export show the same moment.": "Совет: экспортируйте город через CSLModernMap сразу после сохранения игры (или сохраняйтесь сразу после экспорта), чтобы сохранение и экспорт показывали один и тот же момент.",
+  "CSLModernMap saves .cmm.gz exports next to it, unless you chose another folder in its options:": "CSLModernMap сохраняет экспорт .cmm.gz в соседнюю папку, если в его настройках не выбрана другая:",
 };

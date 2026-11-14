@@ -16,10 +16,10 @@ export interface BuiltCity {
   meta: {
     name: string; generated: string; bounds: [XY, XY];
     /** set for formats other than .cslmap: where the map came from and what it can do (see CityExtras.caps) */
-    source?: { format: 'vellummap'; producer: string; lanes: boolean; exactDistricts: boolean; /** routing runs on estimated lanes: every route is approximate */ approxRoutes?: boolean };
+    source?: { format: 'vellummap' | 'cmm'; producer: string; lanes: boolean; exactDistricts: boolean; /** routing runs on estimated lanes: every route is approximate */ approxRoutes?: boolean };
     stats: Record<string, number>;
     elevation: { min: number; max: number };
-    lines: { id: number; name: string; type: string; color: string; stops: number; bbox: [number, number, number, number] | null; stopNames?: string[]; shape?: 'both' | 'loop' }[];
+    lines: { id: number; name: string; type: string; color: string; stops: number; bbox: [number, number, number, number] | null; stopNames?: string[]; shape?: 'both' | 'loop'; /** part of the path is rebuilt from the network, not exported (.cmm) */ estimated?: true }[];
   };
   sources: Record<string, FC>;
   dem: { surface: Float32Array; size: number };
@@ -312,6 +312,8 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
   const T = makeTerrainSampler(city);
   const stats: Record<string, number> = {};
   const bump = (k: string) => (stats[k] = (stats[k] ?? 0) + 1);
+  /** the posted limit the file states for a road (.cmm: effective per direction, TM:PE-aware), km/h, faster direction */
+  const fileSpeed = (id: number) => { const v = city.extras?.carSpeed?.get(id); return v ? Math.round(Math.max(v[0] ?? 0, v[1] ?? 0) * 3.6) || undefined : undefined; };
 
   // --------------------------------------------------------- districts
   progress('Mapping districts');
@@ -378,7 +380,7 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
     w = Math.round(w * 10) / 10;
 
     const name = seg.customName || '';
-    const props: Props = { id: seg.id, cls: c.cls, w, brunnel, rank: c.rank, z: Math.round(avgY * 10) / 10, name, type: city.segTypes.size === 0 ? seg.icls : seg.name, lanes: lanes.vehicle, oneway: lanes.oneway ? 1 : 0, len: Math.round(polylineLength(pts2)), toll: tolls?.gateOf.has(seg.id) ? 2 : tolls?.boothOf.has(seg.id) ? 1 : 0, ow: oneway?.dir.get(seg.id) ?? 0, owSure: oneway && oneway.source.get(seg.id) !== 'prior' ? 1 : 0, speed: lanes.speed, bike: lanes.bike || /Bicycle|Bike/i.test(seg.name) ? 1 : 0, district: districtAt(seg.pts[seg.pts.length >> 1].x, seg.pts[seg.pts.length >> 1].z) };
+    const props: Props = { id: seg.id, cls: c.cls, w, brunnel, rank: c.rank, z: Math.round(avgY * 10) / 10, name, type: city.segTypes.size === 0 ? seg.icls : seg.name, lanes: lanes.vehicle, oneway: lanes.oneway ? 1 : 0, len: Math.round(polylineLength(pts2)), toll: tolls?.gateOf.has(seg.id) ? 2 : tolls?.boothOf.has(seg.id) ? 1 : 0, ow: oneway?.dir.get(seg.id) ?? 0, owSure: oneway && oneway.source.get(seg.id) !== 'prior' ? 1 : 0, speed: fileSpeed(seg.id) ?? lanes.speed, bike: lanes.bike || /Bicycle|Bike/i.test(seg.name) ? 1 : 0, district: districtAt(seg.pts[seg.pts.length >> 1].x, seg.pts[seg.pts.length >> 1].z) };
     const f: Feature = { type: 'Feature', id: seg.id, properties: props, geometry: { type: 'LineString', coordinates: coords } };
     bump('seg:' + c.cls);
 
@@ -594,20 +596,26 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
   // ----------------------------------------------------------- transit
   progress('Tracing transit lines');
   const routeSegs = new Map<string, number[]>();
-  for (const s of city.segs) if (s.path) routeSegs.set(s.sn + ',' + s.en, s.path);
+  /** legs whose path the file doesn't have and the reader rebuilt from the network (.cmm): drawn as estimated */
+  const inferredLeg = new Set<string>();
+  for (const s of city.segs) if (s.path) { routeSegs.set(s.sn + ',' + s.en, s.path); if (city.extras?.inferredLegs?.has(s.id)) inferredLeg.add(s.sn + ',' + s.en); }
   const transit: Feature[] = [];
   const lines: BuiltCity['meta']['lines'] = [];
   // slot assignment per road segment so parallel lines sit side by side
   const segUsers = new Map<number, number[]>();
   const routeSegLists = new Map<number, number[]>();
+  /** per line: road segments only estimated legs use (no exported leg of the line runs there) */
+  const estOnly = new Map<number, Set<number>>();
   for (const tr of city.transports) {
     if (tr.stops.length < 2) continue;
     const used: number[] = [];
-    const set = new Set<number>();
+    const set = new Set<number>(), exact = new Set<number>(), est = new Set<number>();
     for (let i = 0; i < tr.stops.length; i++) {
       const key = tr.stops[i] + ',' + tr.stops[(i + 1) % tr.stops.length];
-      for (const id of routeSegs.get(key) ?? []) if (!set.has(id)) { set.add(id); used.push(id); }
+      for (const id of routeSegs.get(key) ?? []) { (inferredLeg.has(key) ? est : exact).add(id); if (!set.has(id)) { set.add(id); used.push(id); } }
     }
+    for (const id of exact) est.delete(id);
+    if (est.size) estOnly.set(tr.id, est);
     routeSegLists.set(tr.id, used);
     for (const id of used) { const l = segUsers.get(id) ?? []; l.push(tr.id); segUsers.set(id, l); }
   }
@@ -628,11 +636,11 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
       const slot = users.indexOf(tr.id);
       const offset = slot - (users.length - 1) / 2;
       for (const p of s.pts) { bb = [Math.min(bb[0], p.x), Math.min(bb[1], p.z), Math.max(bb[2], p.x), Math.max(bb[3], p.z)]; }
-      transit.push({ type: 'Feature', properties: { line: tr.id, seg: id, name: tr.name, mode, color, offset, n: users.length, underground: /Tunnel/i.test(s.name) || (city.nodes.get(s.sn)?.ug ?? false) ? 1 : 0 }, geometry: { type: 'LineString', coordinates: s.pts.map(ll) } });
+      transit.push({ type: 'Feature', properties: { line: tr.id, seg: id, name: tr.name, mode, color, offset, n: users.length, underground: /Tunnel/i.test(s.name) || (city.nodes.get(s.sn)?.ug ?? false) ? 1 : 0, ...(estOnly.get(tr.id)?.has(id) ? { est: 1 } : {}) }, geometry: { type: 'LineString', coordinates: s.pts.map(ll) } });
     }
     const valid = bb[0] !== Infinity;
     const sw = valid ? toLngLat(bb[0], bb[1]) : null, ne = valid ? toLngLat(bb[2], bb[3]) : null;
-    lines.push({ id: tr.id, name: tr.name, type: mode, color, stops: tr.stops.length, bbox: sw && ne ? [sw[0], sw[1], ne[0], ne[1]] : null });
+    lines.push({ id: tr.id, name: tr.name, type: mode, color, stops: tr.stops.length, bbox: sw && ne ? [sw[0], sw[1], ne[0], ne[1]] : null, ...(estOnly.has(tr.id) ? { estimated: true } : {}) });
     if (sw && ne) search.push({ name: tr.name, kind: 'line', sub: mode, center: toLngLat((bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2), zoom: 13, bbox: [sw[0], sw[1], ne[0], ne[1]] });
   }
 

@@ -176,9 +176,12 @@ export class Router {
         // estimated lanes (.vellummap) give a speed to drive at, never a posted limit to show
         speed: (lanes.speed > 0 && lanes.speed < 200 ? lanes.speed : DRIVE_DEFAULT[c.cls] ?? 30) / 3.6, limKnown: lanes.speed > 0 && lanes.speed < 200 && !guessed,
         bike: guessed ? /Bicycle|Bike/i.test(seg.icls) : lanes.bike || /Bicycle|Bike/i.test(seg.name), brunnel: /Tunnel/i.test(both) ? 'tunnel' : /Elevated|Bridge/i.test(both) ? 'bridge' : '',
-        ...(guessed ? { guessed: true } : {}), acc, gate: tolls?.gateOf.get(seg.id) ?? 0, ow: oneway?.dir.get(seg.id) ?? 0, sure: !!oneway && oneway.source.get(seg.id) !== 'prior' && oneway.source.has(seg.id), confirmed: oneway?.source.get(seg.id) === 'transit',
+        ...(guessed ? { guessed: true } : {}), acc, gate: tolls?.gateOf.get(seg.id) ?? 0, ow: oneway?.dir.get(seg.id) ?? 0, sure: !!oneway && oneway.source.get(seg.id) !== 'prior' && oneway.source.has(seg.id), confirmed: oneway?.source.get(seg.id) === 'transit' || oneway?.source.get(seg.id) === 'exact',
         hA: headRad(pts), hB: headRad([...pts].reverse()),
       };
+      // a file that states each road's effective limit per direction (.cmm, TM:PE-aware) drives at that, as a matched save does
+      const cs = city.extras?.carSpeed?.get(seg.id);
+      if (cs && acc.drive) { const f = cs[0] ?? cs[1]!, b = cs[1] ?? cs[0]!; e.spd = [f, b]; e.speed = Math.max(f, b); e.limKnown = true; }
       const ei = this.edges.push(e) - 1;
       this.adj[e.a].push(ei); this.adj[e.b].push(ei);
     }
