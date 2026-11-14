@@ -305,7 +305,8 @@ export function createDirections(d: DirectionsDeps) {
   function trafficNote(r: Route): string {
     if (r.baseTime === undefined) return '';
     const extra = r.time - r.baseTime;
-    const parts = [extra >= 30 ? t('Traffic adds about {time} to this route', { time: fmtTime(extra) }) : t('No delay from traffic')];
+    // short slow stretches still cost a few seconds: only a route traffic leaves untouched says so
+    const parts = [extra >= 30 ? t('Traffic adds about {time} to this route', { time: fmtTime(extra) }) : extra >= 5 ? t('Traffic adds under a minute') : t('No delay from traffic')];
     if ((r.trafficShare ?? 0) < 0.9) parts.push(t('traffic known for {pct}% of the route', { pct: Math.round((r.trafficShare ?? 0) * 100) }));
     // stretches where the save's vehicles tell the two directions apart use the traffic in the direction driven
     const pieces = r.legs.flatMap((l) => l.traffic ?? []);

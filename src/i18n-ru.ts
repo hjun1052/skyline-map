@@ -959,4 +959,5 @@ export const RU: Record<string, string> = {
   "Neutral road colours": "Нейтральные цвета дорог",
   "From a save: add one in Simulation data": "Из сохранения: добавьте его в «Данные симуляции»",
   "traffic by direction": "трафик по направлениям",
+  "Traffic adds under a minute": "Трафик добавляет меньше минуты",
 };

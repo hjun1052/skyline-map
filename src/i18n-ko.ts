@@ -959,4 +959,5 @@ export const KO: Record<string, string> = {
   "Neutral road colours": "무채색 도로",
   "From a save: add one in Simulation data": "세이브 파일이 필요해요: 시뮬레이션 데이터에서 추가하세요",
   "traffic by direction": "방향별 교통량",
+  "Traffic adds under a minute": "교통 때문에 1분 미만 더 걸려요",
 };

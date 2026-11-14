@@ -184,13 +184,16 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
             ['case', ['<', tv, 0], 0, ['boolean', ['feature-state', 'td'], false], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95]] as ExpressionSpecification,
         },
       }, before());
-      if (st.dir.size) {
+      const splitIds = [...st.dir].filter(([id, x]) => x.ok && st.traffic.has(id)).map(([id]) => id);
+      if (splitIds.length) {
         // each direction on the right of travel (left-hand-traffic saves get no split: sim/index.ts)
         const side = 1;
         for (const [key, sign] of [['f', 1], ['b', -1]] as const) {
           const v = ['coalesce', ['feature-state', 't' + key], -1] as ExpressionSpecification;
           map.addLayer({
             id: TRAFFIC + '-' + key, type: 'line', source: 'roads', minzoom: DIR_ZOOM,
+            // only the split roads: a hidden line still costs drawing time on every other road
+            filter: ['in', ['id'], ['literal', splitIds]] as ExpressionSpecification,
             layout: { 'line-join': 'round', 'line-cap': 'butt' },
             paint: {
               'line-color': ['interpolate', ['linear'], v, ...TRAFFIC_COLORS.flat()] as ExpressionSpecification,
