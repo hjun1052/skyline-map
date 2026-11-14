@@ -285,7 +285,7 @@ The 서랑시 save (`.crp`) that the CSLMapView export was written with also mat
 - the save names a prefab for 13,436 matched roads and paths; for the 8,409 it knows, lanes, speed limit, one-way and bike lane equal the CSLMapView export on every one;
 - 95% of drivable road length is covered; 10 of the city's 39 bike-lane pieces are on covered roads (all 39 with the shipped catalogue, which includes this city);
 - navigation shows no limit without the save and only CSLMapView's own values with it (25–100 km/h).
-- TM:PE counts differ a little where roads stay estimated (speed 106 vs 98, turn bans 12 vs 6); with every prefab known they are identical, so lane-level rules on estimated roads are approximate.
+- TM:PE counts differ a little where roads stay estimated (speed 106 vs 98, turn bans 12 vs 6); with every prefab known they are identical. Every differing rule (8 speed, 2 restriction, 6 turn and 8 U-turn) is on a road whose prefab the catalogue doesn't know, so its lane layout is guessed: TM:PE's values come from the save, but which lanes (and so which direction) they sit on is a guess. None of 300 random drives passes them (298 within 5% of CSLMapView + save). Navigation shows a TM:PE limit on such a road only when both directions agree.
 
 **Districts and stations:**
 - the Bridge district grid equals the save's DistrictManager grid on every cell the save stores (40,041 cells of the central 512² area; the 900² Bridge grid beyond it can't be checked against this save);
@@ -298,4 +298,17 @@ The 서랑시 save (`.crp`) that the CSLMapView export was written with also mat
 In the browser (built catalogue, which includes this city) the save covers 100% of roads, the traffic layer draws, and every panel names where its lanes come from.
 
 **What this can't show:** one save on one city. A save from another game version, a city with many workshop road prefabs the catalogue doesn't know, or a Bridge export made long after the save will match fewer objects; the panel says so (close match / too far apart), as it does for `.cslmap`.
+
+## End-to-end audit
+
+Journeys run in headless Chromium on fresh profiles (browser emulation, not real devices): desktop 1280×860 in English, phone 390×844 with touch in Korean, tablet 820×1180 with touch in Russian. Import with the first-open notice, search, station, district, road and building panels, all four route modes with alternatives, reach, closure, navigation at 10×, the save (status, every overlay, road/building/line panels, cycling, drawer), routes and navigation again, discoveries, removing the save, a different city's save, an older save of the same city, switching to the .cslmap of the same city and back, loading a save before exploring, reopening from recent cities with the remembered save, and switching to another city.
+
+Found and fixed (most also affected .cslmap):
+- Directions redrew its last route on the map while closed whenever a save loaded or was removed.
+- A save loaded while its map was still being stored in recent cities was lost, so the city reopened without it; recent-city reads and writes now run in order.
+- Esc from the map didn't close the closure, reach, discoveries or save panels.
+- Alternatives that drew the same line to the metre (but not the micrometre) were both shown.
+- The approximate-route note was five lines on a phone and mentioned one-way streets for walking and transit.
+
+Kept as is: the first-open notice shows on every file pick until "Don't show this again" (reopening from recent cities skips it); recent cities are keyed by city name, so a .cslmap and a .vellummap of the same city share one entry; station names that only the Bridge file carries (the game's own stop names) are shown.
 
