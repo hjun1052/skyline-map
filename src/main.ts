@@ -64,6 +64,7 @@ const styleReady = new Promise<void>((res) => (map.loaded() ? res() : map.once('
 const scaleBar = new maplibregl.ScaleControl({ maxWidth: 110, unit: imperial() ? 'imperial' : 'metric' });
 map.addControl(scaleBar, 'bottom-right');
 // i18n-keys
+void ['Road class']; // panel row label for .vellummap roads (row() translates it)
 void ["Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL)."];
 // end i18n-keys
 /** the map corner credits the mod that exported the open map (CSLMapView before one is open) */
@@ -150,7 +151,7 @@ async function vellumNotice(f: File): Promise<boolean> {
   dlg.innerHTML = `<h2 id="vnTitle">${esc(t('Opening a .vellummap'))}</h2>
     <p>${esc(t('Vellum Bridge exports have no lane data, so Skyline Map estimates lanes, speeds and one-way streets from each road\'s type and width.'))}</p>
     <ul><li>${esc(t('Directions, travel-time areas and closure analysis are approximate. Adding the save (.crp) the export was made from gives them the real lanes and one-way streets.'))}</li>
-    <li>${esc(t('Lane counts, speed limits and the cycling layer aren\'t shown, and a few city discoveries are left out.'))}</li></ul>
+    <li>${esc(t('Lane counts, speed limits and bike lanes need that save too, and a few city discoveries are left out.'))}</li></ul>
     <p class="vn-hint">${esc(t('For the full map, open a .cslmap export of the same city.'))} <a href="/blog/cities-skylines-city-map.html" target="_blank" rel="noopener">${esc(t('How to export your city with CSLMapView'))}</a></p>
     <label class="vn-check"><input type="checkbox"> ${esc(t('Don\'t show this again'))}</label>
     <div class="vn-actions"><button type="button" class="pill" data-v="cancel">${esc(t('Cancel'))}</button><button type="button" class="pill primary" data-v="open" autofocus>${esc(t('Open map'))}</button></div>`;
@@ -919,7 +920,7 @@ function explainNoLanes(laneFeature = false) {
       ? t("This .vellummap file has no lane data. The save you added fills it in, so directions, travel-time areas, closure analysis and the cycling layer use its lanes, one-way streets and bike lanes. Results can still differ a little from the game.")
       : saved !== null
       ? t("This .vellummap file has no lane data. The save you added fills it in where it names a road type Skyline Map knows: lanes, one-way streets and bike lanes come from the save on {pct}% of the road network (by length), and the rest are estimated from each road's type and width. Routes and times are close but not exact.", { pct: Math.floor(100 * saved) })
-      : t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use). Directions, travel-time areas and closure analysis estimate it from each road's type and width, so routes and times are approximate, and a route may use a one-way street the wrong way. Add the save (.crp) the export was made from to route on its real lanes, or open a .cslmap export of the same city (from CSLMapView) for the full lane data and the cycling layer."))}</p>`
+      : t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use). Directions, travel-time areas and closure analysis estimate it from each road's type and width, so routes and times are approximate, and a route may use a one-way street the wrong way. Add the save (.crp) the export was made from to use its real lanes, one-way streets and bike lanes, or open a .cslmap export of the same city (from CSLMapView) for the full lane data."))}</p>`
     : head(t('Directions are off for this map'), '.vellummap') + `<p class="p-note">${esc(t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis and the cycling layer need a .cslmap export of the same city."))}</p>`);
 }
 $('cityInfo').addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('[data-why-no-route]')) { closeDrawer(); explainNoLanes(); } });

@@ -482,7 +482,7 @@ export class Router {
       if ('bent' in found && found.bent) this.flagAgainst(r, path);
       const used = new Set(path.map((p) => p.e));
       // a different set of graph edges can still draw the very same line (joins part-way along a road): that is a copy too
-      const line = r.legs.map((l) => l.coords.map((c) => c[0].toFixed(6) + ',' + c[1].toFixed(6)).join(' ')).join('|');
+      const line = r.legs.map((l) => l.coords.map((c) => Math.round(c[0]) + ',' + Math.round(c[1])).join(' ')).join('|'); // to the metre
       const overlap = out.some((o) => { if ((o as any)._line === line) return true; const prev = (o as any)._edges as Set<number>; let sh = 0; for (const e of used) if (prev.has(e)) sh += this.edges[e].len; return sh / r.dist > 0.7; });
       if (!overlap && (!out.length || r.time <= out[0].time * 1.5)) { (r as any)._edges = used; (r as any)._line = line; out.push(r); }
       // a near-copy means the penalty is too weak to leave a fast road (e.g. an expressway): escalate faster

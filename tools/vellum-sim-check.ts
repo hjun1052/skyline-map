@@ -5,7 +5,9 @@
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { readVellummap, vellumToCity } from '../src/vellummap';
+import { readVellummap, vellumToCity, areaAt } from '../src/vellummap';
+import { readCrp, openSaveData, loadBytes, ASSET_DATA } from '../src/sim/reader';
+import { readDistrictData } from '../src/sim/city';
 import { parseCity } from '../src/parse';
 import { loadSim, type SimData } from '../src/sim/index';
 import { routingCopy, buildCatalog } from '../src/lane-infer';
@@ -52,6 +54,24 @@ let bs = 0, bn = 0; C.buildings!.ids.forEach((id, i) => { if (!bv.has(id)) retur
 ok(bn > 9000 && bs === bn, 'building occupancy identical on every shared building', `${bs}/${bn}`);
 ok(V.lines!.length === C.lines!.filter((l) => V.lines!.some((x) => x.id === l.id)).length && V.lines!.every((l) => { const x = C.lines!.find((y) => y.id === l.id); return x && x.residents === l.residents && x.tourists === l.tourists; }), 'line ridership identical');
 ok(!!V.grids && !!V.city && V.unavailable.length === 0, 'grids and city statistics read', V.unavailable);
+// districts: the Bridge export's own grid and figures against the save's DistrictManager
+{
+  const bytes = await loadBytes(buf(sf)); const e = readCrp(bytes).entries.find((x) => x.type === ASSET_DATA)!;
+  const dd = readDistrictData(openSaveData(bytes.subarray(e.offset, e.offset + e.size)));
+  const G = 512, P = G * G, g = dd.grid, dg = v.extras!.districtGrid!;
+  let n = 0, same = 0;
+  for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+    const c = j * G + i; let id = 0, a = 0;
+    for (let k = 0; k < 4; k++) if (g[k * P + c] && g[(4 + k) * P + c] > a) { a = g[(4 + k) * P + c]; id = g[k * P + c]; }
+    const vv = areaAt(dg, (i + 0.5) * 19.2 - G * 9.6, (j + 0.5) * 19.2 - G * 9.6);
+    if (!id && !vv) continue; n++; if (id === vv) same++;
+  }
+  ok(n > 10000 && same === n, 'district grid identical to the save on every cell the save covers (512², the central area)', `${same}/${n}`);
+  let pn = 0, ps = 0; for (const [id, st] of v.extras!.districtStats) { const p = dd.pop.get(id); if (p === undefined) continue; pn++; if (p === st.population) ps++; }
+  ok(pn > 30 && ps === pn, 'district populations identical to the save', `${ps}/${pn}`);
+  const cn = new Map(c.districts.map((a) => [a.id, a.name]));
+  ok(v.districts.every((a) => cn.get(a.id) === a.name), 'district ids and names identical to the CSLMapView export', v.districts.length);
+}
 ok(V.rulesSummary!.oneway === C.rulesSummary!.oneway && V.rulesSummary!.uturnBan >= C.rulesSummary!.uturnBan * 0.98 && V.tmpe!.segs.length >= C.tmpe!.segs.length * 0.95, 'one-ways exact; TM:PE and U-turn rules placed', { vellum: V.rulesSummary, cslmap: C.rulesSummary, tmpe: [V.tmpe!.segs.length, C.tmpe!.segs.length] });
 ok(!!V.savedLanes && V.savedLanes.exact / V.savedLanes.roads > 0.9, 'most driving roads get their real lanes from the save', V.savedLanes);
 // what the road panel shows from the save: the CSLMapView export's own values for the same road, wherever it shows any
