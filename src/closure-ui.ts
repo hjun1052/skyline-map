@@ -55,9 +55,9 @@ const svg = (d: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path fi
 // i18n-keys: closure notes
 void ['Uses the export\'s network and the same routing as Directions. Lines through the closure are cut there; nothing reroutes them. No traffic or passenger numbers are involved: the export has none.', 'Uses the export\'s network and the same routing as Directions, with the traffic from your save as an estimate. Lines through the closure are cut there; nothing reroutes them.'];
 // end i18n-keys
-export function createClosure(map: MLMap, deps: { worker: Worker; land: () => DistrictField | null; night: () => boolean; onOpen: () => void; toast: (m: string) => void; traffic: () => boolean; approx: () => boolean }) {
+export function createClosure(map: MLMap, deps: { worker: Worker; land: () => DistrictField | null; night: () => boolean; onOpen: () => void; toast: (m: string) => void; traffic: () => boolean; approx: () => boolean; savedLanes: () => number | null }) {
   /** traffic-aware routing (switched in Directions) changes the drive times shown here */
-  const note = () => (deps.approx() ? t('Approximate: this map has no lane data, so speeds and one-way streets are estimated from road types.') + ' ' : '') + (deps.traffic()
+  const note = () => (deps.approx() ? (deps.savedLanes() !== null ? (deps.savedLanes()! >= 1 ? t('Lanes and one-way streets come from your save.') : t('Approximate: lanes and one-way streets come from your save for {pct}% of roads; the rest are estimated from road types.', { pct: Math.floor(100 * deps.savedLanes()!) })) : t('Approximate: this map has no lane data, so speeds and one-way streets are estimated from road types.')) + ' ' : '') + (deps.traffic()
     ? t('Uses the export\'s network and the same routing as Directions, with the traffic from your save as an estimate. Lines through the closure are cut there; nothing reroutes them.')
     : t('Uses the export\'s network and the same routing as Directions. Lines through the closure are cut there; nothing reroutes them. No traffic or passenger numbers are involved: the export has none.'));
   const st = {

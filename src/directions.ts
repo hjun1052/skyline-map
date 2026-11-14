@@ -59,6 +59,8 @@ export interface DirectionsDeps {
   simulating: () => boolean;
   /** routes run on lanes estimated from road types (.vellummap): label every result approximate */
   approx: () => boolean;
+  /** share of driving roads whose lanes come from a matched save (.vellummap), or null without one */
+  savedLanes: () => number | null;
 }
 
 export function createDirections(d: DirectionsDeps) {
@@ -276,6 +278,8 @@ export function createDirections(d: DirectionsDeps) {
 
   /** Maps without lane data: every route is worked out on estimated lanes. */
   function approxNote(): string {
+    const saved = d.approx() ? d.savedLanes() : null;
+    if (saved !== null) return `<div class="toll-note approx-note">${esc(t(saved >= 1 ? 'Route on your save\'s lanes' : 'Approximate route'))}<div class="small">${esc(saved >= 1 ? t('Lanes and one-way streets come from your save. Times may still differ a little from the game.') : t('Lanes and one-way streets come from your save for {pct}% of roads; the rest are estimated from road types, so times may be a little off.', { pct: Math.floor(100 * saved) }))}</div></div>`;
     return d.approx() ? `<div class="toll-note approx-note">${esc(t('Approximate route'))}<div class="small">${esc(t('This map has no lane data: speeds and one-way streets are estimated from each road\'s type, so times may be off and a route may use a one-way street the wrong way. Check in game. For more accurate directions, open a .cslmap export of the same city.'))}</div></div>` : '';
   }
   /** Traffic-aware driving: what traffic adds, against the same route without it, and how much of it has data. */
@@ -290,7 +294,7 @@ export function createDirections(d: DirectionsDeps) {
   function onewayNote(r: Route, long = false): string {
     const n = r.againstLikelyOneWay?.length;
     if (!n) return '';
-    return `<div class="toll-note warn oneway-note">${t('No route obeys every one-way here: this one drives against a likely one-way direction')}${long ? `<div class="small">${d.approx() ? t('One-way streets on this map are estimated, so this direction may be wrong. Check in game.') : t('That direction was inferred from the road layout and no vehicle has confirmed it, so it may be wrong. Check before driving.')}</div>` : ''}</div>`;
+    return `<div class="toll-note warn oneway-note">${t('No route obeys every one-way here: this one drives against a likely one-way direction')}${long ? `<div class="small">${d.approx() && d.savedLanes() === null ? t('One-way streets on this map are estimated, so this direction may be wrong. Check in game.') : t('That direction was inferred from the road layout and no vehicle has confirmed it, so it may be wrong. Check before driving.')}</div>` : ''}</div>`;
   }
   function tollDetails(r: Route): string {
     const tc = P.tollCost(r)!;

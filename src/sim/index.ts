@@ -17,7 +17,7 @@ import { validate, M, type Validation } from './validate';
 import type { SavePrefabs } from '../lane-infer';
 
 /** for a map without lanes (.vellummap): the worker's routing copy rebuilt with the real prefabs a matched save names */
-export type VellumRouting = (saved: SavePrefabs) => { city: CityData; stats: { fromSave: number }; roads: Set<number> };
+export type VellumRouting = (saved: SavePrefabs) => ReturnType<typeof import('../lane-infer')['routingCopy']>;
 
 export type SimErrorCode = 'not-crp' | 'not-save' | 'unsupported-version' | 'truncated' | 'damaged' | 'corrupt' | 'incompatible';
 

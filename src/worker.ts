@@ -148,7 +148,7 @@ self.onmessage = async (e: MessageEvent) => {
       if (result.ok) {
         const current = router && router === forRouter && lastCity === forCity && token === simToken;
         // .vellummap: the router moves onto the save's real prefabs (lanes, one-ways) before its rules apply
-        if (current && vc && result.routing) { routeOn(result.routing as never, vc.stopNames, vc.closable); vc.savedRouter = true; }
+        if (current && vc && result.routing) { routeOn(result.routing, vc.stopNames, vc.closable); vc.savedRouter = true; }
         delete result.routing;
         if (current && result.rules) router!.applyRules(result.rules);
         // densities of matched segments, for traffic-aware routing (used only once the page switches it on)

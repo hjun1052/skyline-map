@@ -138,7 +138,7 @@ async function openBuffer(buf: ArrayBuffer, label: string) {
 let pending: { blob: Blob; file: string; save?: Recent['save'] } | null = null;
 /** opening another map: a reload must not bring the sample back */
 const dropSample = () => { const u = new URL(location.href); if (u.searchParams.has('sample')) { u.searchParams.delete('sample'); history.replaceState(null, '', u); } };
-// first time a .vellummap is opened: it is experimental and carries less than a .cslmap (unless turned off)
+// first time a .vellummap is opened: what it carries compared with a .cslmap (unless turned off)
 const VELLUM_NOTICE_OFF = 'atlas:vellumNoticeOff';
 /** Ask before opening a .vellummap; resolves false when cancelled. Other files open straight away. */
 async function vellumNotice(f: File): Promise<boolean> {
@@ -147,10 +147,10 @@ async function vellumNotice(f: File): Promise<boolean> {
   if (!/\.vellummap(\.gz)?$/i.test(f.name) && !(head[0] === 0x50 && head[1] === 0x4b && head[2] === 3 && head[3] === 4)) return true;
   const dlg = document.createElement('dialog');
   dlg.className = 'card vellum-notice'; dlg.setAttribute('aria-labelledby', 'vnTitle');
-  dlg.innerHTML = `<h2 id="vnTitle">${esc(t('.vellummap support is experimental'))}</h2>
-    <p>${esc(t('Vellum Bridge exports carry less than CSLMapView .cslmap exports: no lane data and no multi-part buildings.'))}</p>
-    <ul><li>${esc(t('Directions, travel-time areas and closure analysis are approximate: speeds and one-way streets are estimated from road types.'))}</li>
-    <li>${esc(t('Lanes, speed limits, the cycling layer and save files aren\'t available, and some city discoveries are left out.'))}</li></ul>
+  dlg.innerHTML = `<h2 id="vnTitle">${esc(t('Opening a .vellummap'))}</h2>
+    <p>${esc(t('Vellum Bridge exports have no lane data, so Skyline Map estimates lanes, speeds and one-way streets from each road\'s type and width.'))}</p>
+    <ul><li>${esc(t('Directions, travel-time areas and closure analysis are approximate. Adding the save (.crp) the export was made from gives them the real lanes and one-way streets.'))}</li>
+    <li>${esc(t('Lane counts, speed limits and the cycling layer aren\'t shown, and a few city discoveries are left out.'))}</li></ul>
     <p class="vn-hint">${esc(t('For the full map, open a .cslmap export of the same city.'))} <a href="/blog/cities-skylines-city-map.html" target="_blank" rel="noopener">${esc(t('How to export your city with CSLMapView'))}</a></p>
     <label class="vn-check"><input type="checkbox"> ${esc(t('Don\'t show this again'))}</label>
     <div class="vn-actions"><button type="button" class="pill" data-v="cancel">${esc(t('Cancel'))}</button><button type="button" class="pill primary" data-v="open" autofocus>${esc(t('Open map'))}</button></div>`;
@@ -228,7 +228,6 @@ function showCity(city: BuiltCity) {
   creditExporter(city.meta.source ? 'Vellum Bridge' : 'CSLMapView');
   syncUi();
   for (const id of ['dirFab', 'dirBtn', 'reachBtn', 'closureMenu']) { $(id).classList.toggle('off', !canRoute()); $(id).setAttribute('aria-disabled', String(!canRoute())); }
-  $('simMenu').classList.toggle('off', !hasLanes()); $('simMenu').setAttribute('aria-disabled', String(!hasLanes()));
   if (!hasLanes()) toast(canRoute() ? t('Directions on this map are approximate') : t('Directions are off for this map'));
   renderDrawer(city);
   void pricing.attach(city);
@@ -341,7 +340,7 @@ function renderDrawer(city: BuiltCity) {
   $('cityInfo').innerHTML = `
     <div class="city-title">${esc(city.meta.name)}</div>
     <div class="city-meta">${t('Saved {date}', { date: esc(fmtGenerated(city.meta.generated)) })}${state.currentFile ? ' · ' + esc(state.currentFile) : ''}</div>
-    ${city.meta.source ? `<div class="city-source">${esc(t('Opened from {producer} (.vellummap, experimental)', { producer: city.meta.source.producer || 'Vellum' }))}${city.meta.source.lanes ? '' : ` <button class="link-btn" data-why-no-route>${esc(city.meta.source.approxRoutes ? t('Directions on this map are approximate') : t('Directions are off for this map'))}</button>`}</div>` : ''}
+    ${city.meta.source ? `<div class="city-source">${esc(t('Opened from {producer} (.vellummap)', { producer: city.meta.source.producer || 'Vellum' }))}${city.meta.source.lanes ? '' : ` <button class="link-btn" data-why-no-route>${esc(city.meta.source.approxRoutes ? t('Directions on this map are approximate') : t('Directions are off for this map'))}</button>`}</div>` : ''}
     <div class="stats">
       <div class="stat"><b>${n(s.buildings)}</b><span>${t('Buildings')}</span></div>
       <div class="stat"><b>${n(s.roads)}</b><span>${t('Road segments')}</span></div>
@@ -638,7 +637,7 @@ $('schemChip').onclick = () => schem.open();
 
 // ------------------------------------------------------------------ directions
 const dir = createDirections({
-  approx: approxRoutes,
+  approx: approxRoutes, savedLanes: () => sim.savedLanes(),
   map, worker, city: () => state.city,
   pricing, editPricing: (tab, focus) => pricingEd.open(tab, focus),
   showOnSchematic: (route) => schem.open({ route }),
@@ -663,7 +662,7 @@ const measure = createMeasure(map, {
 $('measureBtn').onclick = () => measure.toggle();
 
 const reach = createReach(map, {
-  approx: approxRoutes,
+  approx: approxRoutes, savedLanes: () => sim.savedLanes(),
   worker,
   land: () => state.city?.districtField ?? null,
   night: () => state.mode === 'night',
@@ -685,7 +684,7 @@ $('discoverBtn').onclick = () => (discoveries.isActive() ? discoveries.close() :
 $('discoverMenu').onclick = () => discoveries.open();
 
 const closure = createClosure(map, {
-  approx: approxRoutes,
+  approx: approxRoutes, savedLanes: () => sim.savedLanes(),
   worker, toast,
   land: () => state.city?.districtField ?? null,
   night: () => state.mode === 'night',
@@ -701,7 +700,7 @@ const sim = createSim(map, {
   selectLine: (id) => selectLine(id, true),
   onOpen: () => { closeDrawer(); closePanel(); hideCtx(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); closure.close(); },
 });
-$('simMenu').onclick = needLanes(() => sim.open());
+$('simMenu').onclick = () => sim.open();
 /** What a click while closing picks: a station, a railway, or a road (nearest of each in a small box). */
 function closurePickAt(pt: { x: number; y: number }) {
   const r = 8, box: [[number, number], [number, number]] = [[pt.x - r, pt.y - r], [pt.x + r, pt.y + r]];
@@ -904,9 +903,14 @@ function needLanes(f: () => unknown) { return () => { if (hasLanes()) return voi
 function needRouting(f: () => unknown) { return () => { if (canRoute()) return void f(); closeDrawer(); explainNoLanes(); }; }
 function explainNoLanes(laneFeature = false) {
   panelPlace = null;
+  const saved = sim.savedLanes();
   panel(approxRoutes()
-    ? head(laneFeature ? t('This needs a .cslmap export') : t('Directions on this map are approximate'), '.vellummap') + `<p class="p-note">${esc(t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use). Directions, travel-time areas and closure analysis estimate it from each road's type and width, so routes and times are approximate, and a route may use a one-way street the wrong way. A .cslmap export of the same city (from CSLMapView) has the lane data: open it for more accurate directions, the cycling layer and save files."))}</p>`
-    : head(t('Directions are off for this map'), '.vellummap') + `<p class="p-note">${esc(t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis, the cycling layer and save files need a .cslmap export of the same city."))}</p>`);
+    ? head(laneFeature ? t('This needs a .cslmap export') : t('Directions on this map are approximate'), '.vellummap') + `<p class="p-note">${esc(saved !== null && saved >= 1
+      ? t("This .vellummap file has no lane data. The save you added fills it in, so directions, travel-time areas and closure analysis use its lanes and one-way streets. Bike lanes still need a .cslmap export of the same city (from CSLMapView).")
+      : saved !== null
+      ? t("This .vellummap file has no lane data. The save you added fills it in: lanes and one-way streets come from the save for {pct}% of roads, and the rest are estimated from each road's type and width, so routes and times are close but not exact. Bike lanes still need a .cslmap export of the same city (from CSLMapView).", { pct: Math.floor(100 * saved) })
+      : t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use). Directions, travel-time areas and closure analysis estimate it from each road's type and width, so routes and times are approximate, and a route may use a one-way street the wrong way. Add the save (.crp) the export was made from to route on its real lanes, or open a .cslmap export of the same city (from CSLMapView) for the full lane data and the cycling layer."))}</p>`
+    : head(t('Directions are off for this map'), '.vellummap') + `<p class="p-note">${esc(t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis and the cycling layer need a .cslmap export of the same city."))}</p>`);
 }
 $('cityInfo').addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('[data-why-no-route]')) { closeDrawer(); explainNoLanes(); } });
 function toast(msg: string) { const el = $('toast'); el.textContent = msg; el.hidden = false; clearTimeout(toastT); toastT = window.setTimeout(() => (el.hidden = true), 4500); }

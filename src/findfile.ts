@@ -4,7 +4,7 @@
 // CSLMapView writes its exports into a CSLMapView folder inside the game's install folder
 // (steamapps/common/Cities_Skylines/CSLMapView), as .cslmap.gz since mod version 2.3.0. The paths below are
 // Steam's default library on each OS; a custom library is covered by Steam's "Browse local files".
-// Vellum Bridge's .vellummap exports (experimental support) go to a folder in Documents or the home folder.
+// Vellum Bridge's .vellummap exports go to a folder in Documents or the home folder.
 import { t, onLang } from './i18n';
 
 import { EXPORT_DIRS, BRIDGE_DIRS, OS_NAMES, detectOS, type OS } from './findfile-os';
@@ -54,7 +54,7 @@ export function mountFindFile(el: HTMLElement) {
       ${pathBox('ffPath', 'cslmap', EXPORT_DIRS[os])}
       <ol class="ff-steps">${steps(os).map((s) => `<li>${s}</li>`).join('')}</ol>
       <p class="ff-alt">${esc(t('Steam library somewhere else? In Steam, right-click Cities: Skylines, choose Manage, then Browse local files, and open the CSLMapView folder.'))}</p>
-      <p class="ff-lede ff-bridge">${esc(t('Vellum Bridge (experimental) saves .vellummap exports here, in a folder for each city:'))}</p>
+      <p class="ff-lede ff-bridge">${esc(t('Vellum Bridge saves .vellummap exports here, in a folder for each city:'))}</p>
       ${pathBox('ffBridgePath', 'bridge', BRIDGE_DIRS[os])}
       ${os === 'windows' ? `<p class="ff-alt">${esc(t('If OneDrive backs up your Documents folder, look in OneDrive, Documents, Vellum Bridge instead.'))}</p>` : ''}`;
   };
