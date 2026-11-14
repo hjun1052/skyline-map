@@ -50,7 +50,8 @@ one-way segment is directional ground truth. Two uses:
 
 2. **The split itself:** twin carriageways, two parallel one-way segments of one road (opposite directions, within
    45 m, same lanes, name and similar length), are a two-way road whose two directions each have a true density. Give
-   the method only their combined density and compare its split with the truth (1,403 pairs in 3 cities):
+   the method only their combined density and compare its split with the truth (1,403 pairs in 3 cities, all of them
+   highways or ramps, so these figures say nothing directly about ordinary streets; see section 8):
 
    | | Error per direction (mean, points) | Within 20 points |
    |---|---|---|

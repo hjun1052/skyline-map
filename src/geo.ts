@@ -3,6 +3,8 @@
 // space is exactly one metre of map scale, so fill-extrusion heights, scale
 // bars and widths all stay physically correct.
 
+/** compass headings by octant from east, counter-clockwise (i18n keys, listed in closure.ts) */
+export const COMPASS = ['Heading east', 'Heading northeast', 'Heading north', 'Heading northwest', 'Heading west', 'Heading southwest', 'Heading south', 'Heading southeast'];
 export type XY = [number, number];
 
 const R = 6378137;

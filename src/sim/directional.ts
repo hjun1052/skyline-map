@@ -8,7 +8,8 @@
 // per-lane density estimate for each direction; only their ratio is used, and it is pulled toward an even split when
 // few vehicles give evidence, so the result never strays far from the game's own value without reason. The split
 // keeps the segment's lane-weighted average exactly equal to the game's density.
-// Validated on twin carriageways (two one-way segments of one road taken as a single two-way road): docs/research/
+// Validated on twin carriageways (two one-way segments of one road taken as a single two-way road; all highways and
+// ramps, so streets get a stricter evidence bar): docs/research/
 // directional-traffic.md. It is an estimate of the moment the save was written, not a live or verified value.
 import type { CityData } from '../parse';
 import type { SaveNet } from './net';

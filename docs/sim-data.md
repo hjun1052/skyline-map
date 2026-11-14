@@ -176,7 +176,8 @@ save is removed and loaded again. It is one setting in the worker's router, so r
   route has traffic data.
 - **Other modes:** walking, cycling and transit don't change.
 - **Limits:**
-  - the game stores density per road; the split by direction is an estimate validated on twin carriageways;
+  - the game stores density per road; the split by direction is an estimate validated on twin carriageways, which are
+    all highways and ramps (ordinary streets have no ground truth and need more evidence before they are split);
   - it is a single moment with up to about 2 in-game hours of lag;
   - the curve is a typical slowdown, not a live speed.
 

@@ -4,7 +4,7 @@
 import type { CityData, CSeg } from './parse';
 import type { Router } from './router';
 import { modeOf } from './build';
-import { toLngLat, type XY } from './geo';
+import { toLngLat, COMPASS, type XY } from './geo';
 
 export interface SegInfo { group: 'road' | 'rail'; cls: string; brunnel: string; name: string }
 export type ClosureKind = 'road' | 'rail' | 'station';
@@ -37,7 +37,6 @@ const RAIL_MODES = ['train', 'metro', 'monorail', 'tram'];
 void ['Heading north', 'Heading northeast', 'Heading east', 'Heading southeast', 'Heading south', 'Heading southwest', 'Heading west', 'Heading northwest', 'On foot',
   'Bridge', 'Tunnel', 'Road', 'Railway', 'Rail bridge', 'Rail tunnel', 'Station', 'Bus stop', 'Unnamed road', 'Unnamed railway', 'Unnamed station'];
 // end i18n-keys
-const COMPASS = ['Heading east', 'Heading northeast', 'Heading north', 'Heading northwest', 'Heading west', 'Heading southwest', 'Heading south', 'Heading southeast'];
 const compass = (a: XY, b: XY) => COMPASS[(Math.round(Math.atan2(b[1] - a[1], b[0] - a[0]) / (Math.PI / 4)) + 8) % 8];
 
 /** Road and rail segments the closure tool can close, from the built map (same classes the map draws). A map without lanes
