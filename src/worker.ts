@@ -152,7 +152,7 @@ self.onmessage = async (e: MessageEvent) => {
         delete result.routing;
         if (current && result.rules) router!.applyRules(result.rules);
         // densities of matched segments, for traffic-aware routing (used only once the page switches it on)
-        if (current && result.traffic) router!.applyTraffic(result.traffic.ids, result.traffic.pct);
+        if (current && result.traffic) router!.applyTraffic(result.traffic.ids, result.traffic.pct, result.trafficDir ?? undefined);
         delete result.rules;
       }
       self.postMessage({ type: 'sim', id: msg.id, result }, { transfer: transferables(result) });
@@ -162,7 +162,7 @@ self.onmessage = async (e: MessageEvent) => {
       // .vellummap: back to the estimated lanes
       if (vellumCtx?.savedRouter) { routeOn(vellumCtx.est, vellumCtx.stopNames, vellumCtx.closable); vellumCtx.savedRouter = false; }
     } else if (msg.type === 'traffic') {
-      router?.setTraffic(!!msg.on);
+      router?.setTraffic(!!msg.on); router?.setTrafficDir(!!msg.dir);
     } else if (msg.type === 'lang') {
       setLang(msg.lang, false); // directions text is written in the UI language
     } else if (msg.type === 'contours' && lastHeight) {

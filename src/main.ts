@@ -16,7 +16,7 @@ import { createReach } from './reach-ui';
 import { createTimelapse } from './timelapse';
 import { createDiscoveries } from './discover-ui';
 import { createClosure, CLOSURE_ICON } from './closure-ui';
-import { createSim } from './sim-ui';
+import { createSim, type TrafficMode } from './sim-ui';
 import { createSchematic } from './schematic-view';
 import { createContextStore, createContextEditor, moneyField, parseMoney, describeRule } from './context-ui';
 import { bottomSheet, isPhone } from './sheet';
@@ -36,7 +36,7 @@ type Mode = 'map' | 'terrain' | 'night';
 const saved = (() => { try { return JSON.parse(localStorage.getItem('atlas:opts') ?? '{}'); } catch { return {}; } })();
 const state = {
   mode: (saved.mode ?? 'map') as Mode,
-  opts: { transit: true, bus: false, cycling: false, buildings3d: true, grid: false, labels: true, contours: false, ...saved.opts } as Omit<StyleOptions, 'theme' | 'terrain'>,
+  opts: { transit: true, bus: false, cycling: false, buildings3d: true, grid: false, labels: true, contours: false, neutralRoads: false, ...saved.opts } as Omit<StyleOptions, 'theme' | 'terrain'>,
   terrain3d: false,
   city: null as BuiltCity | null,
   contoursLoaded: false,
@@ -44,6 +44,9 @@ const state = {
   /** this map's entry in recent cities (recent.ts), or null when it isn't remembered (the sample city) */
   recentId: null as string | null,
 };
+/** traffic display mode (Layers menu), kept per browser: the game's value per road unless the viewer picks directions */
+const TRAFFIC_MODE = 'atlas:trafficMode';
+let trafficMode: TrafficMode = (() => { try { return localStorage.getItem(TRAFFIC_MODE) === 'directional' ? 'directional' : 'combined'; } catch { return 'combined'; } })();
 const persist = () => { try { localStorage.setItem('atlas:opts', JSON.stringify({ mode: state.mode, opts: state.opts })); } catch { /* private mode */ } };
 const styleOpts = (): StyleOptions => ({ ...state.opts, ...(hasLanes() ? {} : { bikeFromSave: true }), theme: state.mode === 'night' ? 'dark' : 'light', terrain: state.mode === 'terrain', contours: state.opts.contours || state.mode === 'terrain' });
 
@@ -523,7 +526,7 @@ function describeRest(f: MapGeoJSONFeature, p: any, layer: string, geom: any, ln
   setSelection(sel);
   const totalLen = p.name ? Math.round(sel.reduce((s, x) => s + lineLen(x.geometry.coordinates), 0)) : p.len;
   panel(head(name, (L(p.cls) ?? p.cls) + (p.brunnel === 'bridge' ? ' · ' + t('Bridge / elevated') : p.brunnel === 'tunnel' ? ' · ' + t('Tunnel') : '')) +
-    `<div class="p-rows">${row(hasLanes() ? 'Road type' : 'Road class', p.type)}${row('District', p.district)}${row('Lanes', p.lanes || null)}${row('Speed limit', p.speed ? fmtSpeed(p.speed) : null)}${row('Bike lane', p.bike ? t('Yes') : null)}${row('Carriageway', p.w ? fmtWidth(p.w) : null)}${row('One-way', p.oneway ? t('Yes') : null)}${row(p.name ? t('Total length') : t('Segment length'), totalLen ? panelLen(totalLen) : null)}${row('Elevation', p.z !== undefined ? fmtHeight(p.z) : null)}</div>${hasLanes() ? '' : `<p class="p-note">${esc(p.id !== undefined && sim.roadFact(Number(p.id)) ? t('Road class is from the .vellummap file, which has no lanes. The road type, lanes and speed limit below come from your save.') : t('Road class is from the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.'))}</p>`}${p.id !== undefined && !/rail|subway|monorail|tram|cablecar/.test(p.cls) ? sim.roadHtml(Number(p.id)) : ''}${p.id !== undefined && !['runway', 'taxiway', 'canal', 'ferry'].includes(p.cls) ? `<div class="p-actions">${closeBtn({ kind: /rail|subway|monorail|tram|cablecar/.test(p.cls) ? 'rail' : 'road', seg: Number(p.id) })}</div>` : ''}`);
+    `<div class="p-rows">${row(hasLanes() ? 'Road type' : 'Road class', p.type)}${row('District', p.district)}${row('Lanes', p.lanes || null)}${row('Speed limit', p.speed ? fmtSpeed(p.speed) : null)}${row('Bike lane', p.bike ? t('Yes') : null)}${row('Carriageway', p.w ? fmtWidth(p.w) : null)}${row('One-way', p.oneway ? t('Yes') : null)}${row(p.name ? t('Total length') : t('Segment length'), totalLen ? panelLen(totalLen) : null)}${row('Elevation', p.z !== undefined ? fmtHeight(p.z) : null)}</div>${hasLanes() ? '' : `<p class="p-note">${esc(p.id !== undefined && sim.roadFact(Number(p.id)) ? t('Road class is from the .vellummap file, which has no lanes. The road type, lanes and speed limit below come from your save.') : t('Road class is from the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.'))}</p>`}${p.id !== undefined && !/rail|subway|monorail|tram|cablecar/.test(p.cls) ? sim.roadHtml(Number(p.id), !!p.oneway || !!sim.roadFact(Number(p.id))?.oneway) : ''}${p.id !== undefined && !['runway', 'taxiway', 'canal', 'ferry'].includes(p.cls) ? `<div class="p-actions">${closeBtn({ kind: /rail|subway|monorail|tram|cablecar/.test(p.cls) ? 'rail' : 'road', seg: Number(p.id) })}</div>` : ''}`);
 }
 /** The district shown as a soft region (estimated: no district shapes in the export), redrawn on theme changes. */
 let glowDistrict: number | null = null;
@@ -651,6 +654,7 @@ const dir = createDirections({
   showOnSchematic: (route) => schem.open({ route }),
   simRules: () => sim.hasRules(),
   simTraffic: () => sim.hasTraffic(),
+  simTrafficDir: () => sim.hasTrafficDir(),
   simulate: (r, to) => { if (!nav.start(r, to)) toast(t('This route is too short to simulate')); },
   simulating: () => nav.isActive(),
   onOpen: () => { closePanel(); sim.close(); if (reach.isActive()) reach.close(); discoveries.close(); closure.close(); $('topbar').hidden = true; document.body.classList.add('dir-open'); },
@@ -864,6 +868,17 @@ function syncUi() {
   $('layerThumb').className = 'thumb ' + (state.mode === 'night' ? 't-map' : state.mode === 'terrain' ? 't-map' : 't-terrain');
   ($('optLabels') as HTMLInputElement).checked = state.opts.labels;
   ($('opt3dTerrain') as HTMLInputElement).checked = state.terrain3d;
+  ($('optNeutral') as HTMLInputElement).checked = !!state.opts.neutralRoads;
+  // traffic comes from a save: without one the switch explains where to get it
+  const traffic = sim.hasTraffic(), box = $('optTraffic') as HTMLInputElement;
+  box.checked = traffic && sim.trafficShown(); $('optTrafficRow').classList.toggle('off', !traffic); box.setAttribute('aria-disabled', String(!traffic)); $('optTrafficHint').hidden = traffic;
+  // display mode, under the switch while traffic is shown; a save without directions says it shows the combined value
+  $('optTrafficMode').hidden = !box.checked;
+  document.querySelectorAll<HTMLElement>('#optTrafficMode [data-tmode]').forEach((b) => { const on = b.dataset.tmode === trafficMode; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
+  $('optTrafficModeCombined').hidden = trafficMode !== 'combined';
+  const dirHint = $('optTrafficModeDirectional');
+  dirHint.hidden = trafficMode !== 'directional';
+  dirHint.textContent = sim.hasTrafficDir() ? t("Estimated per direction where your save's vehicles show it; other roads keep the combined value.") : t("This save can't tell the directions apart, so each road shows the combined value.");
   $('tilt').classList.toggle('on', map.getPitch() > 5);
 }
 $('chips').addEventListener('click', (e) => {
@@ -878,11 +893,27 @@ $('chips').addEventListener('click', (e) => {
   applyStyle();
   if (k === 'cycling' && state.opts.cycling && !hasLanes()) cyclingNote();
 });
-$('layerBtn').onclick = (e) => { e.stopPropagation(); $('layerPop').hidden = !$('layerPop').hidden; };
+$('layerBtn').onclick = (e) => { e.stopPropagation(); syncUi(); $('layerPop').hidden = !$('layerPop').hidden; };
 document.addEventListener('click', (e) => { if (!$('layerSwitch').contains(e.target as Node)) $('layerPop').hidden = true; });
 document.querySelectorAll<HTMLElement>('.layer-opt').forEach((b) => (b.onclick = () => { state.mode = b.dataset.mode as Mode; applyStyle(); }));
 $('optLabels').onchange = (e) => { state.opts.labels = (e.target as HTMLInputElement).checked; applyStyle(); };
 $('opt3dTerrain').onchange = (e) => { state.terrain3d = (e.target as HTMLInputElement).checked; set3dTerrain(); };
+$('optNeutral').onchange = (e) => { state.opts.neutralRoads = (e.target as HTMLInputElement).checked; applyStyle(); };
+// traffic display mode (Layers): the game's value per road by default; per direction is an opt-in estimate
+sim.setTrafficMode(trafficMode);
+$('optTrafficMode').addEventListener('click', (e) => {
+  const m = ((e.target as HTMLElement).closest('[data-tmode]') as HTMLElement | null)?.dataset.tmode as TrafficMode | undefined;
+  if (!m || m === trafficMode) return;
+  trafficMode = m;
+  try { localStorage.setItem(TRAFFIC_MODE, m); } catch { /* storage blocked: this visit only */ }
+  sim.setTrafficMode(m); syncUi();
+  if (!$('panel').hidden) panelRefresh?.(); // a road panel open shows the directions or not
+});
+$('optTraffic').onchange = (e) => {
+  const box = e.target as HTMLInputElement;
+  if (!sim.hasTraffic()) { box.checked = false; $('layerPop').hidden = true; sim.open(); return; } // no save yet: open where it is added
+  sim.showTraffic(box.checked); syncUi();
+};
 function set3dTerrain() {
   map.setTerrain(state.terrain3d ? { source: 'dem', exaggeration: 1.2 } : null);
   if (state.terrain3d && map.getPitch() < 30) map.easeTo({ pitch: 60, duration: 800 });

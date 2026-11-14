@@ -7,6 +7,7 @@ import { iconDataUrl } from './icons';
 import { bottomSheet, isPhone } from './sheet';
 import { t, tn, applyStatic, fmtFixed } from './i18n';
 import { fmtDist, onUnits } from './units';
+import { trafficFactor } from './sim/traffic';
 import type { ContextStore, TollCost, FareCost } from './context-ui';
 
 type LL = [number, number];
@@ -54,6 +55,8 @@ export interface DirectionsDeps {
   simRules: () => boolean;
   /** a matched save's traffic densities are loaded in the worker's router (see sim/traffic.ts) */
   simTraffic: () => boolean;
+  /** the save also gave traffic by direction (sim/directional.ts) */
+  simTrafficDir: () => boolean;
   /** drive a route in the navigation simulation, and whether one is running */
   simulate: (r: Route, destination: string) => void;
   simulating: () => boolean;
@@ -61,6 +64,13 @@ export interface DirectionsDeps {
   approx: () => boolean;
   /** share of driving roads whose lanes come from a matched save (.vellummap), or null without one */
   savedLanes: () => number | null;
+}
+
+/** a route stretch's colour by how much traffic slows it (sim/traffic.ts), or '' when it barely does */
+function trafficColor(pct: number): string {
+  if (pct < 0) return '';
+  const f = trafficFactor(pct);
+  return f >= 3 ? '#a50e0e' : f >= 2 ? '#d93025' : f >= 1.3 ? '#f29900' : '';
 }
 
 export function createDirections(d: DirectionsDeps) {
@@ -83,7 +93,7 @@ export function createDirections(d: DirectionsDeps) {
       <button class="icon-btn dir-swap" title="Reverse starting point and destination" aria-label="Swap" data-i18n-title="Reverse starting point and destination" data-i18n-aria="Swap">${svg('<path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3 5 6.99h3V14h2V6.99h3L9 3z"/>')}</button>
       <div class="dir-suggest" hidden></div>
     </div>
-    <div class="dir-options"><label><input type="checkbox" id="dirAvoidTolls" /> <span data-i18n="Avoid tolls">Avoid tolls</span></label><label id="dirRulesRow" hidden title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save" data-i18n-title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save"><input type="checkbox" id="dirRules" checked /> <span data-i18n="Traffic rules from my save">Traffic rules from my save</span></label><label id="dirTrafficRow" hidden title="Slows each road by how busy it was in your saved city" data-i18n-title="Slows each road by how busy it was in your saved city"><input type="checkbox" id="dirTraffic" /> <span data-i18n="Traffic-aware routing">Traffic-aware routing</span></label><p class="dir-traffic-note" hidden data-i18n="Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.">Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.</p></div>
+    <div class="dir-options"><label><input type="checkbox" id="dirAvoidTolls" /> <span data-i18n="Avoid tolls">Avoid tolls</span></label><label id="dirRulesRow" hidden title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save" data-i18n-title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save"><input type="checkbox" id="dirRules" checked /> <span data-i18n="Traffic rules from my save">Traffic rules from my save</span></label><label id="dirTrafficRow" hidden title="Slows each road by how busy it was in your saved city" data-i18n-title="Slows each road by how busy it was in your saved city"><input type="checkbox" id="dirTraffic" /> <span data-i18n="Traffic-aware routing">Traffic-aware routing</span></label><label id="dirTrafficDirRow" class="dir-sub" hidden title="Uses each direction's estimated traffic where the save's vehicles show it, instead of each road's own value both ways" data-i18n-title="Uses each direction's estimated traffic where the save's vehicles show it, instead of each road's own value both ways"><input type="checkbox" id="dirTrafficDir" /> <span><span data-i18n="Traffic by direction">Traffic by direction</span> <span class="exp-tag" data-i18n="Experimental">Experimental</span></span></label><p class="dir-traffic-note" hidden data-i18n="Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.">Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.</p></div>
     </div>
     <div class="dir-sheet"><div class="dir-body"></div></div>`;
   document.body.appendChild(el);
@@ -99,7 +109,7 @@ export function createDirections(d: DirectionsDeps) {
   });
 
   const st = {
-    from: null as Place | null, to: null as Place | null, mode: 'drive' as Mode, avoidTolls: false, rules: true, traffic: false,
+    from: null as Place | null, to: null as Place | null, mode: 'drive' as Mode, avoidTolls: false, rules: true, traffic: false, trafficDir: false,
     results: {} as Partial<Record<Mode, Route[]>>, sel: 0, req: 0, active: 'to' as 'from' | 'to', expanded: false,
   };
 
@@ -191,6 +201,13 @@ export function createDirections(d: DirectionsDeps) {
       for (const l of r.legs) {
         const kind = l.kind === 'ride' ? 'ride' : l.kind === 'walk' ? 'walk' : 'main';
         feats.push({ type: 'Feature', properties: { role: kind, color: l.line?.color ?? '#1a73e8', idx: st.sel }, geometry: { type: 'LineString', coordinates: l.coords } });
+        // traffic on this driving leg: each slowed stretch drawn over the route in the colour of its slowdown
+        if (l.traffic) l.traffic.forEach((pc, k) => {
+          const color = trafficColor(pc.pct); if (!color) return;
+          const end = k + 1 < l.traffic!.length ? l.traffic![k + 1].i : l.coords.length - 1;
+          const cs = l.coords.slice(Math.max(0, pc.i - 1), end + 1);
+          if (cs.length > 1) feats.push({ type: 'Feature', properties: { role: 'traffic', color, idx: st.sel }, geometry: { type: 'LineString', coordinates: cs } });
+        });
         if (l.kind === 'ride' && l.coords.length) {
           for (const c of [l.coords[0], l.coords[l.coords.length - 1]]) feats.push({ type: 'Feature', properties: { role: 'stop', color: l.line!.color }, geometry: { type: 'Point', coordinates: c } });
         }
@@ -290,8 +307,12 @@ export function createDirections(d: DirectionsDeps) {
   function trafficNote(r: Route): string {
     if (r.baseTime === undefined) return '';
     const extra = r.time - r.baseTime;
-    const parts = [extra >= 30 ? t('Traffic adds about {time} to this route', { time: fmtTime(extra) }) : t('No delay from traffic')];
+    // short slow stretches still cost a few seconds: only a route traffic leaves untouched says so
+    const parts = [extra >= 30 ? t('Traffic adds about {time} to this route', { time: fmtTime(extra) }) : extra >= 5 ? t('Traffic adds under a minute') : t('No delay from traffic')];
     if ((r.trafficShare ?? 0) < 0.9) parts.push(t('traffic known for {pct}% of the route', { pct: Math.round((r.trafficShare ?? 0) * 100) }));
+    // stretches where the save's vehicles tell the two directions apart use the traffic in the direction driven
+    const pieces = r.legs.flatMap((l) => l.traffic ?? []);
+    if (pieces.some((p) => p.split)) parts.push(t('by direction where the save shows it'));
     return `<div class="traffic-note">${esc(parts.join(' · '))}</div>`;
   }
   /** A last-resort route that drives against a likely (unconfirmed) one-way: never shown as an ordinary route. */
@@ -338,7 +359,15 @@ export function createDirections(d: DirectionsDeps) {
   /** the worker's router holds one traffic switch: Directions, reach and closures all follow it */
   // st.traffic is the user's choice and outlives a removed or reloaded save; it applies while traffic data is loaded
   const trafficOn = () => st.traffic && d.simTraffic();
-  const sendTraffic = () => { worker.postMessage({ type: 'traffic', on: trafficOn() }); $<HTMLElement>('.dir-traffic-note').hidden = !trafficOn(); };
+  // per-direction estimates: a separate experimental choice, offered while traffic-aware routing is on and the save has them
+  const sendTraffic = () => {
+    worker.postMessage({ type: 'traffic', on: trafficOn(), dir: trafficOn() && st.trafficDir && d.simTrafficDir() });
+    $<HTMLElement>('.dir-traffic-note').hidden = !trafficOn();
+    $<HTMLElement>('#dirTrafficDirRow').hidden = !(trafficOn() && d.simTrafficDir());
+    trafficDirBox.checked = st.trafficDir;
+  };
+  const trafficDirBox = $<HTMLInputElement>('#dirTrafficDir');
+  trafficDirBox.addEventListener('change', () => { st.trafficDir = trafficDirBox.checked; sendTraffic(); compute(); });
   trafficBox.addEventListener('change', () => { st.traffic = trafficBox.checked; sendTraffic(); compute(); });
   /** the save's rules or traffic were loaded or removed: show each switch while its data exists, and re-route */
   function rulesChanged() {

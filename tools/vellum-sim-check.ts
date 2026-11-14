@@ -97,6 +97,9 @@ ok(!!V.savedLanes && V.savedLanes.exact / V.savedLanes.roads > 0.9, 'most drivin
   ok(known > 8000 && same === known && unknownWithLanes === 0, 'road panel facts from the save equal the CSLMapView export (lanes, speed limit, one-way)', `${same}/${known}`);
   ok(bikeSame === bikeKnownRoads, 'bike lanes from the save equal the CSLMapView export wherever the road type is known', `${bikeSame}/${bikeKnownRoads}`);
   ok(V.savedLanes!.lenShare > 0.9 && V.savedLanes!.lenShare <= 1, 'coverage is a share of road length', V.savedLanes!.lenShare.toFixed(3));
+  // traffic by direction only where the save named the real lanes (a guessed layout can't say which way a lane runs)
+  const exactRoads = V.routing!.city.extras!.exactLanes!;
+  ok(!!V.trafficDir && V.trafficDir.ids.length > 500 && [...V.trafficDir.ids].every((id) => exactRoads.has(id)), 'traffic by direction only on roads with lanes from the save', V.trafficDir?.ids.length);
 }
 // driving on the save's lanes and rules against the CSLMapView export with the same save
 const built = buildCity(v, () => {}, inferOneWay(v), detectTolls(v));

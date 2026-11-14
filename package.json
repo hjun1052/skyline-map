@@ -28,6 +28,7 @@
     "check:vellummap": "tsx tools/vellummap-check.ts",
     "check:vellum-routes": "tsx tools/vellum-route-check.ts",
     "check:vellum-sim": "tsx tools/vellum-sim-check.ts",
+    "check:traffic-dir": "tsx tools/traffic-dir-check.ts",
     "lane-catalog": "tsx tools/lane-catalog.ts"
   },
   "author": "",

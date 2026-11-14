@@ -16,6 +16,8 @@ import { md5 } from './md5';
 import { validate, M, type Validation } from './validate';
 import type { SavePrefabs } from '../lane-infer';
 import { laneInfo } from '../build';
+import { readVehicles, readPaths } from './vehicles';
+import { directionalTraffic, type DirTraffic } from './directional';
 
 /** for a map without lanes (.vellummap): the worker's routing copy rebuilt with the real prefabs a matched save names */
 export type VellumRouting = (saved: SavePrefabs) => ReturnType<typeof import('../lane-infer')['routingCopy']>;
@@ -46,6 +48,9 @@ export interface SimData {
   ok: true;
   save: SimSave;
   v: Validation;
+  /** traffic by direction on two-way roads, estimated from the save's vehicles (sim/directional.ts); null when this save's
+   *  vehicle records aren't read (older format) */
+  trafficDir: DirTraffic | null;
   /** m_trafficDensity (0-100 %) for matched segments only */
   traffic: { ids: Uint16Array; pct: Uint8Array } | null;
   /** occupancy for matched buildings only; -1 = the building has no units of that kind */
@@ -139,6 +144,10 @@ export async function loadSim(buf: ArrayBuffer, city: CityData, step: (s: string
       }
     }
     const traffic = trafficOf(city, net, m.seg);
+    // .vellummap: only roads whose real lanes the save named (a guessed lane layout can't say which way a lane runs)
+    let trafficDir: DirTraffic | null = null;
+    // left-hand traffic is skipped like the per-direction rules (no left-hand save tested: lane directions may be mirrored)
+    if (sd.version === 121034 && !sd.leftHandTraffic) trafficDir = tryRead('vehicles', () => directionalTraffic(simCity, net, (id) => m.seg[id] === M.Verified, readVehicles(sd), readPaths(sd), vellum ? routing?.city.extras?.exactLanes : undefined)) ?? null;
     const occ = tryRead('buildings', () => readOccupancy(sd, bld));
     const buildings = occ ? buildingsOf(city, m.bld, occ, bld) : null;
     const tmpeData = tryRead('tmpe', () => readTmpe(sd.modData));
@@ -148,7 +157,7 @@ export async function loadSim(buf: ArrayBuffer, city: CityData, step: (s: string
     const cityStats = tryRead('city', () => readCityStats(sd));
     const g = tryRead('grids', () => readGrids(sd));
     const grids = g ? { landValue: g.landValue, noise: g.noise, crime: g.crime, pollution: g.groundPollution } : null;
-    return { ok: true, save, v, traffic, buildings, tmpe, lines, city: cityStats, grids, unavailable, rules, rulesSummary: rules?.summary ?? null, savedLanes, roadFacts, routing, ms: Math.round(performance.now() - t0) };
+    return { ok: true, save, v, traffic, buildings, tmpe, lines, city: cityStats, grids, unavailable, rules, rulesSummary: rules?.summary ?? null, trafficDir, savedLanes, roadFacts, routing, ms: Math.round(performance.now() - t0) };
   } catch (err) {
     if (err instanceof SaveError) return { ok: false, code: err.code, detail: err.message, save };
     if (err instanceof RangeError) return { ok: false, code: 'truncated', detail: err.message, save };
@@ -211,6 +220,7 @@ export function transferables(r: SimResult): ArrayBuffer[] {
   if (!r.ok) return [];
   const out: ArrayBufferLike[] = [];
   if (r.traffic) out.push(r.traffic.ids.buffer, r.traffic.pct.buffer);
+  if (r.trafficDir) out.push(r.trafficDir.ids.buffer, r.trafficDir.f.buffer, r.trafficDir.b.buffer, r.trafficDir.evidence.buffer, r.trafficDir.queue.buffer, r.trafficDir.heading.buffer, r.trafficDir.trusted.buffer);
   if (r.buildings) for (const k of ['ids', 'residents', 'households', 'homes', 'workers', 'students', 'visitors', 'level', 'happiness'] as const) out.push(r.buildings[k].buffer);
   if (r.grids) out.push(r.grids.landValue.buffer, r.grids.noise.buffer, r.grids.crime.buffer, r.grids.pollution.buffer);
   return [...new Set(out)] as ArrayBuffer[];

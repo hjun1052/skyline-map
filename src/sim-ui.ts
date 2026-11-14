@@ -8,7 +8,7 @@ import type { BuiltCity } from './build';
 import type { SimResult, SimData, SimFailure, SimLine } from './sim';
 
 type TmSeg = NonNullable<SimData['tmpe']>['segs'][number];
-import { toLngLat } from './geo';
+import { toLngLat, COMPASS } from './geo';
 import { roadWidth } from './style';
 import { t, tn, locale } from './i18n';
 import { bottomSheet } from './sheet';
@@ -16,6 +16,8 @@ import { bottomSheet } from './sheet';
 type Layer = 'none' | 'traffic' | 'landValue' | 'noise' | 'pollution' | 'crime';
 const LAYERS: Layer[] = ['none', 'traffic', 'landValue', 'noise', 'pollution', 'crime'];
 const TRAFFIC = 'sim-traffic', RASTER = 'sim-grid', COVER = 'sim-cover';
+/** from this zoom, two-way roads with a directional estimate show one line per direction */
+const DIR_ZOOM = 14;
 const IMM_HALF = 128 * 38.4; // immaterial grid: 256 cells of 38.4 m, central 25 tiles only
 const NAT_HALF = 256 * 33.75; // natural grid: 512 cells of 33.75 m, the whole map
 const TRAFFIC_COLORS: [number, string][] = [[0, '#34a853'], [40, '#a8c530'], [60, '#f6bf26'], [80, '#f2853d'], [100, '#d93025']];
@@ -50,7 +52,7 @@ void ['Simulation data', 'Close', 'Enhance your map with real traffic, populatio
   'Whole city, from the save', 'Population', 'Workers', 'Jobs', 'Unemployment', 'Education', 'Uneducated', 'Educated', 'Well educated', 'Highly educated',
   'Tourists', 'Happiness', 'Crime rate', 'Average land value', 'Taxes', 'Residential', 'Commercial', 'Industrial', 'Office', 'low', 'high',
   'Transit ridership', 'Passengers per week, as the game\'s line panel shows them.',
-  'Some data couldn\'t be read from this save: {list}.', 'building occupancy', 'transit ridership', 'traffic rules', 'city statistics', 'map layers',
+  'Some data couldn\'t be read from this save: {list}.', 'building occupancy', 'transit ridership', 'traffic rules', 'city statistics', 'map layers', 'traffic by direction',
   'From your save', 'This object doesn\'t match the save, so no simulation data is shown for it.',
   'Residents', 'Households', 'Workers now', 'Students', 'Visitors now', 'Happiness', 'Traffic', 'Speed limit (TM:PE)', 'Default speed for this road type (TM:PE)', 'Parking', 'Not allowed', 'One side only', 'No limit',
   'Passengers per week', '{res} residents · {tour} tourists', 'Last full week', 'Car trips saved', 'as the game shows it',
@@ -58,6 +60,8 @@ void ['Simulation data', 'Close', 'Enhance your map with real traffic, populatio
   'Directions, reach and closures now follow the traffic rules in your save: {list}.', 'Left-hand traffic: one-way directions and per-direction rules aren\'t applied yet.', 'Traffic density changes travel times only when you switch on traffic-aware routing in Directions, and then only as an estimate.'];
 // end i18n-keys
 
+/** compass octants from east, counter-clockwise (same keys as the closure tool) */
+export type TrafficMode = 'combined' | 'directional';
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const num = (v: number) => v.toLocaleString(locale());
 const pct = (v: number) => `${v.toLocaleString(locale(), { maximumFractionDigits: 1 })}%`;
@@ -67,7 +71,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     open: false, busy: false, step: '', file: '', id: 0, src: null as File | null,
     data: null as SimData | null, fail: null as SimFailure | null,
     layer: 'none' as Layer,
-    bikes: [] as number[], traffic: new Map<number, number>(), bld: new Map<number, number>(), tm: new Map<number, TmSeg>(), lines: new Map<number, SimLine>(),
+    bikes: [] as number[], traffic: new Map<number, number>(), dir: new Map<number, { f: number; b: number; ok: boolean; q: number; h: number }>(), mode: 'combined' as TrafficMode, drawn: [] as number[], bld: new Map<number, number>(), tm: new Map<number, TmSeg>(), lines: new Map<number, SimLine>(),
   };
 
   const el = document.createElement('div');
@@ -112,6 +116,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     clearView();
     st.data = r; st.fail = null;
     if (r.traffic) for (let i = 0; i < r.traffic.ids.length; i++) st.traffic.set(r.traffic.ids[i], r.traffic.pct[i]);
+    if (r.trafficDir) { const x = r.trafficDir; for (let i = 0; i < x.ids.length; i++) st.dir.set(x.ids[i], { f: x.f[i], b: x.b[i], ok: !!x.trusted[i], q: x.queue[i], h: x.heading[i] }); }
     if (r.buildings) for (let i = 0; i < r.buildings.ids.length; i++) st.bld.set(r.buildings.ids[i], i);
     if (r.tmpe) for (const s of r.tmpe.segs) st.tm.set(s.id, s);
     if (r.lines) for (const l of r.lines) st.lines.set(l.id, l);
@@ -124,7 +129,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     const had = !!st.data;
     if (map.getSource('roads')) for (const id of st.bikes) map.removeFeatureState({ source: 'roads', id }, 'bike');
     st.bikes = [];
-    st.data = null; st.traffic.clear(); st.bld.clear(); st.tm.clear(); st.lines.clear();
+    st.data = null; st.traffic.clear(); st.dir.clear(); st.bld.clear(); st.tm.clear(); st.lines.clear();
     removeLayers();
     if (had) deps.onData?.();
   }
@@ -141,9 +146,11 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
   /** heat grids sit on the ground: under roads and buildings, over land and lots */
   function firstRoadLayer() { return map.getLayersOrder().find((id) => (map.getLayer(id) as { source?: string } | undefined)?.source === 'roads'); }
   function removeLayers() {
-    for (const id of [TRAFFIC, RASTER, COVER + '-line']) if (map.getLayer(id)) map.removeLayer(id);
+    for (const id of [TRAFFIC, TRAFFIC + '-f', TRAFFIC + '-b', RASTER, COVER + '-line']) if (map.getLayer(id)) map.removeLayer(id);
     for (const id of [RASTER, COVER]) if (map.getSource(id)) map.removeSource(id);
-    if (map.getSource('roads')) map.removeFeatureState({ source: 'roads' });
+    // only what the traffic layer set: other road states (a save's bike lanes on a .vellummap) stay
+    if (map.getSource('roads')) for (const id of st.drawn) for (const k of ['t', 'tf', 'tb', 'td']) map.removeFeatureState({ source: 'roads', id }, k);
+    st.drawn = [];
   }
   let drawQueued = false;
   function draw() {
@@ -157,7 +164,12 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     if (!d || st.layer === 'none') { syncChip(); return; }
     if (st.layer === 'traffic') {
       if (!d.traffic) return;
-      for (const [id, v] of st.traffic) map.setFeatureState({ source: 'roads', id }, { t: v });
+      for (const [id, v] of st.traffic) {
+        // two-way roads with enough evidence: a value per direction (sim/directional.ts), drawn side by side when zoomed in
+        const x = st.dir.get(id), split = st.mode === 'directional' && !!x && x.ok;
+        map.setFeatureState({ source: 'roads', id }, split ? { t: v, tf: x!.f, tb: x!.b, td: true } : { t: v });
+        st.drawn.push(id);
+      }
       const tv = ['coalesce', ['feature-state', 't'], -1] as ExpressionSpecification;
       map.addLayer({
         id: TRAFFIC, type: 'line', source: 'roads',
@@ -167,9 +179,31 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
         paint: {
           'line-color': ['interpolate', ['linear'], tv, ...TRAFFIC_COLORS.flat()] as ExpressionSpecification,
           'line-width': roadWidth([0.5, 0.8, 1.2, 1.6]),
-          'line-opacity': ['case', ['<', tv, 0], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95] as ExpressionSpecification,
+          // zoomed in, split roads hand over to the two direction lines below
+          'line-opacity': ['step', ['zoom'], ['case', ['<', tv, 0], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95], DIR_ZOOM,
+            ['case', ['<', tv, 0], 0, ['boolean', ['feature-state', 'td'], false], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95]] as ExpressionSpecification,
         },
       }, before());
+      const splitIds = st.mode === 'directional' ? [...st.dir].filter(([id, x]) => x.ok && st.traffic.has(id)).map(([id]) => id) : [];
+      if (splitIds.length) {
+        // each direction on the right of travel (left-hand-traffic saves get no split: sim/index.ts)
+        const side = 1;
+        for (const [key, sign] of [['f', 1], ['b', -1]] as const) {
+          const v = ['coalesce', ['feature-state', 't' + key], -1] as ExpressionSpecification;
+          map.addLayer({
+            id: TRAFFIC + '-' + key, type: 'line', source: 'roads', minzoom: DIR_ZOOM,
+            // only the split roads: a hidden line still costs drawing time on every other road
+            filter: ['in', ['id'], ['literal', splitIds]] as ExpressionSpecification,
+            layout: { 'line-join': 'round', 'line-cap': 'butt' },
+            paint: {
+              'line-color': ['interpolate', ['linear'], v, ...TRAFFIC_COLORS.flat()] as ExpressionSpecification,
+              'line-width': ['interpolate', ['linear'], ['zoom'], DIR_ZOOM, 1.6, 16, 2.6, 18, 4.5],
+              'line-offset': ['interpolate', ['linear'], ['zoom'], DIR_ZOOM, 1.3 * sign * side, 16, 2.4 * sign * side, 18, 4.6 * sign * side],
+              'line-opacity': ['case', ['!', ['boolean', ['feature-state', 'td'], false]], 0, ['<', v, 0], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95] as ExpressionSpecification,
+            },
+          }, before());
+        }
+      }
     } else {
       const g = d.grids;
       if (!g) return;
@@ -212,7 +246,8 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
   function layerName(l: Layer) { return t(l === 'none' ? 'Off' : l === 'traffic' ? 'Traffic' : l === 'landValue' ? 'Land value' : l === 'noise' ? 'Noise' : l === 'pollution' ? 'Ground pollution' : 'Crime'); }
   function syncChip() {
     legendChip.hidden = st.open || !st.data || st.layer === 'none';
-    if (!legendChip.hidden) legendChip.innerHTML = `${legendBar(st.layer, true)}<span>${esc(layerName(st.layer))}</span>`;
+    const dirLabel = st.layer === 'traffic' && st.mode === 'directional' && st.data?.trafficDir?.ids.length;
+    if (!legendChip.hidden) legendChip.innerHTML = `${legendBar(st.layer, true)}<span>${esc(dirLabel ? t('Traffic, directions where estimated') : layerName(st.layer))}</span>`;
   }
   function legendBar(l: Layer, mini = false) {
     if (l === 'none') return '';
@@ -222,7 +257,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
   function legend(l: Layer) {
     if (l === 'none') return '';
     const [lo, hi] = l === 'traffic' ? [t('Free-flowing'), t('Jammed')] : [l === 'landValue' ? t('Low') : t('None'), t('High')];
-    const note = l === 'traffic' ? t('Matched roads only. The game\'s traffic view shows the same value.') : l === 'pollution' ? t('Whole map.') : t('The game records this only for the central 25 tiles.');
+    const note = l === 'traffic' ? t('Matched roads only. The game\'s traffic view shows the same value.') + (st.dir.size && st.mode === 'directional' ? ' ' + t('Zoomed in, two-way roads with enough vehicles show one estimated line per direction; other roads keep the game\'s combined value.') : '') : l === 'pollution' ? t('Whole map.') : t('The game records this only for the central 25 tiles.');
     return `<div class="sim-legend">${legendBar(l)}<div class="sim-legend-ends"><span>${esc(lo)}</span><span>${esc(hi)}</span></div><p class="sim-note">${esc(note)}</p></div>`;
   }
 
@@ -329,7 +364,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     else if (!st.data) body = intro();
     else {
       const d = st.data;
-      const un = d.unavailable.map((k) => t(k === 'buildings' ? 'building occupancy' : k === 'transit' ? 'transit ridership' : k === 'tmpe' ? 'traffic rules' : k === 'city' ? 'city statistics' : 'map layers'));
+      const un = d.unavailable.map((k) => t(k === 'buildings' ? 'building occupancy' : k === 'transit' ? 'transit ridership' : k === 'tmpe' ? 'traffic rules' : k === 'city' ? 'city statistics' : k === 'vehicles' ? 'traffic by direction' : 'map layers'));
       body = status(d) + rulesInfo(d) + layerPicker(d) + cityStats(d) + ridership(d) +
         (un.length ? `<p class="sim-note">${esc(t('Some data couldn\'t be read from this save: {list}.', { list: un.join(', ') }))}</p>` : '') +
         `<div class="tl-actions sim-foot"><button class="pill" data-a="pick">${t('Choose another save')}</button><button class="pill" data-a="remove">${t('Remove simulation data')}</button></div>`;
@@ -369,7 +404,8 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     if (has(b.residents) || has(b.workers)) rows += row('Happiness', pct(b.happiness[i]));
     return section(rows);
   }
-  function roadHtml(id: number) {
+  /** `oneWay`: the road carries traffic one way only (then its single value is that direction's) */
+  function roadHtml(id: number, oneWay = false) {
     const d = st.data;
     if (!d) return '';
     const tv = st.traffic.get(id), f = d.roadFacts?.get(id);
@@ -386,12 +422,24 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
       if (f.bike) rows += row('Bike lane', t('Yes'));
     }
     if (tv !== undefined) rows += row('Traffic', pct(tv));
+    // Directional display: what this road has, by direction: an estimate, the combined value as fallback, or nothing
+    let dirNote = '';
+    if (st.mode === 'directional' && tv !== undefined && !oneWay) {
+      const x = st.dir.get(id);
+      if (x?.ok) {
+        const head = (o: number) => t(COMPASS[o % 8]);
+        const side = (v: number, q: boolean) => pct(v) + (q ? ' · ' + t('waiting at the lights') : '');
+        rows += `<div class="p-row sub"><span>${esc(head(x.h))}</span><span>${esc(side(x.f, !!(x.q & 1)))}</span></div><div class="p-row sub"><span>${esc(head(x.h + 4))}</span><span>${esc(side(x.b, !!(x.q & 2)))}</span></div>`;
+        dirNote = t('Directions are estimated from the vehicles in your save, not measured by the game.');
+      } else rows += row('By direction', x ? t('Not enough vehicles to tell: combined value shown') : d.trafficDir ? t('Not available for this road') : t('Not available for this save'));
+    }
     const tm = st.tm.get(id);
     if (tm) {
       if (tm.kmh.length) rows += row('Speed limit (TM:PE)', tm.kmh.map((k) => (k >= 1000 ? t('No limit') : fmtSpeed(k))).join(' · '));
       else if (tm.typeDefault !== null) rows += row('Default speed for this road type (TM:PE)', fmtSpeed(tm.typeDefault));
       if (tm.parking && !(tm.parking[0] && tm.parking[1])) rows += row('Parking', tm.parking[0] || tm.parking[1] ? t('One side only') : t('Not allowed'));
     }
+    if (dirNote) rows += `<p class="p-sim-note">${esc(dirNote)}</p>`;
     if (f && f.lanes === undefined && f.prefab) rows += `<p class="p-sim-note">${esc(t('Skyline Map doesn\'t know this road type, so its lanes and speed limit aren\'t shown.'))}</p>`;
     return section(rows);
   }
@@ -411,6 +459,14 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     isOpen: () => st.open,
     /** the worker's router follows this save's traffic rules */
     hasRules: () => !!st.data?.rulesSummary,
+    /** the traffic map layer is shown */
+    trafficShown: () => !!st.data?.traffic && st.layer === 'traffic',
+    /** the save's vehicles gave traffic by direction (format 121034, right-hand traffic, directions confirmed) */
+    hasTrafficDir: () => !!st.data?.trafficDir?.ids.length,
+    /** how the traffic layer and road panels show traffic: the game's value per road (default) or the estimate per direction */
+    setTrafficMode(m: TrafficMode) { if (m === st.mode) return; st.mode = m; if (st.data?.traffic && st.layer === 'traffic') draw(); syncChip(); if (st.open) render(); },
+    /** show or hide the traffic map layer (Layers menu); does nothing without a save's traffic */
+    showTraffic(on: boolean) { if (!st.data?.traffic) return; st.layer = on ? 'traffic' : 'none'; draw(); syncChip(); if (st.open) render(); },
     /** densities of matched roads are loaded in the worker's router, for traffic-aware routing */
     hasTraffic: () => !!st.data?.traffic?.ids.length,
     loaded: () => !!st.data,
