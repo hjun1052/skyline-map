@@ -952,4 +952,11 @@ export const KO: Record<string, string> = {
   "Road class is from the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.": "도로 분류는 .vellummap 파일에서 가져오고, 지도 표시는 도로 폭도 함께 써요. 이 파일에는 차로, 제한 속도, 일방통행 정보가 없어요.",
   "Speeds and one-way streets on this map are estimated from road types, so times may be off. For more accurate directions, add the save (.crp) the export was made from, or open a .cslmap export.": "이 지도의 속도와 일방통행은 도로 종류로 추정해서 시간이 다를 수 있어요. 더 정확한 길찾기를 원하면 이 파일을 내보낸 시점의 세이브 파일(.crp)을 추가하거나 .cslmap 파일을 여세요.",
   "This map has no lane data, so which streets and paths can be used, and how fast, is estimated from each road's type. Times may be off.": "이 지도에는 차로 정보가 없어서 어떤 길과 보행로를 얼마나 빠르게 지날 수 있는지 도로 종류로 추정해요. 시간이 다를 수 있어요.",
+  "by direction where the save shows it": "세이브에서 방향이 구분되는 곳은 방향별로",
+  "Zoomed in, two-way roads show each direction where the save's vehicles tell them apart: an estimate of the moment it was saved.": "확대하면 세이브의 차량으로 방향을 구분할 수 있는 양방향 도로는 방향별로 표시돼요. 저장한 순간을 추정한 값이에요.",
+  "waiting at the lights": "신호 대기 중",
+  "not enough vehicles to tell": "차량이 적어 구분할 수 없어요",
+  "Neutral road colours": "무채색 도로",
+  "From a save: add one in Simulation data": "세이브 파일이 필요해요: 시뮬레이션 데이터에서 추가하세요",
+  "traffic by direction": "방향별 교통량",
 };

@@ -7,6 +7,7 @@ import { iconDataUrl } from './icons';
 import { bottomSheet, isPhone } from './sheet';
 import { t, tn, applyStatic, fmtFixed } from './i18n';
 import { fmtDist, onUnits } from './units';
+import { trafficFactor } from './sim/traffic';
 import type { ContextStore, TollCost, FareCost } from './context-ui';
 
 type LL = [number, number];
@@ -61,6 +62,13 @@ export interface DirectionsDeps {
   approx: () => boolean;
   /** share of driving roads whose lanes come from a matched save (.vellummap), or null without one */
   savedLanes: () => number | null;
+}
+
+/** a route stretch's colour by how much traffic slows it (sim/traffic.ts), or '' when it barely does */
+function trafficColor(pct: number): string {
+  if (pct < 0) return '';
+  const f = trafficFactor(pct);
+  return f >= 3 ? '#a50e0e' : f >= 2 ? '#d93025' : f >= 1.3 ? '#f29900' : '';
 }
 
 export function createDirections(d: DirectionsDeps) {
@@ -191,6 +199,13 @@ export function createDirections(d: DirectionsDeps) {
       for (const l of r.legs) {
         const kind = l.kind === 'ride' ? 'ride' : l.kind === 'walk' ? 'walk' : 'main';
         feats.push({ type: 'Feature', properties: { role: kind, color: l.line?.color ?? '#1a73e8', idx: st.sel }, geometry: { type: 'LineString', coordinates: l.coords } });
+        // traffic on this driving leg: each slowed stretch drawn over the route in the colour of its slowdown
+        if (l.traffic) l.traffic.forEach((pc, k) => {
+          const color = trafficColor(pc.pct); if (!color) return;
+          const end = k + 1 < l.traffic!.length ? l.traffic![k + 1].i : l.coords.length - 1;
+          const cs = l.coords.slice(Math.max(0, pc.i - 1), end + 1);
+          if (cs.length > 1) feats.push({ type: 'Feature', properties: { role: 'traffic', color, idx: st.sel }, geometry: { type: 'LineString', coordinates: cs } });
+        });
         if (l.kind === 'ride' && l.coords.length) {
           for (const c of [l.coords[0], l.coords[l.coords.length - 1]]) feats.push({ type: 'Feature', properties: { role: 'stop', color: l.line!.color }, geometry: { type: 'Point', coordinates: c } });
         }
@@ -292,6 +307,9 @@ export function createDirections(d: DirectionsDeps) {
     const extra = r.time - r.baseTime;
     const parts = [extra >= 30 ? t('Traffic adds about {time} to this route', { time: fmtTime(extra) }) : t('No delay from traffic')];
     if ((r.trafficShare ?? 0) < 0.9) parts.push(t('traffic known for {pct}% of the route', { pct: Math.round((r.trafficShare ?? 0) * 100) }));
+    // stretches where the save's vehicles tell the two directions apart use the traffic in the direction driven
+    const pieces = r.legs.flatMap((l) => l.traffic ?? []);
+    if (pieces.some((p) => p.split)) parts.push(t('by direction where the save shows it'));
     return `<div class="traffic-note">${esc(parts.join(' · '))}</div>`;
   }
   /** A last-resort route that drives against a likely (unconfirmed) one-way: never shown as an ordinary route. */

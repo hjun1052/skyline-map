@@ -52,6 +52,10 @@ interface Edge {
   noCar?: [boolean, boolean];
   /** traffic-aware routing: driving-time multiplier from the matched save's traffic density (see sim/traffic.ts) */
   tf?: number;
+  /** traffic factor per direction [start→end, end→start], where the save's vehicles give enough evidence to split it */
+  tfd?: [number, number];
+  /** the save's density (0-100 %), and per direction where split (for colouring a route) */
+  tp?: number; tpd?: [number, number];
 }
 
 type Hop = { pts: XY[]; len: number; time: number; segs: number[]; x?: boolean; timeOf: (limit?: PieceLimit) => number };
@@ -70,7 +74,11 @@ export interface Leg {
   stopIds?: number[];
   /** driving legs: the road under each stretch of `coords`, in order (navigation simulation) */
   spans?: Span[];
+  /** driving legs with traffic-aware routing on: the save's traffic on each stretch from coords[i], in the direction driven */
+  traffic?: TrafficPiece[];
 }
+/** Traffic on a stretch of a driving leg from coords[i]: density 0-100 (-1: no data), and whether it is split by direction */
+export interface TrafficPiece { i: number; pct: number; split: boolean }
 /** One road of a driving leg: from coords[i] on, driven at `v` m/s (as driving time counts it, traffic included when on). */
 export interface Span {
   i: number; v: number; name: string; cls: string; brunnel: string;
@@ -387,14 +395,18 @@ export class Router {
   /** The moving speed cost() drives an edge at (m/s), without its fixed seconds per minor street. */
   private driveSpeed(e: Edge, fwd: boolean) {
     const v = e.spd ? e.spd[fwd ? 0 : 1] : e.speed;
-    return (v * (/^(motorway|motorway_link|trunk)$/.test(e.cls) ? 1 : 0.85)) / (this.trafficOn && e.tf ? e.tf : 1);
+    const tf = this.tfOf(e, fwd);
+    return (v * (/^(motorway|motorway_link|trunk)$/.test(e.cls) ? 1 : 0.85)) / (this.trafficOn && tf ? tf : 1);
   }
+  /** the edge's traffic factor in a direction (its segment's when it isn't split), or undefined without traffic */
+  private tfOf(e: Edge, fwd?: boolean) { return fwd !== undefined && e.tfd ? e.tfd[fwd ? 0 : 1] : e.tf; }
   private cost(e: Edge, mode: Mode, fwd?: boolean): number {
     // cars rarely hold the posted limit in town (traffic, signals): 85% on ordinary streets, full speed on highways
     if (mode === 'drive') {
       const v = e.spd && fwd !== undefined ? e.spd[fwd ? 0 : 1] : e.speed;
       const t = e.len / (v * (/^(motorway|motorway_link|trunk)$/.test(e.cls) ? 1 : 0.85)) + (e.cls === 'minor' || e.cls === 'service' ? 2 : 0);
-      return this.trafficOn && e.tf ? t * e.tf : t;
+      const tf = this.tfOf(e, fwd);
+      return this.trafficOn && tf ? t * tf : t;
     }
     if (mode === 'bike') return e.acc.bike ? (e.len / BIKE) * (e.bike ? 0.8 : 1) : e.len / WALK; // push the bike on footpaths
     return e.len / WALK;
@@ -592,7 +604,8 @@ export class Router {
     if (!this.restrictBan && !this.timing && e.noCar?.[fwd ? 0 : 1]) base *= this.restrictFactor;
     if (e.ow !== 0 && (fwd ? 1 : -1) !== e.ow) {
       // the wrong-way penalty scales with the time without traffic, so traffic doesn't multiply it
-      const raw = this.trafficOn && e.tf ? base / e.tf : base;
+      const tf = this.tfOf(e, fwd);
+      const raw = this.trafficOn && tf ? base / tf : base;
       return base + (e.sure ? raw * 29 + 600 : raw * 5 + 90); // `sure` only reachable when relaxed
     }
     return base;
@@ -865,13 +878,14 @@ export class Router {
     if (!parts.length && meet) coords.push(meet);
     let dist = 0, time = 0;
     for (const p of parts) { dist += p.ed.len; time += this.cost(p.ed, mode); }
-    const spans: Span[] = [];
+    const spans: Span[] = [], traffic: TrafficPiece[] = [];
     for (const p of parts) {
       if (mode === 'drive') {
         const e = p.ed, fwd = this.drivesForward(p);
         // a TM:PE limit on guessed lanes is shown only when both directions agree (which lanes run which way is a guess)
         const lim = e.spd && (!e.guessed || e.spd[0] === e.spd[1]) ? e.spd[fwd ? 0 : 1] * 3.6 : e.limKnown ? e.speed * 3.6 : 0;
         spans.push({ i: coords.length, v: this.driveSpeed(e, fwd), name: e.name, cls: e.cls, brunnel: e.brunnel, ...(lim ? { limit: Math.round(lim) } : {}) });
+        if (this.trafficOn) traffic.push({ i: coords.length, pct: e.tpd ? e.tpd[fwd ? 0 : 1] : e.tp ?? -1, split: !!e.tpd });
       }
       coords.push(...p.pts);
     }
@@ -901,7 +915,7 @@ export class Router {
     const named = new Map<string, number>();
     for (const p of parts) if (p.ed.name) named.set(p.ed.name, (named.get(p.ed.name) ?? 0) + p.ed.len);
     const via = [...named].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
-    return { mode, dist, time, via, legs: [{ kind, dist, time, coords: coords.map((p) => toLngLat(p[0], p[1])), steps, ...(spans.length ? { spans } : {}) }], ...(tolls.length ? { tolls } : {}), ...(tolls.length && this.avoidTolls ? { tollsUnavoidable: true } : {}) };
+    return { mode, dist, time, via, legs: [{ kind, dist, time, coords: coords.map((p) => toLngLat(p[0], p[1])), steps, ...(spans.length ? { spans } : {}), ...(traffic.length ? { traffic } : {}) }], ...(tolls.length ? { tolls } : {}), ...(tolls.length && this.avoidTolls ? { tollsUnavoidable: true } : {}) };
   }
 
   // ------------------------------------------------------------ transit
@@ -1108,18 +1122,24 @@ export class Router {
   // ---------------------------------------------------------------- traffic from a matched save (estimate)
   private trafficEdges: Edge[] = [];
   private trafficOn = false;
-  /** densities (0-100 %) for matched segments; routing uses them only while setTraffic(true) */
-  applyTraffic(ids: ArrayLike<number>, pct: ArrayLike<number>) {
+  /** densities (0-100 %) for matched segments, and per direction where the save's vehicles split them (sim/directional.ts,
+   *  only splits with at least `minEvidence`); routing uses them only while setTraffic(true) */
+  applyTraffic(ids: ArrayLike<number>, pct: ArrayLike<number>, dir?: { ids: ArrayLike<number>; f: ArrayLike<number>; b: ArrayLike<number>; evidence: ArrayLike<number> }, minEvidence = 0) {
     this.clearTraffic();
     const byId = new Map(this.edges.map((e) => [e.id, e]));
     for (let i = 0; i < ids.length; i++) {
       const e = byId.get(ids[i]);
       if (!e || !e.acc.drive) continue;
-      e.tf = trafficFactor(pct[i]); this.trafficEdges.push(e);
+      e.tf = trafficFactor(pct[i]); e.tp = pct[i]; this.trafficEdges.push(e);
+    }
+    if (dir) for (let i = 0; i < dir.ids.length; i++) {
+      const e = byId.get(dir.ids[i]);
+      if (!e || e.tf === undefined || dir.evidence[i] < minEvidence) continue;
+      e.tfd = [trafficFactor(dir.f[i]), trafficFactor(dir.b[i])]; e.tpd = [dir.f[i], dir.b[i]];
     }
   }
   clearTraffic() {
-    for (const e of this.trafficEdges) delete e.tf;
+    for (const e of this.trafficEdges) { delete e.tf; delete e.tfd; delete e.tp; delete e.tpd; }
     this.trafficEdges = []; this.trafficOn = false;
   }
   /** traffic-aware driving on or off (Directions, reach and closures alike); no effect without data */

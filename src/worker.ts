@@ -13,6 +13,7 @@ import { cityKeys, scanExport, scanIdentities, bornById, exportTime, type Histor
 import type { CityData } from './parse';
 import type { LaneCatalog } from './lane-infer';
 import { loadSim, transferables } from './sim';
+import { MIN_EVIDENCE } from './sim/directional';
 import { readVellummap, vellumToCity, vellumIdentities, isZip, FormatError } from './vellummap';
 
 let router: Router | null = null;
@@ -152,7 +153,7 @@ self.onmessage = async (e: MessageEvent) => {
         delete result.routing;
         if (current && result.rules) router!.applyRules(result.rules);
         // densities of matched segments, for traffic-aware routing (used only once the page switches it on)
-        if (current && result.traffic) router!.applyTraffic(result.traffic.ids, result.traffic.pct);
+        if (current && result.traffic) router!.applyTraffic(result.traffic.ids, result.traffic.pct, result.trafficDir ?? undefined, MIN_EVIDENCE);
         delete result.rules;
       }
       self.postMessage({ type: 'sim', id: msg.id, result }, { transfer: transferables(result) });

@@ -36,7 +36,7 @@ type Mode = 'map' | 'terrain' | 'night';
 const saved = (() => { try { return JSON.parse(localStorage.getItem('atlas:opts') ?? '{}'); } catch { return {}; } })();
 const state = {
   mode: (saved.mode ?? 'map') as Mode,
-  opts: { transit: true, bus: false, cycling: false, buildings3d: true, grid: false, labels: true, contours: false, ...saved.opts } as Omit<StyleOptions, 'theme' | 'terrain'>,
+  opts: { transit: true, bus: false, cycling: false, buildings3d: true, grid: false, labels: true, contours: false, neutralRoads: false, ...saved.opts } as Omit<StyleOptions, 'theme' | 'terrain'>,
   terrain3d: false,
   city: null as BuiltCity | null,
   contoursLoaded: false,
@@ -864,6 +864,10 @@ function syncUi() {
   $('layerThumb').className = 'thumb ' + (state.mode === 'night' ? 't-map' : state.mode === 'terrain' ? 't-map' : 't-terrain');
   ($('optLabels') as HTMLInputElement).checked = state.opts.labels;
   ($('opt3dTerrain') as HTMLInputElement).checked = state.terrain3d;
+  ($('optNeutral') as HTMLInputElement).checked = !!state.opts.neutralRoads;
+  // traffic comes from a save: without one the switch explains where to get it
+  const traffic = sim.hasTraffic(), box = $('optTraffic') as HTMLInputElement;
+  box.checked = traffic && sim.trafficShown(); $('optTrafficRow').classList.toggle('off', !traffic); box.setAttribute('aria-disabled', String(!traffic)); $('optTrafficHint').hidden = traffic;
   $('tilt').classList.toggle('on', map.getPitch() > 5);
 }
 $('chips').addEventListener('click', (e) => {
@@ -878,11 +882,17 @@ $('chips').addEventListener('click', (e) => {
   applyStyle();
   if (k === 'cycling' && state.opts.cycling && !hasLanes()) cyclingNote();
 });
-$('layerBtn').onclick = (e) => { e.stopPropagation(); $('layerPop').hidden = !$('layerPop').hidden; };
+$('layerBtn').onclick = (e) => { e.stopPropagation(); syncUi(); $('layerPop').hidden = !$('layerPop').hidden; };
 document.addEventListener('click', (e) => { if (!$('layerSwitch').contains(e.target as Node)) $('layerPop').hidden = true; });
 document.querySelectorAll<HTMLElement>('.layer-opt').forEach((b) => (b.onclick = () => { state.mode = b.dataset.mode as Mode; applyStyle(); }));
 $('optLabels').onchange = (e) => { state.opts.labels = (e.target as HTMLInputElement).checked; applyStyle(); };
 $('opt3dTerrain').onchange = (e) => { state.terrain3d = (e.target as HTMLInputElement).checked; set3dTerrain(); };
+$('optNeutral').onchange = (e) => { state.opts.neutralRoads = (e.target as HTMLInputElement).checked; applyStyle(); };
+$('optTraffic').onchange = (e) => {
+  const box = e.target as HTMLInputElement;
+  if (!sim.hasTraffic()) { box.checked = false; $('layerPop').hidden = true; sim.open(); return; } // no save yet: open where it is added
+  sim.showTraffic(box.checked);
+};
 function set3dTerrain() {
   map.setTerrain(state.terrain3d ? { source: 'dem', exaggeration: 1.2 } : null);
   if (state.terrain3d && map.getPitch() < 30) map.easeTo({ pitch: 60, duration: 800 });

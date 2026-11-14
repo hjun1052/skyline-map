@@ -952,4 +952,11 @@ export const RU: Record<string, string> = {
   "Road class is from the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.": "Класс дороги взят из файла .vellummap; стиль на карте учитывает и ширину дороги. В файле нет полос, ограничений скорости и одностороннего движения.",
   "Speeds and one-way streets on this map are estimated from road types, so times may be off. For more accurate directions, add the save (.crp) the export was made from, or open a .cslmap export.": "Скорости и одностороннее движение на этой карте оценены по типу дороги, поэтому время может отличаться. Для более точных маршрутов добавьте сохранение (.crp), из которого сделан экспорт, или откройте экспорт .cslmap.",
   "This map has no lane data, so which streets and paths can be used, and how fast, is estimated from each road's type. Times may be off.": "На этой карте нет данных о полосах, поэтому какие улицы и дорожки доступны и с какой скоростью, оценено по типу каждой дороги. Время может отличаться.",
+  "by direction where the save shows it": "по направлениям там, где это видно по сохранению",
+  "Zoomed in, two-way roads show each direction where the save's vehicles tell them apart: an estimate of the moment it was saved.": "При приближении двусторонние дороги показывают каждое направление там, где машины в сохранении позволяют их различить: это оценка на момент сохранения.",
+  "waiting at the lights": "ждут у светофора",
+  "not enough vehicles to tell": "слишком мало машин, чтобы различить",
+  "Neutral road colours": "Нейтральные цвета дорог",
+  "From a save: add one in Simulation data": "Из сохранения: добавьте его в «Данные симуляции»",
+  "traffic by direction": "трафик по направлениям",
 };
