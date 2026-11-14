@@ -78,7 +78,7 @@ export interface Leg {
   traffic?: TrafficPiece[];
 }
 /** Traffic on a stretch of a driving leg from coords[i]: density 0-100 (-1: no data), and whether it is split by direction */
-export interface TrafficPiece { i: number; pct: number; split: boolean }
+export interface TrafficPiece { i: number; pct: number; split: boolean; seg: number }
 /** One road of a driving leg: from coords[i] on, driven at `v` m/s (as driving time counts it, traffic included when on). */
 export interface Span {
   i: number; v: number; name: string; cls: string; brunnel: string;
@@ -382,9 +382,10 @@ export class Router {
   }
   private byId: Map<number, Edge> | null = null;
   /** Does this oriented piece run along its road's point order (start → end)? Trimmed and reversed pieces carry
-   *  their own points, so measure against the whole road. Only per-direction rules (spd) need the answer. */
+   *  their own points, so measure against the whole road. Only per-direction values (TM:PE limits `spd`, traffic split
+   *  `tfd`) need the answer. */
   private drivesForward(p: { ed: Edge; pts: XY[] }): boolean {
-    if (!p.ed.spd) return true;
+    if (!p.ed.spd && !p.ed.tfd) return true;
     this.byId ??= new Map(this.edges.map((e) => [e.id, e]));
     const whole = this.byId.get(p.ed.id)?.pts ?? p.ed.pts, a = whole[0], z = whole[whole.length - 1];
     if (Math.hypot(a[0] - z[0], a[1] - z[1]) > 0.5) return nearestOnLine(p.pts[p.pts.length - 1], whole).along >= nearestOnLine(p.pts[0], whole).along;
@@ -400,12 +401,14 @@ export class Router {
   }
   /** the edge's traffic factor in a direction (its segment's when it isn't split), or undefined without traffic */
   private tfOf(e: Edge, fwd?: boolean) { return fwd !== undefined && e.tfd ? e.tfd[fwd ? 0 : 1] : e.tf; }
-  private cost(e: Edge, mode: Mode, fwd?: boolean): number {
+  /** `fwd`: the direction driven, for TM:PE's per-direction limits and traffic; `tdir`: the direction for traffic only (searches
+   *  that keep the road's own speed both ways but still drive one way along it) */
+  private cost(e: Edge, mode: Mode, fwd?: boolean, tdir?: boolean): number {
     // cars rarely hold the posted limit in town (traffic, signals): 85% on ordinary streets, full speed on highways
     if (mode === 'drive') {
       const v = e.spd && fwd !== undefined ? e.spd[fwd ? 0 : 1] : e.speed;
       const t = e.len / (v * (/^(motorway|motorway_link|trunk)$/.test(e.cls) ? 1 : 0.85)) + (e.cls === 'minor' || e.cls === 'service' ? 2 : 0);
-      const tf = this.tfOf(e, fwd);
+      const tf = this.tfOf(e, fwd ?? tdir);
       return this.trafficOn && tf ? t * tf : t;
     }
     if (mode === 'bike') return e.acc.bike ? (e.len / BIKE) * (e.bike ? 0.8 : 1) : e.len / WALK; // push the bike on footpaths
@@ -885,13 +888,14 @@ export class Router {
         // a TM:PE limit on guessed lanes is shown only when both directions agree (which lanes run which way is a guess)
         const lim = e.spd && (!e.guessed || e.spd[0] === e.spd[1]) ? e.spd[fwd ? 0 : 1] * 3.6 : e.limKnown ? e.speed * 3.6 : 0;
         spans.push({ i: coords.length, v: this.driveSpeed(e, fwd), name: e.name, cls: e.cls, brunnel: e.brunnel, ...(lim ? { limit: Math.round(lim) } : {}) });
-        if (this.trafficOn) traffic.push({ i: coords.length, pct: e.tpd ? e.tpd[fwd ? 0 : 1] : e.tp ?? -1, split: !!e.tpd });
+        if (this.trafficOn) traffic.push({ i: coords.length, pct: e.tpd ? e.tpd[fwd ? 0 : 1] : e.tp ?? -1, split: !!e.tpd, seg: e.id });
       }
       coords.push(...p.pts);
     }
     coords.push(this.endPoint(to, coords[coords.length - 1]));
     const kind = mode === 'drive' ? 'drive' : mode === 'bike' ? 'bike' : 'walk';
-    const steps = turnSteps(parts, mode, (ed) => this.cost(ed, mode));
+    const fw = new Map(parts.map((p) => [p.ed, this.drivesForward(p)]));
+    const steps = turnSteps(parts, mode, (ed) => this.cost(ed, mode, undefined, fw.get(ed)));
     // toll gates passed, in order, with a step at the point they are reached
     const tolls: TollPass[] = [];
     if (mode === 'drive') {
@@ -1122,9 +1126,9 @@ export class Router {
   // ---------------------------------------------------------------- traffic from a matched save (estimate)
   private trafficEdges: Edge[] = [];
   private trafficOn = false;
-  /** densities (0-100 %) for matched segments, and per direction where the save's vehicles split them (sim/directional.ts,
-   *  only splits with at least `minEvidence`); routing uses them only while setTraffic(true) */
-  applyTraffic(ids: ArrayLike<number>, pct: ArrayLike<number>, dir?: { ids: ArrayLike<number>; f: ArrayLike<number>; b: ArrayLike<number>; evidence: ArrayLike<number> }, minEvidence = 0) {
+  /** densities (0-100 %) for matched segments, and per direction where the save's vehicles split them with enough
+   *  evidence (sim/directional.ts, `trusted`); routing uses them only while setTraffic(true) */
+  applyTraffic(ids: ArrayLike<number>, pct: ArrayLike<number>, dir?: { ids: ArrayLike<number>; f: ArrayLike<number>; b: ArrayLike<number>; trusted: ArrayLike<number> }) {
     this.clearTraffic();
     const byId = new Map(this.edges.map((e) => [e.id, e]));
     for (let i = 0; i < ids.length; i++) {
@@ -1134,7 +1138,7 @@ export class Router {
     }
     if (dir) for (let i = 0; i < dir.ids.length; i++) {
       const e = byId.get(dir.ids[i]);
-      if (!e || e.tf === undefined || dir.evidence[i] < minEvidence) continue;
+      if (!e || e.tf === undefined || !dir.trusted[i]) continue;
       e.tfd = [trafficFactor(dir.f[i]), trafficFactor(dir.b[i])]; e.tpd = [dir.f[i], dir.b[i]];
     }
   }
@@ -1233,7 +1237,7 @@ export class Router {
       for (const ei of this.adj[u]) {
         const e = this.edges[ei];
         if (!this.allowed(e, mode)) continue;
-        const v = e.a === u ? e.b : e.a, nd = d + this.cost(e, mode);
+        const v = e.a === u ? e.b : e.a, nd = d + this.cost(e, mode, undefined, e.a === u);
         if (nd < dist[v] && nd <= max) { dist[v] = nd; via[v] = ei; h.push(nd, v); }
       }
     }
@@ -1392,7 +1396,7 @@ export class Router {
           for (const ei of this.adj[u]) {
             const e = this.edges[ei];
             if (!this.allowed(e, mode)) continue;
-            const v = e.a === u ? e.b : e.a, nd = d + this.cost(e, mode);
+            const v = e.a === u ? e.b : e.a, nd = d + this.cost(e, mode, undefined, e.a === u);
             if (nd < out[v] && nd <= max) { out[v] = nd; h.push(nd, v); }
           }
         }

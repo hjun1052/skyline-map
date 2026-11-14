@@ -12,7 +12,6 @@ import { toLngLat } from './geo';
 import { roadWidth } from './style';
 import { t, tn, locale } from './i18n';
 import { bottomSheet } from './sheet';
-import { MIN_EVIDENCE } from './sim/directional';
 
 type Layer = 'none' | 'traffic' | 'landValue' | 'noise' | 'pollution' | 'crime';
 const LAYERS: Layer[] = ['none', 'traffic', 'landValue', 'noise', 'pollution', 'crime'];
@@ -72,7 +71,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     open: false, busy: false, step: '', file: '', id: 0, src: null as File | null,
     data: null as SimData | null, fail: null as SimFailure | null,
     layer: 'none' as Layer,
-    bikes: [] as number[], traffic: new Map<number, number>(), dir: new Map<number, { f: number; b: number; ev: number; q: number; h: number }>(), drawn: [] as number[], bld: new Map<number, number>(), tm: new Map<number, TmSeg>(), lines: new Map<number, SimLine>(),
+    bikes: [] as number[], traffic: new Map<number, number>(), dir: new Map<number, { f: number; b: number; ok: boolean; q: number; h: number }>(), drawn: [] as number[], bld: new Map<number, number>(), tm: new Map<number, TmSeg>(), lines: new Map<number, SimLine>(),
   };
 
   const el = document.createElement('div');
@@ -117,7 +116,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     clearView();
     st.data = r; st.fail = null;
     if (r.traffic) for (let i = 0; i < r.traffic.ids.length; i++) st.traffic.set(r.traffic.ids[i], r.traffic.pct[i]);
-    if (r.trafficDir) { const x = r.trafficDir; for (let i = 0; i < x.ids.length; i++) st.dir.set(x.ids[i], { f: x.f[i], b: x.b[i], ev: x.evidence[i], q: x.queue[i], h: x.heading[i] }); }
+    if (r.trafficDir) { const x = r.trafficDir; for (let i = 0; i < x.ids.length; i++) st.dir.set(x.ids[i], { f: x.f[i], b: x.b[i], ok: !!x.trusted[i], q: x.queue[i], h: x.heading[i] }); }
     if (r.buildings) for (let i = 0; i < r.buildings.ids.length; i++) st.bld.set(r.buildings.ids[i], i);
     if (r.tmpe) for (const s of r.tmpe.segs) st.tm.set(s.id, s);
     if (r.lines) for (const l of r.lines) st.lines.set(l.id, l);
@@ -167,7 +166,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
       if (!d.traffic) return;
       for (const [id, v] of st.traffic) {
         // two-way roads with enough evidence: a value per direction (sim/directional.ts), drawn side by side when zoomed in
-        const x = st.dir.get(id), split = !!x && x.ev >= MIN_EVIDENCE;
+        const x = st.dir.get(id), split = !!x && x.ok;
         map.setFeatureState({ source: 'roads', id }, split ? { t: v, tf: x!.f, tb: x!.b, td: true } : { t: v });
         st.drawn.push(id);
       }
@@ -422,7 +421,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     if (tv !== undefined && x) {
       // the two directions, named by compass heading; a split with little evidence is the game's value both ways
       const head = (o: number) => t(COMPASS[o % 8]);
-      const side = (v: number, q: boolean) => (x.ev >= MIN_EVIDENCE ? pct(v) + (q ? ' · ' + t('waiting at the lights') : '') : t('not enough vehicles to tell'));
+      const side = (v: number, q: boolean) => (x.ok ? pct(v) + (q ? ' · ' + t('waiting at the lights') : '') : t('not enough vehicles to tell'));
       rows += `<div class="p-row sub"><span>${esc(head(x.h))}</span><span>${esc(side(x.f, !!(x.q & 1)))}</span></div><div class="p-row sub"><span>${esc(head(x.h + 4))}</span><span>${esc(side(x.b, !!(x.q & 2)))}</span></div>`;
     }
     const tm = st.tm.get(id);

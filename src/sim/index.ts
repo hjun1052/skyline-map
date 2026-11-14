@@ -147,7 +147,7 @@ export async function loadSim(buf: ArrayBuffer, city: CityData, step: (s: string
     // .vellummap: only roads whose real lanes the save named (a guessed lane layout can't say which way a lane runs)
     let trafficDir: DirTraffic | null = null;
     // left-hand traffic is skipped like the per-direction rules (no left-hand save tested: lane directions may be mirrored)
-    if (sd.version === 121034 && !sd.leftHandTraffic) trafficDir = tryRead('vehicles', () => directionalTraffic(simCity, net, (id) => m.seg[id] === M.Verified, readVehicles(sd), readPaths(sd), vellum ? routing?.city.extras?.exactLanes : undefined));
+    if (sd.version === 121034 && !sd.leftHandTraffic) trafficDir = tryRead('vehicles', () => directionalTraffic(simCity, net, (id) => m.seg[id] === M.Verified, readVehicles(sd), readPaths(sd), vellum ? routing?.city.extras?.exactLanes : undefined)) ?? null;
     const occ = tryRead('buildings', () => readOccupancy(sd, bld));
     const buildings = occ ? buildingsOf(city, m.bld, occ, bld) : null;
     const tmpeData = tryRead('tmpe', () => readTmpe(sd.modData));
@@ -220,7 +220,7 @@ export function transferables(r: SimResult): ArrayBuffer[] {
   if (!r.ok) return [];
   const out: ArrayBufferLike[] = [];
   if (r.traffic) out.push(r.traffic.ids.buffer, r.traffic.pct.buffer);
-  if (r.trafficDir) out.push(r.trafficDir.ids.buffer, r.trafficDir.f.buffer, r.trafficDir.b.buffer, r.trafficDir.evidence.buffer, r.trafficDir.queue.buffer, r.trafficDir.heading.buffer);
+  if (r.trafficDir) out.push(r.trafficDir.ids.buffer, r.trafficDir.f.buffer, r.trafficDir.b.buffer, r.trafficDir.evidence.buffer, r.trafficDir.queue.buffer, r.trafficDir.heading.buffer, r.trafficDir.trusted.buffer);
   if (r.buildings) for (const k of ['ids', 'residents', 'households', 'homes', 'workers', 'students', 'visitors', 'level', 'happiness'] as const) out.push(r.buildings[k].buffer);
   if (r.grids) out.push(r.grids.landValue.buffer, r.grids.noise.buffer, r.grids.crime.buffer, r.grids.pollution.buffer);
   return [...new Set(out)] as ArrayBuffer[];
