@@ -10,6 +10,8 @@ const DEG = 180 / Math.PI;
 
 export const HALF = 8640; // 9x9 tiles of 1920 m
 export const MAP_SIZE = HALF * 2;
+/** drawn road classes (build.ts classify) that carry cars: stands in for car lanes where a file has no lane table */
+export const ROAD_CLASSES = new Set(['motorway', 'motorway_link', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service', 'track', 'raceway', 'inherit']);
 
 const r7 = (v: number) => Math.round(v * 1e7) / 1e7;
 

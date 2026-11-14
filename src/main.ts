@@ -21,7 +21,7 @@ import { createSchematic } from './schematic-view';
 import { createContextStore, createContextEditor, moneyField, parseMoney, describeRule } from './context-ui';
 import { bottomSheet, isPhone } from './sheet';
 import { mountFindFile } from './findfile';
-import { listRecent, rememberMap, rememberSave, forget, type Recent } from './recent';
+import { listRecent, rememberMap, rememberSave, forget, recentId, type Recent } from './recent';
 import { showDistrictGlow, clearDistrictGlow } from './district-glow';
 import { t, tn, initLang, setLang, onLang, applyStatic, getLang, LANGS, locale, fmtFixed, type Lang } from './i18n';
 import { getUnits, setUnits, onUnits, imperial, fmtLength, fmtHeight, fmtWidth, fmtAreaSmall, fmtAreaLarge, fmtSpeed, type Units } from './units';
@@ -41,9 +41,11 @@ const state = {
   city: null as BuiltCity | null,
   contoursLoaded: false,
   currentFile: '' as string,
+  /** this map's entry in recent cities (recent.ts), or null when it isn't remembered (the sample city) */
+  recentId: null as string | null,
 };
 const persist = () => { try { localStorage.setItem('atlas:opts', JSON.stringify({ mode: state.mode, opts: state.opts })); } catch { /* private mode */ } };
-const styleOpts = (): StyleOptions => ({ ...state.opts, theme: state.mode === 'night' ? 'dark' : 'light', terrain: state.mode === 'terrain', contours: state.opts.contours || state.mode === 'terrain' });
+const styleOpts = (): StyleOptions => ({ ...state.opts, ...(hasLanes() ? {} : { bikeFromSave: true }), theme: state.mode === 'night' ? 'dark' : 'light', terrain: state.mode === 'terrain', contours: state.opts.contours || state.mode === 'terrain' });
 
 // ------------------------------------------------------------------ map
 const initialHash = location.hash; // a shared link's position wins over fit-to-city
@@ -63,7 +65,21 @@ const map = new maplibregl.Map({
 const styleReady = new Promise<void>((res) => (map.loaded() ? res() : map.once('load', () => res())));
 const scaleBar = new maplibregl.ScaleControl({ maxWidth: 110, unit: imperial() ? 'imperial' : 'metric' });
 map.addControl(scaleBar, 'bottom-right');
-map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: 'Cities: Skylines · CSLMapView' }), 'bottom-right');
+// i18n-keys
+void ['Road class']; // panel row label for .vellummap roads (row() translates it)
+void ["Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL)."];
+// end i18n-keys
+/** the map corner credits the mod that exported the open map (CSLMapView before one is open) */
+let attribution: maplibregl.AttributionControl | null = null;
+function creditExporter(exporter: 'CSLMapView' | 'Vellum Bridge') {
+  if (attribution) map.removeControl(attribution);
+  attribution = new maplibregl.AttributionControl({ compact: true, customAttribution: `Cities: Skylines · ${exporter}` });
+  map.addControl(attribution, 'bottom-right');
+  const about = document.querySelector<HTMLElement>('#about [data-i18n]')!;
+  about.dataset.i18n = about.dataset.i18nSrc = exporter === 'CSLMapView' ? "Rendered from CSLMapView exports. Map data © the city's mayor. Fonts: Pretendard (OFL)." : "Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL).";
+  about.textContent = t(about.dataset.i18n);
+}
+creditExporter('CSLMapView');
 map.touchZoomRotate.enableRotation();
 document.documentElement.dataset.theme = state.mode === 'night' ? 'dark' : 'light';
 
@@ -105,7 +121,7 @@ let loadT0 = 0;
 worker.onmessage = (e) => {
   const m = e.data;
   if (m.type === 'progress') { $('loadingStep').textContent = t(m.step) + '…'; $('loadingBar').style.width = m.pct + '%'; }
-  else if (m.type === 'error') { pending = null; $('loading').hidden = true; toast(t('Could not open map: {err}', { err: m.message })); if (!state.city) $('welcome').hidden = false; }
+  else if (m.type === 'error') { pending = null; $('loading').hidden = true; toast(t('Could not open map: {err}', { err: m.key ? t(m.key, m.params) : m.message })); if (!state.city) $('welcome').hidden = false; }
   else if (m.type === 'city') showCity(m.city as BuiltCity);
   else if (m.type === 'route') { if (!schem.onRoute(m)) dir.onResult(m); }
   else if (m.type === 'schematic') schem.onMessage(m);
@@ -125,7 +141,34 @@ async function openBuffer(buf: ArrayBuffer, label: string) {
 let pending: { blob: Blob; file: string; save?: Recent['save'] } | null = null;
 /** opening another map: a reload must not bring the sample back */
 const dropSample = () => { const u = new URL(location.href); if (u.searchParams.has('sample')) { u.searchParams.delete('sample'); history.replaceState(null, '', u); } };
-async function openFile(f: File) { dropSample(); state.currentFile = ''; pending = { blob: f, file: f.name }; await openBuffer(await f.arrayBuffer(), f.name); }
+// first time a .vellummap is opened: what it carries compared with a .cslmap (unless turned off)
+const VELLUM_NOTICE_OFF = 'atlas:vellumNoticeOff';
+/** Ask before opening a .vellummap; resolves false when cancelled. Other files open straight away. */
+async function vellumNotice(f: File): Promise<boolean> {
+  try { if (localStorage.getItem(VELLUM_NOTICE_OFF) === '1') return true; } catch { /* storage blocked: ask every time */ }
+  const head = new Uint8Array(await f.slice(0, 4).arrayBuffer());
+  if (!/\.vellummap(\.gz)?$/i.test(f.name) && !(head[0] === 0x50 && head[1] === 0x4b && head[2] === 3 && head[3] === 4)) return true;
+  const dlg = document.createElement('dialog');
+  dlg.className = 'card vellum-notice'; dlg.setAttribute('aria-labelledby', 'vnTitle');
+  dlg.innerHTML = `<h2 id="vnTitle">${esc(t('Opening a .vellummap'))}</h2>
+    <p>${esc(t('Vellum Bridge exports have no lane data, so Skyline Map estimates lanes, speeds and one-way streets from each road\'s type and width.'))}</p>
+    <ul><li>${esc(t('Directions, travel-time areas and closure analysis are approximate. Adding the save (.crp) the export was made from gives them the real lanes and one-way streets.'))}</li>
+    <li>${esc(t('Lane counts, speed limits and bike lanes need that save too, and a few city discoveries are left out.'))}</li></ul>
+    <p class="vn-hint">${esc(t('For the full map, open a .cslmap export of the same city.'))} <a href="/blog/cities-skylines-city-map.html" target="_blank" rel="noopener">${esc(t('How to export your city with CSLMapView'))}</a></p>
+    <label class="vn-check"><input type="checkbox"> ${esc(t('Don\'t show this again'))}</label>
+    <div class="vn-actions"><button type="button" class="pill" data-v="cancel">${esc(t('Cancel'))}</button><button type="button" class="pill primary" data-v="open" autofocus>${esc(t('Open map'))}</button></div>`;
+  document.body.appendChild(dlg);
+  return new Promise((resolve) => {
+    const done = (open: boolean) => {
+      try { if (dlg.querySelector<HTMLInputElement>('.vn-check input')!.checked) localStorage.setItem(VELLUM_NOTICE_OFF, '1'); } catch { /* private mode */ }
+      dlg.close(); dlg.remove(); resolve(open);
+    };
+    dlg.addEventListener('click', (e) => { const v = (e.target as HTMLElement).closest<HTMLElement>('[data-v]')?.dataset.v; if (v) done(v === 'open'); });
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); done(false); }); // Esc
+    dlg.showModal();
+  });
+}
+async function openFile(f: File) { if (!(await vellumNotice(f))) return; dropSample(); state.currentFile = ''; pending = { blob: f, file: f.name }; await openBuffer(await f.arrayBuffer(), f.name); }
 async function openRecent(r: Recent) { dropSample(); state.currentFile = ''; pending = { blob: r.map, file: r.file, save: r.save }; await openBuffer(await r.map.arrayBuffer(), r.file); }
 async function openSample() {
   pending = null;
@@ -185,13 +228,20 @@ function showCity(city: BuiltCity) {
   for (const id of ['topbar', 'layerSwitch', 'controls', 'dirFab']) $(id).hidden = false;
   $('cityChip').textContent = city.meta.name;
   cityTexts(city);
+  creditExporter(city.meta.source ? 'Vellum Bridge' : 'CSLMapView');
+  syncUi(); applyStyle(); // bike lanes from the file or from a save (bikeFromSave)
+  for (const id of ['dirFab', 'dirBtn', 'reachBtn', 'closureMenu']) { $(id).classList.toggle('off', !canRoute()); $(id).setAttribute('aria-disabled', String(!canRoute())); }
+  if (!hasLanes()) toast(canRoute() ? t('Directions on this map are approximate') : t('Directions are off for this map'));
   renderDrawer(city);
   void pricing.attach(city);
   schem.reset();
   closePanel();
+  state.recentId = null;
   if (pending) {
     const p = pending; pending = null;
-    void rememberMap(city.meta.name, p.file, city.meta.generated, p.blob);
+    const format = city.meta.source ? 'vellummap' : 'cslmap';
+    state.recentId = recentId(format, city.meta.name);
+    void rememberMap(format, city.meta.name, p.file, city.meta.generated, p.blob);
     if (p.save) void sim.load(new File([p.save.blob], p.save.file));
   }
   console.info(`[atlas] ${city.meta.name} ready in ${Math.round(performance.now() - loadT0)} ms`, city.meta.stats);
@@ -213,7 +263,7 @@ async function loadLocalList() {
     if (!maps.length) return;
     const groups = new Map<string, typeof maps>();
     for (const m of maps) {
-      const city = m.file.normalize('NFC').replace(/\.cslmap(\.gz)?$/i, '').replace(/-\d{8}-\d{6}$/, '');
+      const city = m.file.normalize('NFC').replace(/\.(cslmap(\.gz)?|vellummap)$/i, '').replace(/-\d{8}-\d{6}$/, '');
       groups.set(city, [...(groups.get(city) ?? []), m]);
     }
     const fmt = (ms: number) => new Date(ms).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' });
@@ -248,20 +298,22 @@ async function renderRecent() {
   if (!list.length) { box.innerHTML = ''; return; }
   const palette = ['#188038', '#1a73e8', '#e37400', '#a142f4', '#d93025'];
   const X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
-  const meta = (r: Recent) => esc(t('Opened {date}', { date: fmtDate(r.opened) })) + (r.save ? ' · ' + esc(t('with save')) : '');
+  const meta = (r: Recent) => esc(t('Opened {date}', { date: fmtDate(r.opened) })) + (r.save ? ' · ' + esc(t('with save')) : '') + (r.format === 'vellummap' ? ' · .vellummap' : '');
+  /** the city, and the format when it is a .vellummap (a .cslmap of the same city is a separate entry) */
+  const label = (r: Recent) => (r.format === 'vellummap' ? `${r.name} (.vellummap)` : r.name);
   const initial = (r: Recent) => esc([...r.name][0] ?? '?');
-  const forgetBtn = (r: Recent, small = '') => `<button type="button" class="forget${small}" data-forget="${esc(r.name)}" title="${esc(t('Forget'))}" aria-label="${esc(t('Forget {city}', { city: r.name }))}">${X}</button>`;
+  const forgetBtn = (r: Recent, small = '') => `<button type="button" class="forget${small}" data-forget="${esc(r.id)}" title="${esc(t('Forget'))}" aria-label="${esc(t('Forget {city}', { city: label(r) }))}">${X}</button>`;
   const [latest, ...rest] = list;
   box.innerHTML = `
     <div class="recent-latest">
       <span class="avatar" style="background:${palette[0]}" aria-hidden="true">${initial(latest)}</span>
       <div class="recent-who"><div class="recent-label">${esc(t('Continue where you left off'))}</div><div class="recent-name">${esc(latest.name)}</div><div class="recent-when">${meta(latest)}</div></div>
-      <button type="button" class="start-btn ghost small" data-recent="${esc(latest.name)}" aria-label="${esc(t('Open {city}', { city: latest.name }))}">${esc(t('Open'))}</button>
+      <button type="button" class="start-btn ghost small" data-recent="${esc(latest.id)}" aria-label="${esc(t('Open {city}', { city: label(latest) }))}">${esc(t('Open'))}</button>
       ${forgetBtn(latest)}
     </div>
     ${rest.length ? `<div class="recent-more"><div class="recent-more-label">${esc(t('Other recent cities'))}</div>
       <ul class="recent-list${rest.length > 2 ? ' two' : ''}">${rest.map((r, i) => `<li class="recent-city">
-        <button type="button" class="recent-open" data-recent="${esc(r.name)}"><span class="mini" style="background:${palette[(i + 1) % palette.length]}" aria-hidden="true">${initial(r)}</span><span class="recent-text"><span class="recent-cname">${esc(r.name)}</span><span class="recent-cwhen">${meta(r)}</span></span></button>
+        <button type="button" class="recent-open" data-recent="${esc(r.id)}"><span class="mini" style="background:${palette[(i + 1) % palette.length]}" aria-hidden="true">${initial(r)}</span><span class="recent-text"><span class="recent-cname">${esc(r.name)}</span><span class="recent-cwhen">${meta(r)}</span></span></button>
         ${forgetBtn(r, ' small')}</li>`).join('')}</ul></div>` : ''}
     <p class="recent-note">${esc(t('Kept in this browser only. Forget a city to remove it.'))}</p>`;
   box.onclick = async (e) => {
@@ -269,7 +321,7 @@ async function renderRecent() {
     const f = (el.closest('[data-forget]') as HTMLElement | null)?.dataset.forget;
     if (f !== undefined) { e.stopPropagation(); await forget(f); return renderRecent(); }
     const n = (el.closest('[data-recent]') as HTMLElement | null)?.dataset.recent;
-    const r = n !== undefined && list.find((x) => x.name === n);
+    const r = n !== undefined && list.find((x) => x.id === n);
     if (r) void openRecent(r);
   };
 }
@@ -277,7 +329,7 @@ $('sampleBtn').onclick = () => { const u = new URL(location.href); u.searchParam
 if (new URL(location.href).searchParams.has('sample')) void openSample();
 
 mountFindFile($('findFile'));
-$('fileInput').addEventListener('change', (e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) openFile(f); });
+$('fileInput').addEventListener('change', (e) => { const el = e.target as HTMLInputElement, f = el.files?.[0]; el.value = ''; if (f) openFile(f); });
 let dragDepth = 0;
 window.addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; $('dropOverlay').hidden = false; });
 window.addEventListener('dragleave', (e) => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; $('dropOverlay').hidden = true; } });
@@ -296,6 +348,7 @@ function renderDrawer(city: BuiltCity) {
   $('cityInfo').innerHTML = `
     <div class="city-title">${esc(city.meta.name)}</div>
     <div class="city-meta">${t('Saved {date}', { date: esc(fmtGenerated(city.meta.generated)) })}${state.currentFile ? ' · ' + esc(state.currentFile) : ''}</div>
+    ${city.meta.source ? `<div class="city-source">${esc(t('Opened from {producer} (.vellummap)', { producer: city.meta.source.producer || 'Vellum' }))}${city.meta.source.lanes ? '' : ` <button class="link-btn" data-why-no-route>${esc(!city.meta.source.approxRoutes ? t('Directions are off for this map') : sim.savedLanes() !== null ? t('Directions use lanes from your save') : t('Directions on this map are approximate'))}</button>`}</div>` : ''}
     <div class="stats">
       <div class="stat"><b>${n(s.buildings)}</b><span>${t('Buildings')}</span></div>
       <div class="stat"><b>${n(s.roads)}</b><span>${t('Road segments')}</span></div>
@@ -364,7 +417,7 @@ function setSelection(features: { type: 'Feature'; geometry: any; properties: an
 let panelPlace: { label: string; ll: [number, number] } | null = null;
 function panel(html: string, accent?: string) {
   $('panelBody').innerHTML = (accent ? `<div class="p-hero" style="background:${accent}"></div>` : '') + html;
-  if (panelPlace) {
+  if (panelPlace && canRoute()) {
     $('panelBody').querySelector('.p-head')?.insertAdjacentHTML('afterend', `<div class="p-quick">
       <button class="q-btn primary" data-dir="to"><span><svg viewBox="0 0 24 24"><path d="M21.7 11.3l-9-9a1 1 0 0 0-1.4 0l-9 9a1 1 0 0 0 0 1.4l9 9a1 1 0 0 0 1.4 0l9-9a1 1 0 0 0 0-1.4zM14 14.5V12h-4v3H8v-4a1 1 0 0 1 1-1h5V7.5l3.5 3.5-3.5 3.5z"/></svg></span>${t('Directions')}</button>
       <button class="q-btn" data-dir="from"><span><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-2.1A7 7 0 0 0 13 5.1V3h-2v2.1A7 7 0 0 0 5.1 11H3v2h2.1a7 7 0 0 0 5.9 5.9V21h2v-2.1a7 7 0 0 0 5.9-5.9H21v-2zm-9 6a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg></span>${t('Start here')}</button>
@@ -470,7 +523,7 @@ function describeRest(f: MapGeoJSONFeature, p: any, layer: string, geom: any, ln
   setSelection(sel);
   const totalLen = p.name ? Math.round(sel.reduce((s, x) => s + lineLen(x.geometry.coordinates), 0)) : p.len;
   panel(head(name, (L(p.cls) ?? p.cls) + (p.brunnel === 'bridge' ? ' · ' + t('Bridge / elevated') : p.brunnel === 'tunnel' ? ' · ' + t('Tunnel') : '')) +
-    `<div class="p-rows">${row('Road type', p.type)}${row('District', p.district)}${row('Lanes', p.lanes || null)}${row('Speed limit', p.speed ? fmtSpeed(p.speed) : null)}${row('Bike lane', p.bike ? t('Yes') : null)}${row('Carriageway', p.w ? fmtWidth(p.w) : null)}${row('One-way', p.oneway ? t('Yes') : null)}${row(p.name ? t('Total length') : t('Segment length'), totalLen ? panelLen(totalLen) : null)}${row('Elevation', p.z !== undefined ? fmtHeight(p.z) : null)}</div>${p.id !== undefined && !/rail|subway|monorail|tram|cablecar/.test(p.cls) ? sim.roadHtml(Number(p.id)) : ''}${p.id !== undefined && !['runway', 'taxiway', 'canal', 'ferry'].includes(p.cls) ? `<div class="p-actions">${closeBtn({ kind: /rail|subway|monorail|tram|cablecar/.test(p.cls) ? 'rail' : 'road', seg: Number(p.id) })}</div>` : ''}`);
+    `<div class="p-rows">${row(hasLanes() ? 'Road type' : 'Road class', p.type)}${row('District', p.district)}${row('Lanes', p.lanes || null)}${row('Speed limit', p.speed ? fmtSpeed(p.speed) : null)}${row('Bike lane', p.bike ? t('Yes') : null)}${row('Carriageway', p.w ? fmtWidth(p.w) : null)}${row('One-way', p.oneway ? t('Yes') : null)}${row(p.name ? t('Total length') : t('Segment length'), totalLen ? panelLen(totalLen) : null)}${row('Elevation', p.z !== undefined ? fmtHeight(p.z) : null)}</div>${hasLanes() ? '' : `<p class="p-note">${esc(p.id !== undefined && sim.roadFact(Number(p.id)) ? t('Road class is from the .vellummap file, which has no lanes. The road type, lanes and speed limit below come from your save.') : t('Road class is from the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.'))}</p>`}${p.id !== undefined && !/rail|subway|monorail|tram|cablecar/.test(p.cls) ? sim.roadHtml(Number(p.id)) : ''}${p.id !== undefined && !['runway', 'taxiway', 'canal', 'ferry'].includes(p.cls) ? `<div class="p-actions">${closeBtn({ kind: /rail|subway|monorail|tram|cablecar/.test(p.cls) ? 'rail' : 'road', seg: Number(p.id) })}</div>` : ''}`);
 }
 /** The district shown as a soft region (estimated: no district shapes in the export), redrawn on theme changes. */
 let glowDistrict: number | null = null;
@@ -493,9 +546,11 @@ function showDistrict(name: string) {
   const blds = c.sources.lots.features.filter((f) => f.properties.district === name);
   const by = (cat: string) => blds.filter((f) => String(f.properties.cat).startsWith(cat)).length;
   const stations = c.sources.places.features.filter((f) => f.properties.kind === 'station' && f.properties.name && areas.some((a) => inPoly((f.geometry as any).coordinates, a.geometry.coordinates))).map((f) => String(f.properties.name));
-  const about = (v: number | null) => (v ? '≈ ' + v : null);
-  panel(head(name, t('District, estimated area')) + `<div class="p-rows">${row('Area', area ? '≈ ' + fmtAreaLarge(area) : null)}${row('Buildings', about(blds.length))}${row('Residential', about(by('residential')))}${row('Commercial / office', about(by('commercial') + by('office')))}${row('Industrial', about(by('industrial')))}${row('Stations', stations.join(', ') || null)}</div>
-    <p class="p-note">${t('The export has no district boundaries. This area is estimated from the district label and the transit stops that record it, so its edges and counts are approximate.')}</p>`, '#7d5fc4');
+  const exact = !!c.meta.source?.exactDistricts, dp = dl?.properties ?? {};
+  const about = (v: number | null) => (v ? (exact ? String(v) : '≈ ' + v) : null);
+  const num = (v: unknown) => (typeof v === 'number' ? v.toLocaleString(locale()) : null);
+  panel(head(name, exact ? t('District, from the game\'s district map') : t('District, estimated area')) + `<div class="p-rows">${row('Area', area ? (exact ? '' : '≈ ') + fmtAreaLarge(area) : null)}${row('Population', num(dp.pop))}${row('Homes', num(dp.homes))}${row('Jobs', num(dp.jobs))}${row('Specializations', dp.spec ? String(dp.spec) : null)}${row('Buildings', about(blds.length))}${row('Residential', about(by('residential')))}${row('Commercial / office', about(by('commercial') + by('office')))}${row('Industrial', about(by('industrial')))}${row('Stations', stations.join(', ') || null)}</div>
+    <p class="p-note">${exact ? t('Boundaries and figures come from the game itself (Vellum Bridge export).') : t('The export has no district boundaries. This area is estimated from the district label and the transit stops that record it, so its edges and counts are approximate.')}</p>`, '#7d5fc4');
 }
 function ringAreaLL(r: [number, number][]) { let a = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const p = fromLngLat(r[i][0], r[i][1]), q = fromLngLat(r[j][0], r[j][1]); a += (q[0] - p[0]) * (q[1] + p[1]); } return a / 2; }
 function inPoly(pt: [number, number], rings: [number, number][][]) {
@@ -504,6 +559,7 @@ function inPoly(pt: [number, number], rings: [number, number][][]) {
 }
 /** "What if it closes?" button for a panel */
 function closeBtn(p: import('./closure').ClosurePick) {
+  if (!canRoute()) return '';
   return `<button class="pill" data-close-pick="${esc(JSON.stringify(p))}"><svg viewBox="0 0 24 24" width="16" height="16"><path fill-rule="evenodd" d="${CLOSURE_ICON}"/></svg>${t('What if it closes?')}</button>`;
 }
 function lineLen(c: [number, number][]) { let l = 0; for (let i = 1; i < c.length; i++) { const a = fromLngLat(c[i - 1][0], c[i - 1][1]), b = fromLngLat(c[i][0], c[i][1]); l += Math.hypot(a[0] - b[0], a[1] - b[1]); } return l; }
@@ -514,9 +570,9 @@ function coordText(lng: number, lat: number) { const [x, z] = fromLngLat(lng, la
 $('panelBody').addEventListener('click', (e) => {
   const t = e.target as HTMLElement;
   const cp = (t.closest('[data-close-pick]') as HTMLElement | null)?.dataset.closePick;
-  if (cp) return closure.open(JSON.parse(cp));
+  if (cp) return needRouting(() => closure.open(JSON.parse(cp)))();
   const dd = (t.closest('[data-dir]') as HTMLElement | null)?.dataset.dir;
-  if (dd && panelPlace) { const pl = panelPlace; closePanel(); return dd === 'to' ? dir.setTo(pl) : dir.setFrom(pl); }
+  if (dd && panelPlace) { const pl = panelPlace; return needRouting(() => { closePanel(); dd === 'to' ? dir.setTo(pl) : dir.setFrom(pl); })(); }
   const id = (t.closest('[data-line]') as HTMLElement | null)?.dataset.line;
   if (id) return selectLine(+id, true);
   const fare = (t.closest('[data-edit-fare]') as HTMLElement | null)?.dataset.editFare;
@@ -580,7 +636,7 @@ const schem = createSchematic({
     if (se) choose(se); else map.flyTo({ center: p.ll, zoom: 16.5, speed: 1.6 });
   },
   showLine: (id) => selectLine(id, true),
-  directions: (from, to) => dir.open({ from, to, mode: 'transit' }),
+  directions: (from, to) => { if (!canRoute()) schem.close(); needRouting(() => dir.open({ from, to, mode: 'transit' }))(); },
   onOpen: () => { closeDrawer(); closePanel(); if (measure.isActive()) measure.close(); },
   onClose: () => {},
 });
@@ -589,6 +645,7 @@ $('schemChip').onclick = () => schem.open();
 
 // ------------------------------------------------------------------ directions
 const dir = createDirections({
+  approx: approxRoutes, savedLanes: () => sim.savedLanes(),
   map, worker, city: () => state.city,
   pricing, editPricing: (tab, focus) => pricingEd.open(tab, focus),
   showOnSchematic: (route) => schem.open({ route }),
@@ -599,13 +656,12 @@ const dir = createDirections({
   onOpen: () => { closePanel(); sim.close(); if (reach.isActive()) reach.close(); discoveries.close(); closure.close(); $('topbar').hidden = true; document.body.classList.add('dir-open'); },
   onClose: () => { $('topbar').hidden = false; document.body.classList.remove('dir-open'); },
 });
-$('dirBtn').onclick = () => dir.open();
+$('dirBtn').onclick = $('dirFab').onclick = needRouting(() => dir.open());
 const nav = createNav({
   map, roadLabel: (cls) => L(cls),
   onOpen: () => { closePanel(); hideCtx(); $('layerPop').hidden = true; },
   onClose: () => {},
 });
-$('dirFab').onclick = () => dir.open();
 
 const measure = createMeasure(map, {
   onOpen: () => { closePanel(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); discoveries.close(); closure.close(); $('measureBtn').classList.add('on'); },
@@ -614,13 +670,14 @@ const measure = createMeasure(map, {
 $('measureBtn').onclick = () => measure.toggle();
 
 const reach = createReach(map, {
+  approx: approxRoutes, savedLanes: () => sim.savedLanes(),
   worker,
   land: () => state.city?.districtField ?? null,
   night: () => state.mode === 'night',
   traffic: () => dir.trafficOn(),
   onOpen: () => { closeDrawer(); closePanel(); sim.close(); if (dir.isOpen()) dir.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); closure.close(); },
 });
-$('reachBtn').onclick = () => { closeDrawer(); const c = map.getCenter(); reach.open([c.lng, c.lat]); };
+$('reachBtn').onclick = needRouting(() => { closeDrawer(); const c = map.getCenter(); reach.open([c.lng, c.lat]); });
 
 const timelapse = createTimelapse(map, {
   worker, city: () => state.city, currentFile: () => state.currentFile, toast,
@@ -635,18 +692,21 @@ $('discoverBtn').onclick = () => (discoveries.isActive() ? discoveries.close() :
 $('discoverMenu').onclick = () => discoveries.open();
 
 const closure = createClosure(map, {
+  approx: approxRoutes, savedLanes: () => sim.savedLanes(),
   worker, toast,
   land: () => state.city?.districtField ?? null,
   night: () => state.mode === 'night',
   traffic: () => dir.trafficOn(),
   onOpen: () => { sim.close(); closeDrawer(); closePanel(); hideCtx(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); },
 });
-$('closureMenu').onclick = () => closure.open();
+$('closureMenu').onclick = needRouting(() => closure.open());
 
 const sim = createSim(map, {
   worker, toast, city: () => state.city,
   onRules: () => dir.rulesChanged(),
-  onLoaded: (f) => { if (state.city) void rememberSave(state.city.meta.name, f.name, f); },
+  // a save was loaded, replaced or cleared: panels, the cycling chip and layer follow it
+  onData: () => { syncUi(); if (state.city) renderDrawer(state.city); if (!$('panel').hidden) panelRefresh?.(); },
+  onLoaded: (f) => { if (state.recentId) void rememberSave(state.recentId, f.name, f); }, // the entry of the map it was loaded on
   selectLine: (id) => selectLine(id, true),
   onOpen: () => { closeDrawer(); closePanel(); hideCtx(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); closure.close(); },
 });
@@ -687,7 +747,7 @@ map.on('contextmenu', (e) => {
   ctxPlace = { label: placeLabelAt(e.point), ll: [e.lngLat.lng, e.lngLat.lat] };
   const [x, z] = fromLngLat(e.lngLat.lng, e.lngLat.lat);
   ctx.innerHTML = `<div class="ctx-title">${esc(ctxPlace.label === t('Dropped pin') ? `x ${Math.round(x)}, z ${Math.round(z)}` : ctxPlace.label)}</div>
-    <button data-c="from">${t('Directions from here')}</button><button data-c="to">${t('Directions to here')}</button><button data-c="measure">${t('Measure distance')}</button><button data-c="reach">${t('How far can I get from here?')}</button>`;
+    ${canRoute() ? `<button data-c="from">${t('Directions from here')}</button><button data-c="to">${t('Directions to here')}</button>` : ''}<button data-c="measure">${t('Measure distance')}</button>${canRoute() ? `<button data-c="reach">${t('How far can I get from here?')}</button>` : ''}`;
   const r = map.getContainer().getBoundingClientRect();
   ctx.style.left = Math.min(e.point.x + r.left, innerWidth - 230) + 'px';
   ctx.style.top = Math.min(e.point.y + r.top, innerHeight - 170) + 'px';
@@ -782,6 +842,14 @@ window.addEventListener('keydown', (e) => {
     // the start screen reopened over a map: Esc goes back to it (not while a map is loading)
     if (!$('welcome').hidden && state.city && $('loading').hidden) { $('welcome').hidden = true; return; }
     closePanel(); closeDrawer(); hideCtx(); $('layerPop').hidden = true;
+    // tool panels close too when focus is on the map (their own Esc handling covers focus inside them); not while
+    // navigating (nav has its own Esc) or typing
+    if (!document.body.classList.contains('nav-on') && !(document.activeElement instanceof HTMLInputElement)) {
+      if (closure.isActive()) closure.close();
+      if (reach.isActive()) reach.close();
+      if (sim.isOpen()) sim.close();
+      discoveries.close();
+    }
   }
 });
 
@@ -790,6 +858,7 @@ function syncUi() {
   document.querySelectorAll<HTMLElement>('#chips .chip[data-opt]').forEach((c) => {
     const k = c.dataset.opt as keyof typeof state.opts;
     c.classList.toggle('on', !!state.opts[k] || (k === 'contours' && state.mode === 'terrain'));
+    if (k === 'cycling') { c.classList.toggle('off', !canCycle()); c.setAttribute('aria-disabled', String(!canCycle())); }
   });
   document.querySelectorAll<HTMLElement>('.layer-opt').forEach((b) => b.classList.toggle('on', b.dataset.mode === state.mode));
   $('layerThumb').className = 'thumb ' + (state.mode === 'night' ? 't-map' : state.mode === 'terrain' ? 't-map' : 't-terrain');
@@ -801,11 +870,13 @@ $('chips').addEventListener('click', (e) => {
   const c = (e.target as HTMLElement).closest('.chip[data-opt]') as HTMLElement | null;
   if (!c) return;
   const k = c.dataset.opt as keyof typeof state.opts;
+  if (k === 'cycling' && !canCycle()) return needLanes(() => {})(); // bike lanes are lane data (a .vellummap gets them from a matched save)
   (state.opts as any)[k] = !state.opts[k];
   if (k === 'bus' && state.opts.bus) state.opts.transit = true;
   if (k === 'transit' && !state.opts.transit) state.opts.bus = false;
   if (k === 'buildings3d' && state.opts.buildings3d && map.getPitch() < 10 && map.getZoom() > 15) map.easeTo({ pitch: 50, duration: 600 });
   applyStyle();
+  if (k === 'cycling' && state.opts.cycling && !hasLanes()) cyclingNote();
 });
 $('layerBtn').onclick = (e) => { e.stopPropagation(); $('layerPop').hidden = !$('layerPop').hidden; };
 document.addEventListener('click', (e) => { if (!$('layerSwitch').contains(e.target as Node)) $('layerPop').hidden = true; });
@@ -840,6 +911,34 @@ function updateExtrusion() {
 map.on('pitch', updateExtrusion);
 
 let toastT = 0;
+/** lane data in the file itself: bike lanes, save files and lane facts need it (.vellummap has none) */
+function hasLanes() { return state.city?.meta.source?.lanes !== false; }
+/** routing runs on lanes estimated from road types (.vellummap): every route, area and closure result is approximate */
+function approxRoutes() { return !!state.city?.meta.source?.approxRoutes; }
+/** directions, travel-time areas and closures: on with the file's lanes, or approximately with estimated ones */
+function canRoute() { return hasLanes() || approxRoutes(); }
+/** the cycling layer: the file's bike lanes, or on a .vellummap those of the roads a matched save names */
+function canCycle() { return hasLanes() || sim.bikeShare() !== null; }
+/** .vellummap: which roads the cycling layer can show */
+function cyclingNote() {
+  const s = sim.bikeShare();
+  if (s !== null) toast(s >= 1 ? t('Bike lanes from your save.') : t('Bike lanes from your save, where it names a road type Skyline Map knows: {pct}% of the road network by length. Roads elsewhere may have bike lanes too.', { pct: Math.floor(100 * s) }));
+}
+/** run `f`, or, on a map without lanes, explain why it is off */
+function needLanes(f: () => unknown) { return () => { if (hasLanes()) return void f(); closeDrawer(); explainNoLanes(true); }; }
+function needRouting(f: () => unknown) { return () => { if (canRoute()) return void f(); closeDrawer(); explainNoLanes(); }; }
+function explainNoLanes(laneFeature = false) {
+  panelPlace = null;
+  const saved = sim.savedLanes();
+  panel(approxRoutes()
+    ? head(laneFeature ? t('This needs a .cslmap export or a save') : saved !== null ? t('Directions use lanes from your save') : t('Directions on this map are approximate'), '.vellummap') + `<p class="p-note">${esc(saved !== null && saved >= 1
+      ? t("This .vellummap file has no lane data. The save you added fills it in, so directions, travel-time areas, closure analysis and the cycling layer use its lanes, one-way streets and bike lanes. Results can still differ a little from the game.")
+      : saved !== null
+      ? t("This .vellummap file has no lane data. The save you added fills it in where it names a road type Skyline Map knows: lanes, one-way streets and bike lanes come from the save on {pct}% of the road network (by length), and the rest are estimated from each road's type and width. Routes and times are close but not exact.", { pct: Math.floor(100 * saved) })
+      : t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use). Directions, travel-time areas and closure analysis estimate it from each road's type and width, so routes and times are approximate, and a route may use a one-way street the wrong way. Add the save (.crp) the export was made from to use its real lanes, one-way streets and bike lanes, or open a .cslmap export of the same city (from CSLMapView) for the full lane data."))}</p>`
+    : head(t('Directions are off for this map'), '.vellummap') + `<p class="p-note">${esc(t("This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis and the cycling layer need a .cslmap export of the same city."))}</p>`);
+}
+$('cityInfo').addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('[data-why-no-route]')) { closeDrawer(); explainNoLanes(); } });
 function toast(msg: string) { const el = $('toast'); el.textContent = msg; el.hidden = false; clearTimeout(toastT); toastT = window.setTimeout(() => (el.hidden = true), 4500); }
 
 map.on('error', (e) => { if (!String(e.error?.message ?? '').includes('csldem')) console.warn('[map]', e.error?.message ?? e); });

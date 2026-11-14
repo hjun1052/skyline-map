@@ -30,6 +30,8 @@ interface Edge {
   id: number; a: number; b: number; len: number; pts: XY[]; cls: string; name: string; speed: number; bike: boolean; brunnel: string;
   /** the speed limit comes from the segment type's lanes (else `speed` is a class default) */
   limKnown: boolean;
+  /** lanes estimated from the road class (.vellummap, no matched save naming it): a TM:PE limit's direction is a guess too */
+  guessed?: boolean;
   /** closed for the closure being analysed (see setClosure): unusable by every mode */
   x?: boolean;
   /** one-way: +1 traffic a→b, -1 b→a, 0 two-way; `sure` = backed by transit or keep-right evidence */
@@ -149,18 +151,24 @@ export class Router {
       if (seg.pts.length < 2 || !city.nodes.has(seg.sn) || !city.nodes.has(seg.en)) continue;
       const st = city.segTypes.get(seg.name);
       const lanes = laneInfo(st);
-      const acc = laneAccess(seg, st);
+      // on estimated lanes the prefab name is a guess: bridges, tunnels, posted limits and bike lanes come from the file only
+      // (roads a matched save names have their real prefab, so those count as known)
+      const guessed = !!city.extras?.caps.lanesEstimated && !city.extras.exactLanes?.has(seg.id);
+      let acc = laneAccess(seg, st);
+      // a guessed bike lane never lets bikes ride where the road itself doesn't (they push on paths, as without one)
+      if (guessed && acc.bike && !(acc.drive && !st?.highway) && !/Bicycle|Bike/i.test(seg.icls)) acc = { ...acc, bike: false, bikeWalk: acc.walk };
       if (!acc.walk && !acc.drive && !acc.bike && !acc.bikeWalk) continue;
       const c0 = classify(seg, st, lanes);
       // class only names the edge in instructions and sets default speeds; access comes from lanes
       const c = c0.group === 'road' || c0.group === 'path' ? c0 : { ...c0, cls: acc.drive ? 'minor' : 'footway' };
       const pts: XY[] = seg.pts.map((p) => [p.x, p.z]);
-      const both = seg.name + ' ' + seg.icls;
+      const both = guessed ? seg.icls : seg.name + ' ' + seg.icls;
       const e: Edge = {
         id: seg.id, a: node(seg.sn), b: node(seg.en), len: Math.max(1, len(pts)), pts, cls: c.cls, name: seg.customName,
-        speed: (lanes.speed > 0 && lanes.speed < 200 ? lanes.speed : DRIVE_DEFAULT[c.cls] ?? 30) / 3.6, limKnown: lanes.speed > 0 && lanes.speed < 200,
-        bike: lanes.bike || /Bicycle|Bike/i.test(seg.name), brunnel: /Tunnel/i.test(both) ? 'tunnel' : /Elevated|Bridge/i.test(both) ? 'bridge' : '',
-        acc, gate: tolls?.gateOf.get(seg.id) ?? 0, ow: oneway?.dir.get(seg.id) ?? 0, sure: !!oneway && oneway.source.get(seg.id) !== 'prior' && oneway.source.has(seg.id), confirmed: oneway?.source.get(seg.id) === 'transit',
+        // estimated lanes (.vellummap) give a speed to drive at, never a posted limit to show
+        speed: (lanes.speed > 0 && lanes.speed < 200 ? lanes.speed : DRIVE_DEFAULT[c.cls] ?? 30) / 3.6, limKnown: lanes.speed > 0 && lanes.speed < 200 && !guessed,
+        bike: guessed ? /Bicycle|Bike/i.test(seg.icls) : lanes.bike || /Bicycle|Bike/i.test(seg.name), brunnel: /Tunnel/i.test(both) ? 'tunnel' : /Elevated|Bridge/i.test(both) ? 'bridge' : '',
+        ...(guessed ? { guessed: true } : {}), acc, gate: tolls?.gateOf.get(seg.id) ?? 0, ow: oneway?.dir.get(seg.id) ?? 0, sure: !!oneway && oneway.source.get(seg.id) !== 'prior' && oneway.source.has(seg.id), confirmed: oneway?.source.get(seg.id) === 'transit',
         hA: headRad(pts), hB: headRad([...pts].reverse()),
       };
       const ei = this.edges.push(e) - 1;
@@ -475,12 +483,14 @@ export class Router {
       }
       if ('bent' in found && found.bent) this.flagAgainst(r, path);
       const used = new Set(path.map((p) => p.e));
-      const overlap = out.some((o) => { const prev = (o as any)._edges as Set<number>; let sh = 0; for (const e of used) if (prev.has(e)) sh += this.edges[e].len; return sh / r.dist > 0.7; });
-      if (!overlap && (!out.length || r.time <= out[0].time * 1.5)) { (r as any)._edges = used; out.push(r); }
+      // a different set of graph edges can still draw the very same line (joins part-way along a road): that is a copy too
+      const line = r.legs.map((l) => l.coords.map((c) => Math.round(c[0]) + ',' + Math.round(c[1])).join(' ')).join('|'); // to the metre
+      const overlap = out.some((o) => { if ((o as any)._line === line) return true; const prev = (o as any)._edges as Set<number>; let sh = 0; for (const e of used) if (prev.has(e)) sh += this.edges[e].len; return sh / r.dist > 0.7; });
+      if (!overlap && (!out.length || r.time <= out[0].time * 1.5)) { (r as any)._edges = used; (r as any)._line = line; out.push(r); }
       // a near-copy means the penalty is too weak to leave a fast road (e.g. an expressway): escalate faster
       for (const e of used) penalty.set(e, (penalty.get(e) ?? 1) * (overlap ? 1.8 : 1.3));
     }
-    for (const r of out) delete (r as any)._edges;
+    for (const r of out) { delete (r as any)._edges; delete (r as any)._line; }
     // both ends on one edge: walking straight along it beats going out to a junction and back
     if (mode !== 'drive') {
       let direct: Route | null = null;
@@ -859,7 +869,8 @@ export class Router {
     for (const p of parts) {
       if (mode === 'drive') {
         const e = p.ed, fwd = this.drivesForward(p);
-        const lim = e.spd ? e.spd[fwd ? 0 : 1] * 3.6 : e.limKnown ? e.speed * 3.6 : 0;
+        // a TM:PE limit on guessed lanes is shown only when both directions agree (which lanes run which way is a guess)
+        const lim = e.spd && (!e.guessed || e.spd[0] === e.spd[1]) ? e.spd[fwd ? 0 : 1] * 3.6 : e.limKnown ? e.speed * 3.6 : 0;
         spans.push({ i: coords.length, v: this.driveSpeed(e, fwd), name: e.name, cls: e.cls, brunnel: e.brunnel, ...(lim ? { limit: Math.round(lim) } : {}) });
       }
       coords.push(...p.pts);

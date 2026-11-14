@@ -14,7 +14,7 @@ function localMaps(): Plugin {
     const list = () => {
       if (!fs.existsSync(MAP_DIR)) return [];
       return fs.readdirSync(MAP_DIR)
-        .filter((f) => /\.cslmap(\.gz)?$/i.test(f))
+        .filter((f) => /\.(cslmap(\.gz)?|vellummap)$/i.test(f))
         .map((f) => { const st = fs.statSync(path.join(MAP_DIR, f)); return { file: f, size: st.size, mtime: st.mtimeMs }; })
         .sort((a, b) => b.mtime - a.mtime);
     };

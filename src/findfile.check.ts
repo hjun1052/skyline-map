@@ -1,6 +1,6 @@
 // Self-check for OS detection on the start screen's "Where is my file?" helper. Run: npm run check
 import assert from 'node:assert/strict';
-import { detectOS, EXPORT_DIRS } from './findfile-os.ts';
+import { detectOS, EXPORT_DIRS, BRIDGE_DIRS } from './findfile-os.ts';
 
 const nav = (userAgent: string, platform = '', userAgentData?: { platform?: string; mobile?: boolean }) => ({ userAgent, platform, userAgentData });
 assert.equal(detectOS(nav('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15', 'MacIntel')), 'mac');
@@ -13,4 +13,8 @@ assert.equal(detectOS(nav('Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/
 assert.equal(detectOS(nav('Mozilla/5.0 (Linux; Android 14)', '', { platform: 'Android', mobile: true })), null);
 // every path ends in the CSLMapView folder inside the game's install folder
 for (const p of Object.values(EXPORT_DIRS)) assert.match(p, /steamapps[\\/]common[\\/]Cities_Skylines[\\/]CSLMapView$/);
+// Vellum Bridge: Documents (Windows) or the home folder (macOS, Linux), then "Vellum Bridge" (ExportStorage.ExportFolder)
+assert.equal(BRIDGE_DIRS.windows, '%USERPROFILE%\\Documents\\Vellum Bridge');
+assert.equal(BRIDGE_DIRS.mac, '~/Vellum Bridge');
+assert.equal(BRIDGE_DIRS.linux, '~/Vellum Bridge');
 console.log('find-file checks passed');

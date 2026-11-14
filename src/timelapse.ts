@@ -4,6 +4,7 @@
 import type { Map as MLMap, GeoJSONSource, FilterSpecification } from 'maplibre-gl';
 import type { BuiltCity } from './build';
 import { t, locale, fmtFixed } from './i18n';
+import { ROAD_CLASSES } from './geo';
 import { fmtLong, onUnits } from './units';
 
 const TAGGED = ['roads', 'rails', 'lots', 'buildings', 'transit'];
@@ -19,7 +20,7 @@ export function createTimelapse(map: MLMap, deps: { worker: Worker; city: () => 
   el.id = 'timelapse'; el.className = 'card'; el.hidden = true;
   document.body.appendChild(el);
   const input = document.createElement('input');
-  input.type = 'file'; input.multiple = true; input.accept = '.cslmap,.gz'; input.hidden = true;
+  input.type = 'file'; input.multiple = true; input.accept = '.cslmap,.gz,.vellummap'; input.hidden = true;
   document.body.appendChild(input);
   input.onchange = () => { const fs = [...(input.files ?? [])]; input.value = ''; if (fs.length) void load(fs.map((f) => ({ name: f.name, get: () => f.arrayBuffer() }))); };
 
@@ -32,7 +33,9 @@ export function createTimelapse(map: MLMap, deps: { worker: Worker; city: () => 
     const lots = c.sources.lots as any, roads = c.sources.roads as any;
     let blds = 0, m = 0;
     for (const f of lots.features) if ((f.properties.born ?? 0) <= T && !f.properties.part) blds++;
-    for (const f of roads.features) if ((f.properties.born ?? 0) <= T && f.properties.lanes > 0) m += f.properties.len ?? 0; // roads with car lanes
+    // roads with car lanes; without a lane table (.vellummap) the drawn road classes stand in
+    const noLanes = c.meta.source?.lanes === false;
+    for (const f of roads.features) if ((f.properties.born ?? 0) <= T && (f.properties.lanes > 0 || (noLanes && ROAD_CLASSES.has(f.properties.cls)))) m += f.properties.len ?? 0;
     return { blds, km: m / 1000 };
   }
 
@@ -44,7 +47,7 @@ export function createTimelapse(map: MLMap, deps: { worker: Worker; city: () => 
       el.innerHTML = `${head}
         <p class="tl-lede">${esc(t('Watch {city} grow. Pick older exports of this city: the more saves, the smoother the time-lapse.', { city }))}</p>
         ${st.loading ? `<p class="tl-msg">${esc(st.msg)}</p>` : `<div class="tl-actions"><button class="pill primary" data-a="pick">${t('Choose older exports')}</button>${st.dev.length ? `<button class="pill" data-a="dev">${esc(t('Use {n} saves from the export folder', { n: st.dev.length }))}</button>` : ''}</div>
-        ${st.msg ? `<p class="tl-msg">${esc(st.msg)}</p>` : ''}<p class="tl-note">${t('Tip: turn on timestamps in the CSLMapView settings so every export is kept.')}</p>`}`;
+        ${st.msg ? `<p class="tl-msg">${esc(st.msg)}</p>` : ''}<p class="tl-note">${deps.city()?.meta.source ? t('Vellum Bridge keeps every export as its own file in the city\'s folder.') : t('Tip: turn on timestamps in the CSLMapView settings so every export is kept.')}</p>`}`;
       return;
     }
     const T = st.times[st.i], s = stats(T), n = st.times.length;
@@ -140,7 +143,7 @@ export function createTimelapse(map: MLMap, deps: { worker: Worker; city: () => 
   async function findDev() {
     // dev server only: other saves of this city in the export folder
     st.dev = [];
-    const cur = deps.currentFile(), base = cur.replace(/-\d{8}-\d{6}\.cslmap(\.gz)?$/i, '');
+    const cur = deps.currentFile(), base = cur.replace(/-\d{8}-\d{6}\.(cslmap(\.gz)?|vellummap)$/i, '');
     if (!cur || base === cur) return;
     try {
       const r = await fetch('/api/maps');

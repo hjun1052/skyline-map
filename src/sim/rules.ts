@@ -90,7 +90,8 @@ export function buildRules(city: CityData, net: SaveNet, seg: Uint8Array, tmpe: 
     const chain = segmentLanes(net, s.id);
     if (chain.length !== st.lanes.length) continue;
     const def = (l: CLane) => Math.round(l.speed * 50);
-    const eff = (l: CLane, i: number) => (SPEED_LANE(l) ? laneKmh.get(chain[i]) ?? typeKmh.get(s.name) ?? def(l) : def(l));
+    const prefab = net.prefabNames[net.segPrefab[s.id]] ?? s.name; // the save's own name (a .vellummap road name can be an estimate)
+    const eff = (l: CLane, i: number) => (SPEED_LANE(l) ? laneKmh.get(chain[i]) ?? typeKmh.get(prefab) ?? def(l) : def(l));
     // car speed per direction, before and after TM:PE
     const was: [number, number] = [0, 0], now: [number, number] = [0, 0];
     const hasCar: [boolean, boolean] = [false, false], carOk: [boolean, boolean] = [false, false];
