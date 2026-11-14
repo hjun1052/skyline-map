@@ -78,7 +78,7 @@ Every value mirrors the game field, and the game code, that the game's own UI us
 | Where | Value | Source | Window |
 |---|---|---|---|
 | Road panel, Traffic layer | Traffic % | `NetSegment.m_trafficDensity` (the game's traffic view colours by it) | current |
-| Road panel, Traffic layer (zoomed in), route colours | Traffic % by direction | `m_trafficDensity` split between the two directions by the vehicles on each direction's lanes and the vehicles whose paths cross it next (`src/sim/directional.ts`, [research/directional-traffic.md](research/directional-traffic.md)); format 121034, right-hand traffic | estimate |
+| Road panel and Traffic layer in Directional display mode (experimental, opt-in), route colours with "Traffic by direction" routing | Traffic % by direction | `m_trafficDensity` split between the two directions by the vehicles on each direction's lanes and the vehicles whose paths cross it next (`src/sim/directional.ts`, [research/directional-traffic.md](research/directional-traffic.md)); format 121034, right-hand traffic | estimate |
 | Road panel | Speed limit (TM:PE) | TM:PE `LaneSpeedLimit` (km/h), placed through the save's own lane chain; only when the chain length equals the export's lane list | as set |
 | Road panel | Default speed for this road type (TM:PE) | TM:PE `CustomDefaultSpeedLimits` | as set |
 | Road panel | Parking | TM:PE `ParkingRestrictions` | as set |
@@ -162,10 +162,12 @@ save is removed and loaded again. It is one setting in the worker's router, so r
 - **Where it comes from:** the curve is measured from 27,463 private cars in 19 saves of 4 cities, as speed against
   lane limit. The game itself has no density-to-speed rule; derivation, calibration and validation are in
   [research/traffic-model.md](research/traffic-model.md).
-- **By direction:** on two-way roads where the save's vehicles tell the directions apart (enough vehicles on them or
-  heading through), the direction driven uses its own share of the density (`src/sim/directional.ts`,
-  [research/directional-traffic.md](research/directional-traffic.md)); elsewhere both directions use the road's value.
-  The chosen route's slow stretches are coloured on the map (orange from ×1.3, red from ×2, dark red from ×3).
+- **By direction (experimental, off by default):** "Traffic by direction" under the switch makes the direction driven
+  use its own share of the density on two-way roads where the save's vehicles tell the directions apart
+  (`src/sim/directional.ts`, [research/directional-traffic.md](research/directional-traffic.md)). Elsewhere, and with
+  the option off, both directions use the road's value. It is independent of the map's traffic display mode.
+- **Route colours:** the chosen route's slow stretches are coloured on the map (orange from ×1.3, red from ×2, dark red
+  from ×3), from the traffic the routing uses.
 - **Search and shown time agree:** the route search minimises the traffic-adjusted time, and the card shows that
   time with "Traffic adds about N min to this route".
 - **Rules still hold:** restriction penalties never count as time, and traffic never lifts a one-way, U-turn or

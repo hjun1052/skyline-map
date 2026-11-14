@@ -120,6 +120,14 @@
       <label class="switch-row"><input type="checkbox" id="opt3dTerrain" /> <span data-i18n="3D terrain">3D terrain</span></label>
       <label class="switch-row"><input type="checkbox" id="optNeutral" /> <span data-i18n="Neutral road colours">Neutral road colours</span></label>
       <label class="switch-row" id="optTrafficRow"><input type="checkbox" id="optTraffic" /> <span><span data-i18n="Traffic">Traffic</span><span class="switch-hint" id="optTrafficHint" data-i18n="From a save: add one in Simulation data">From a save: add one in Simulation data</span></span></label>
+      <div class="traffic-mode" id="optTrafficMode" hidden>
+        <div class="mode-switch" role="radiogroup" aria-label="Traffic display" data-i18n-aria="Traffic display">
+          <button type="button" role="radio" data-tmode="combined" data-i18n="Combined">Combined</button>
+          <button type="button" role="radio" data-tmode="directional"><span data-i18n="Directional">Directional</span><span class="exp-tag" data-i18n="Experimental">Experimental</span></button>
+        </div>
+        <p class="switch-hint" id="optTrafficModeCombined" data-i18n="The game's own traffic for each road.">The game's own traffic for each road.</p>
+        <p class="switch-hint" id="optTrafficModeDirectional" hidden data-i18n="Each direction estimated from the vehicles in your save, where they show it.">Each direction estimated from the vehicles in your save, where they show it.</p>
+      </div>
     </div>
   </div>
 

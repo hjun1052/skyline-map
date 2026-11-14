@@ -95,14 +95,19 @@ stopped vehicles are all within 40 m of a light ahead (at least 2) and none else
 
 ## 6. What it supports
 
-- **Traffic layer:** from zoom 14, two-way roads with enough evidence are drawn as two lines, one per direction on
-  its side of the road (right of travel). Others keep one line with the game's
-  value.
-- **Road panel:** the game's value plus each direction by compass heading, or "not enough vehicles to tell".
+Everything below is opt-in. By default the map and routing use the game's value per road, exactly as before.
+
+- **Traffic layer (Layers → Traffic → Directional, marked Experimental):** from zoom 14, two-way roads with enough
+  evidence are drawn as two lines, one per direction on its side of the road (right of travel). Others keep one line
+  with the game's value. Combined, the default, is the original layer. The choice is kept in the browser and switches
+  without reloading the save.
+- **Road panel (in Directional mode):** the game's value plus each direction by compass heading, or "not enough
+  vehicles to tell".
 - **Route colouring:** with traffic-aware routing on, each stretch of the chosen driving route is coloured by the
-  slowdown the traffic curve gives (×1.3 orange, ×2 red, ×3 dark red) in the direction driven, using the split where
-  there is one and the segment's value otherwise.
-- **Traffic-aware routing:** edges use the direction's density where split.
+  slowdown the traffic curve gives (×1.3 orange, ×2 red, ×3 dark red), using the same traffic the routing uses.
+- **Traffic-aware routing:** uses each road's own value both ways unless "Traffic by direction (Experimental)" is
+  ticked under it in Directions. That option is separate from the map's display mode. With it on, edges use the
+  direction's density where split, and the route colours and travel-time areas follow.
   - On the real save: 89% of 285 trips keep their path, the median time changes by +0.4%, and 16 trips (6%) change
     by more than 5% (−9% to +11%).
   - It stays an estimate, and only on when the user turns it on.

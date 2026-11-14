@@ -960,4 +960,13 @@ export const KO: Record<string, string> = {
   "From a save: add one in Simulation data": "세이브 파일이 필요해요: 시뮬레이션 데이터에서 추가하세요",
   "traffic by direction": "방향별 교통량",
   "Traffic adds under a minute": "교통 때문에 1분 미만 더 걸려요",
+  "Uses each direction's estimated traffic where the save's vehicles show it, instead of each road's own value both ways": "도로마다 양방향에 같은 값을 쓰는 대신, 세이브의 차량으로 구분되는 곳에서 방향별 추정 교통량을 써요",
+  "Traffic by direction": "방향별 교통량",
+  "Experimental": "실험 기능",
+  "Each direction estimated from the vehicles in your save, where they show it.": "세이브의 차량으로 구분되는 곳에서 방향별로 추정한 값이에요.",
+  "This save can't tell the directions apart, so each road shows the combined value.": "이 세이브로는 방향을 구분할 수 없어서 도로마다 합친 값을 보여 줘요.",
+  "Traffic display": "교통량 표시",
+  "Combined": "합계",
+  "Directional": "방향별",
+  "The game's own traffic for each road.": "게임이 도로마다 기록한 교통량이에요.",
 };

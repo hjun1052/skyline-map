@@ -960,4 +960,13 @@ export const RU: Record<string, string> = {
   "From a save: add one in Simulation data": "Из сохранения: добавьте его в «Данные симуляции»",
   "traffic by direction": "трафик по направлениям",
   "Traffic adds under a minute": "Трафик добавляет меньше минуты",
+  "Uses each direction's estimated traffic where the save's vehicles show it, instead of each road's own value both ways": "Использует оценку трафика по каждому направлению там, где машины в сохранении позволяют их различить, вместо одного значения дороги для обоих направлений",
+  "Traffic by direction": "Трафик по направлениям",
+  "Experimental": "Экспериментально",
+  "Each direction estimated from the vehicles in your save, where they show it.": "Каждое направление оценено по машинам в сохранении там, где их можно различить.",
+  "This save can't tell the directions apart, so each road shows the combined value.": "По этому сохранению направления не различить, поэтому для каждой дороги показано общее значение.",
+  "Traffic display": "Отображение трафика",
+  "Combined": "Общий",
+  "Directional": "По направлениям",
+  "The game's own traffic for each road.": "Трафик каждой дороги, как его записала игра.",
 };

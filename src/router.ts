@@ -385,7 +385,7 @@ export class Router {
    *  their own points, so measure against the whole road. Only per-direction values (TM:PE limits `spd`, traffic split
    *  `tfd`) need the answer. */
   private drivesForward(p: { ed: Edge; pts: XY[] }): boolean {
-    if (!p.ed.spd && !p.ed.tfd) return true;
+    if (!p.ed.spd && !(this.trafficDir && p.ed.tfd)) return true;
     this.byId ??= new Map(this.edges.map((e) => [e.id, e]));
     const whole = this.byId.get(p.ed.id)?.pts ?? p.ed.pts, a = whole[0], z = whole[whole.length - 1];
     if (Math.hypot(a[0] - z[0], a[1] - z[1]) > 0.5) return nearestOnLine(p.pts[p.pts.length - 1], whole).along >= nearestOnLine(p.pts[0], whole).along;
@@ -400,7 +400,7 @@ export class Router {
     return (v * (/^(motorway|motorway_link|trunk)$/.test(e.cls) ? 1 : 0.85)) / (this.trafficOn && tf ? tf : 1);
   }
   /** the edge's traffic factor in a direction (its segment's when it isn't split), or undefined without traffic */
-  private tfOf(e: Edge, fwd?: boolean) { return fwd !== undefined && e.tfd ? e.tfd[fwd ? 0 : 1] : e.tf; }
+  private tfOf(e: Edge, fwd?: boolean) { return this.trafficDir && fwd !== undefined && e.tfd ? e.tfd[fwd ? 0 : 1] : e.tf; }
   /** `fwd`: the direction driven, for TM:PE's per-direction limits and traffic; `tdir`: the direction for traffic only (searches
    *  that keep the road's own speed both ways but still drive one way along it) */
   private cost(e: Edge, mode: Mode, fwd?: boolean, tdir?: boolean): number {
@@ -888,7 +888,7 @@ export class Router {
         // a TM:PE limit on guessed lanes is shown only when both directions agree (which lanes run which way is a guess)
         const lim = e.spd && (!e.guessed || e.spd[0] === e.spd[1]) ? e.spd[fwd ? 0 : 1] * 3.6 : e.limKnown ? e.speed * 3.6 : 0;
         spans.push({ i: coords.length, v: this.driveSpeed(e, fwd), name: e.name, cls: e.cls, brunnel: e.brunnel, ...(lim ? { limit: Math.round(lim) } : {}) });
-        if (this.trafficOn) traffic.push({ i: coords.length, pct: e.tpd ? e.tpd[fwd ? 0 : 1] : e.tp ?? -1, split: !!e.tpd, seg: e.id });
+        if (this.trafficOn) { const split = this.trafficDir && !!e.tpd; traffic.push({ i: coords.length, pct: split ? e.tpd![fwd ? 0 : 1] : e.tp ?? -1, split, seg: e.id }); }
       }
       coords.push(...p.pts);
     }
@@ -1126,6 +1126,8 @@ export class Router {
   // ---------------------------------------------------------------- traffic from a matched save (estimate)
   private trafficEdges: Edge[] = [];
   private trafficOn = false;
+  /** traffic-aware routing uses the per-direction estimates where split (experimental, off by default: the game's value per road) */
+  private trafficDir = false;
   /** densities (0-100 %) for matched segments, and per direction where the save's vehicles split them with enough
    *  evidence (sim/directional.ts, `trusted`); routing uses them only while setTraffic(true) */
   applyTraffic(ids: ArrayLike<number>, pct: ArrayLike<number>, dir?: { ids: ArrayLike<number>; f: ArrayLike<number>; b: ArrayLike<number>; trusted: ArrayLike<number> }) {
@@ -1148,6 +1150,8 @@ export class Router {
   }
   /** traffic-aware driving on or off (Directions, reach and closures alike); no effect without data */
   setTraffic(on: boolean) { this.trafficOn = on && this.trafficEdges.length > 0; }
+  /** use the per-direction estimates while traffic-aware routing is on (otherwise each road's own value both ways) */
+  setTrafficDir(on: boolean) { this.trafficDir = on; }
   clearRules() {
     this.setRules(false);
     this.ruleEdits = []; this.hopEdits = []; this.uturnRule = new Set(); this.turnRule = new Map(); this.restrictRule = null;

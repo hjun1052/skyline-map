@@ -44,7 +44,7 @@ type Twin = { city: string; kind: string; len: number; ta: number; tb: number; a
 type OneWay = { city: string; x: number[]; y: number };
 const twins: Twin[] = [], oneWays: OneWay[] = [];
 const half: { twin: [number, number, number][]; street: [number, number, number][] } = { twin: [], street: [] };
-let consist: { n: number; colour: number; time: number; nav: number } | null = null;
+let consist: { n: number; colour: number; time: number; nav: number; off: number } | null = null;
 let velOk = 0, velN = 0, mirOk = 0, mirN = 0, mirOff = 0, sumErr = 0, sumN = 0, saves = 0, ms = 0, segs = 0, shown = 0;
 const side = (x: DirFeatures) => (x.f.lanes ? x.f : x.b);
 const kindOf = (c: CityData, name: string) => (/ramp|slip|link/i.test(name) ? 'ramp' : c.segTypes.get(name)?.highway ? 'highway' : 'road');
@@ -96,11 +96,14 @@ for (const p of pairs) {
     if ((ta + tb) / 2 >= 10) twins.push({ city: c.name, kind: kindOf(c, segById.get(x.seg)!.name), len: (x.len + y.len) / 2, ta, tb, a: side(x), b: side(y) });
   }
   // 5. consistency (first save only): roads busy one way and quiet the other, driven both ways
-  if (!consist) consist = { n: 0, colour: 0, time: 0, nav: 0 };
+  if (!consist) consist = { n: 0, colour: 0, time: 0, nav: 0, off: 0 };
   if (consist.n < 60) {
     const R = new Router(c, new Map(), inferOneWay(c), detectTolls(c));
     const tids: number[] = [], tp: number[] = []; for (let id = 1; id < net.segTraffic.length; id++) if (verified(id) && c.segTypes.has(segById.get(id)?.name ?? '')) { tids.push(id); tp.push(net.segTraffic[id]); }
     R.applyTraffic(tids, tp, dt); R.setTraffic(true);
+    // routing keeps each road's own value both ways until the experimental option is on
+    const R0 = new Router(c, new Map(), inferOneWay(c), detectTolls(c)); R0.applyTraffic(tids, tp, dt); R0.setTraffic(true);
+    R.setTrafficDir(true);
     const asym = [...dt.ids].map((id, k) => ({ id, k })).filter(({ k }) => dt.trusted[k] && Math.abs(dt.f[k] - dt.b[k]) >= 40 && Math.max(dt.f[k], dt.b[k]) >= 60).slice(0, 40);
     for (const { id, k } of asym) {
       const s = segById.get(id)!; if (s.pts.length < 2) continue;
@@ -124,6 +127,9 @@ for (const p of pairs) {
       // the navigation drive speed (spans) follows the same direction
       const vf = fw.legs[0].spans?.[0]?.v ?? 0, vb = bw.legs[0].spans?.[0]?.v ?? 0;
       if (ff === fb || (vf < vb) === (ff > fb)) consist.nav++;
+      // option off: both ways coloured with the road's own value and nothing marked split
+      const o1 = R0.route(A, B, 'drive', {})[0]?.legs[0].traffic?.find((p) => p.seg === id), o2 = R0.route(B, A, 'drive', {})[0]?.legs[0].traffic?.find((p) => p.seg === id);
+      if (o1 && o2 && o1.pct === net.segTraffic[id] && o2.pct === net.segTraffic[id] && !o1.split && !o2.split) consist.off++;
     }
   }
   // 4. split-half agreement: even and odd vehicles give two independent estimates
@@ -196,6 +202,7 @@ if (consist) {
   ok(consist.n >= 10 && consist.colour === consist.n, 'route colours use the direction driven on roads busy one way only', consist);
   ok(consist.n >= 10 && consist.time >= consist.n * 0.9, 'travel times follow the direction driven (quiet direction not penalised)', `${consist.time}/${consist.n}`);
   ok(consist.n >= 10 && consist.nav >= consist.n * 0.9, 'navigation speeds follow the direction driven', `${consist.nav}/${consist.n}`);
+  ok(consist.n >= 10 && consist.off === consist.n, 'with the experimental routing option off, each road keeps its own value both ways', `${consist.off}/${consist.n}`);
 }
 ok(ms / saves < 400, 'fast enough for the browser', `${Math.round(ms / saves)} ms`);
 if (failures) { console.error(`${failures} problems`); process.exit(1); }

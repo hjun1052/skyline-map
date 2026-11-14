@@ -139,6 +139,13 @@ h1.brand { margin: 0; }
 .switch-row > span { display: flex; flex-direction: column; gap: 1px; }
 .switch-row .switch-hint { font-size: 12px; color: var(--muted); line-height: 1.3; }
 .switch-row.off > span > span:first-child { color: var(--muted); }
+/* traffic display mode under the Traffic switch: two equal options, the experimental one tagged */
+.traffic-mode { margin: 0 2px 4px 28px; display: flex; flex-direction: column; gap: 4px; }
+.traffic-mode .mode-switch { display: flex; }
+.traffic-mode .mode-switch button { flex: 1 1 0; padding: 5px 8px; font-size: 12.5px; line-height: 1.25; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.traffic-mode .exp-tag { font-size: 10.5px; font-weight: 500; color: var(--muted); }
+.traffic-mode .switch-hint { margin: 0; font-size: 12px; line-height: 1.3; color: var(--muted); }
+.traffic-mode .mode-switch button.on .exp-tag { color: inherit; opacity: .8; }
 .t-map { background: linear-gradient(135deg, transparent 46%, #fbd36a 46% 54%, transparent 54%), linear-gradient(45deg, transparent 47%, #fff 47% 53%, transparent 53%), radial-gradient(circle at 80% 80%, #a2cdf3 0 26%, transparent 27%), radial-gradient(circle at 15% 20%, #c8e7cc 0 22%, transparent 23%), #f4f3f0; }
 .t-terrain { background: radial-gradient(ellipse at 30% 40%, #b9a27c 0 10%, #d8c49f 11% 24%, #e8dfbf 25% 40%, transparent 41%), linear-gradient(135deg, transparent 47%, #fff 47% 53%, transparent 53%), radial-gradient(circle at 85% 85%, #a2cdf3 0 25%, transparent 26%), #dfeacf; }
 .t-night { background: linear-gradient(135deg, transparent 46%, #a4843f 46% 54%, transparent 54%), linear-gradient(45deg, transparent 47%, #4a4e55 47% 53%, transparent 53%), radial-gradient(circle at 80% 80%, #122436 0 26%, transparent 27%), #25282c; }
@@ -680,6 +687,10 @@ body.closure-open .maplibregl-canvas { cursor: crosshair; }
 .traffic-note { margin-top: 4px; font-size: 12.5px; color: var(--muted); }
 .dir-options label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .dir-options input { accent-color: var(--accent); width: 16px; height: 16px; }
+/* an experimental refinement of the option before it: on its own line, indented under it */
+.dir-options .dir-sub { flex-basis: 100%; padding-left: 24px; }
+.dir-options .dir-sub[hidden] { display: none; }
+.dir-options .exp-tag, .switch-row .exp-tag { font-size: 11px; color: var(--muted); }
 .toll-note { margin-top: 4px; font-size: 12.5px; color: #a5581a; }
 .toll-note::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: #d9822b; margin-right: 6px; vertical-align: 0; }
 .toll-note.warn { color: #c5221f; }
@@ -886,10 +897,10 @@ body.closure-open .maplibregl-canvas { cursor: crosshair; }
 }
 
 /* ---------- language switch ---------- */
-.lang-switch, .unit-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; flex: none; }
-.lang-switch button, .unit-switch button { padding: 6px 14px; font-size: 13px; font-weight: 500; color: var(--muted); }
-.lang-switch button + button, .unit-switch button + button { border-left: 1px solid var(--line); }
-.lang-switch button.on, .unit-switch button.on { background: var(--accent-soft); color: var(--accent); }
+.lang-switch, .unit-switch, .mode-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; flex: none; }
+.lang-switch button, .unit-switch button, .mode-switch button { padding: 6px 14px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.lang-switch button + button, .unit-switch button + button, .mode-switch button + button { border-left: 1px solid var(--line); }
+.lang-switch button.on, .unit-switch button.on, .mode-switch button.on { background: var(--accent-soft); color: var(--accent); }
 #unitsSection .unit-switch { margin: 0 20px 6px; }
 #langSection .lang-switch { margin: 0 20px 6px; }
 .lang-credit { margin: 4px 20px 8px; font-size: 12.5px; color: var(--muted); }
@@ -1046,6 +1057,8 @@ body.closure-open .maplibregl-canvas { cursor: crosshair; }
 .sim-line b { font-size: 12.5px; text-align: right; font-variant-numeric: tabular-nums; }
 .sim-foot { margin-top: 16px; }
 #simLegend { position: absolute; left: 100px; bottom: 36px; z-index: 5; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; font-size: 12.5px; font-weight: 500; color: var(--fg); }
+/* the Layers menu stacks under it (inside the layer button's context) and sits where it does: it steps aside while open */
+body:has(#layerPop:not([hidden])) #simLegend { display: none; }
 .p-sim { margin: 0 0 12px; padding: 8px 0 4px; border-top: 1px solid var(--line); }
 .p-sim-h { padding: 4px 22px 2px; font-size: 11.5px; font-weight: 600; color: var(--sim-ok); }
 .p-sim.muted .p-sim-h { color: var(--muted); }

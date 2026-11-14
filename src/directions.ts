@@ -55,6 +55,8 @@ export interface DirectionsDeps {
   simRules: () => boolean;
   /** a matched save's traffic densities are loaded in the worker's router (see sim/traffic.ts) */
   simTraffic: () => boolean;
+  /** the save also gave traffic by direction (sim/directional.ts) */
+  simTrafficDir: () => boolean;
   /** drive a route in the navigation simulation, and whether one is running */
   simulate: (r: Route, destination: string) => void;
   simulating: () => boolean;
@@ -91,7 +93,7 @@ export function createDirections(d: DirectionsDeps) {
       <button class="icon-btn dir-swap" title="Reverse starting point and destination" aria-label="Swap" data-i18n-title="Reverse starting point and destination" data-i18n-aria="Swap">${svg('<path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3 5 6.99h3V14h2V6.99h3L9 3z"/>')}</button>
       <div class="dir-suggest" hidden></div>
     </div>
-    <div class="dir-options"><label><input type="checkbox" id="dirAvoidTolls" /> <span data-i18n="Avoid tolls">Avoid tolls</span></label><label id="dirRulesRow" hidden title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save" data-i18n-title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save"><input type="checkbox" id="dirRules" checked /> <span data-i18n="Traffic rules from my save">Traffic rules from my save</span></label><label id="dirTrafficRow" hidden title="Slows each road by how busy it was in your saved city" data-i18n-title="Slows each road by how busy it was in your saved city"><input type="checkbox" id="dirTraffic" /> <span data-i18n="Traffic-aware routing">Traffic-aware routing</span></label><p class="dir-traffic-note" hidden data-i18n="Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.">Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.</p></div>
+    <div class="dir-options"><label><input type="checkbox" id="dirAvoidTolls" /> <span data-i18n="Avoid tolls">Avoid tolls</span></label><label id="dirRulesRow" hidden title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save" data-i18n-title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save"><input type="checkbox" id="dirRules" checked /> <span data-i18n="Traffic rules from my save">Traffic rules from my save</span></label><label id="dirTrafficRow" hidden title="Slows each road by how busy it was in your saved city" data-i18n-title="Slows each road by how busy it was in your saved city"><input type="checkbox" id="dirTraffic" /> <span data-i18n="Traffic-aware routing">Traffic-aware routing</span></label><label id="dirTrafficDirRow" class="dir-sub" hidden title="Uses each direction's estimated traffic where the save's vehicles show it, instead of each road's own value both ways" data-i18n-title="Uses each direction's estimated traffic where the save's vehicles show it, instead of each road's own value both ways"><input type="checkbox" id="dirTrafficDir" /> <span><span data-i18n="Traffic by direction">Traffic by direction</span> <span class="exp-tag" data-i18n="Experimental">Experimental</span></span></label><p class="dir-traffic-note" hidden data-i18n="Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.">Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.</p></div>
     </div>
     <div class="dir-sheet"><div class="dir-body"></div></div>`;
   document.body.appendChild(el);
@@ -107,7 +109,7 @@ export function createDirections(d: DirectionsDeps) {
   });
 
   const st = {
-    from: null as Place | null, to: null as Place | null, mode: 'drive' as Mode, avoidTolls: false, rules: true, traffic: false,
+    from: null as Place | null, to: null as Place | null, mode: 'drive' as Mode, avoidTolls: false, rules: true, traffic: false, trafficDir: false,
     results: {} as Partial<Record<Mode, Route[]>>, sel: 0, req: 0, active: 'to' as 'from' | 'to', expanded: false,
   };
 
@@ -357,7 +359,15 @@ export function createDirections(d: DirectionsDeps) {
   /** the worker's router holds one traffic switch: Directions, reach and closures all follow it */
   // st.traffic is the user's choice and outlives a removed or reloaded save; it applies while traffic data is loaded
   const trafficOn = () => st.traffic && d.simTraffic();
-  const sendTraffic = () => { worker.postMessage({ type: 'traffic', on: trafficOn() }); $<HTMLElement>('.dir-traffic-note').hidden = !trafficOn(); };
+  // per-direction estimates: a separate experimental choice, offered while traffic-aware routing is on and the save has them
+  const sendTraffic = () => {
+    worker.postMessage({ type: 'traffic', on: trafficOn(), dir: trafficOn() && st.trafficDir && d.simTrafficDir() });
+    $<HTMLElement>('.dir-traffic-note').hidden = !trafficOn();
+    $<HTMLElement>('#dirTrafficDirRow').hidden = !(trafficOn() && d.simTrafficDir());
+    trafficDirBox.checked = st.trafficDir;
+  };
+  const trafficDirBox = $<HTMLInputElement>('#dirTrafficDir');
+  trafficDirBox.addEventListener('change', () => { st.trafficDir = trafficDirBox.checked; sendTraffic(); compute(); });
   trafficBox.addEventListener('change', () => { st.traffic = trafficBox.checked; sendTraffic(); compute(); });
   /** the save's rules or traffic were loaded or removed: show each switch while its data exists, and re-route */
   function rulesChanged() {

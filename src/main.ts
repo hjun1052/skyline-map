@@ -16,7 +16,7 @@ import { createReach } from './reach-ui';
 import { createTimelapse } from './timelapse';
 import { createDiscoveries } from './discover-ui';
 import { createClosure, CLOSURE_ICON } from './closure-ui';
-import { createSim } from './sim-ui';
+import { createSim, type TrafficMode } from './sim-ui';
 import { createSchematic } from './schematic-view';
 import { createContextStore, createContextEditor, moneyField, parseMoney, describeRule } from './context-ui';
 import { bottomSheet, isPhone } from './sheet';
@@ -44,6 +44,9 @@ const state = {
   /** this map's entry in recent cities (recent.ts), or null when it isn't remembered (the sample city) */
   recentId: null as string | null,
 };
+/** traffic display mode (Layers menu), kept per browser: the game's value per road unless the viewer picks directions */
+const TRAFFIC_MODE = 'atlas:trafficMode';
+let trafficMode: TrafficMode = (() => { try { return localStorage.getItem(TRAFFIC_MODE) === 'directional' ? 'directional' : 'combined'; } catch { return 'combined'; } })();
 const persist = () => { try { localStorage.setItem('atlas:opts', JSON.stringify({ mode: state.mode, opts: state.opts })); } catch { /* private mode */ } };
 const styleOpts = (): StyleOptions => ({ ...state.opts, ...(hasLanes() ? {} : { bikeFromSave: true }), theme: state.mode === 'night' ? 'dark' : 'light', terrain: state.mode === 'terrain', contours: state.opts.contours || state.mode === 'terrain' });
 
@@ -651,6 +654,7 @@ const dir = createDirections({
   showOnSchematic: (route) => schem.open({ route }),
   simRules: () => sim.hasRules(),
   simTraffic: () => sim.hasTraffic(),
+  simTrafficDir: () => sim.hasTrafficDir(),
   simulate: (r, to) => { if (!nav.start(r, to)) toast(t('This route is too short to simulate')); },
   simulating: () => nav.isActive(),
   onOpen: () => { closePanel(); sim.close(); if (reach.isActive()) reach.close(); discoveries.close(); closure.close(); $('topbar').hidden = true; document.body.classList.add('dir-open'); },
@@ -868,6 +872,13 @@ function syncUi() {
   // traffic comes from a save: without one the switch explains where to get it
   const traffic = sim.hasTraffic(), box = $('optTraffic') as HTMLInputElement;
   box.checked = traffic && sim.trafficShown(); $('optTrafficRow').classList.toggle('off', !traffic); box.setAttribute('aria-disabled', String(!traffic)); $('optTrafficHint').hidden = traffic;
+  // display mode, under the switch while traffic is shown; a save without directions says it shows the combined value
+  $('optTrafficMode').hidden = !box.checked;
+  document.querySelectorAll<HTMLElement>('#optTrafficMode [data-tmode]').forEach((b) => { const on = b.dataset.tmode === trafficMode; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
+  $('optTrafficModeCombined').hidden = trafficMode !== 'combined';
+  const dirHint = $('optTrafficModeDirectional');
+  dirHint.hidden = trafficMode !== 'directional';
+  dirHint.textContent = sim.hasTrafficDir() ? t("Each direction estimated from the vehicles in your save, where they show it.") : t("This save can't tell the directions apart, so each road shows the combined value.");
   $('tilt').classList.toggle('on', map.getPitch() > 5);
 }
 $('chips').addEventListener('click', (e) => {
@@ -888,10 +899,20 @@ document.querySelectorAll<HTMLElement>('.layer-opt').forEach((b) => (b.onclick =
 $('optLabels').onchange = (e) => { state.opts.labels = (e.target as HTMLInputElement).checked; applyStyle(); };
 $('opt3dTerrain').onchange = (e) => { state.terrain3d = (e.target as HTMLInputElement).checked; set3dTerrain(); };
 $('optNeutral').onchange = (e) => { state.opts.neutralRoads = (e.target as HTMLInputElement).checked; applyStyle(); };
+// traffic display mode (Layers): the game's value per road by default; per direction is an opt-in estimate
+sim.setTrafficMode(trafficMode);
+$('optTrafficMode').addEventListener('click', (e) => {
+  const m = ((e.target as HTMLElement).closest('[data-tmode]') as HTMLElement | null)?.dataset.tmode as TrafficMode | undefined;
+  if (!m || m === trafficMode) return;
+  trafficMode = m;
+  try { localStorage.setItem(TRAFFIC_MODE, m); } catch { /* storage blocked: this visit only */ }
+  sim.setTrafficMode(m); syncUi();
+  if (!$('panel').hidden) panelRefresh?.(); // a road panel open shows the directions or not
+});
 $('optTraffic').onchange = (e) => {
   const box = e.target as HTMLInputElement;
   if (!sim.hasTraffic()) { box.checked = false; $('layerPop').hidden = true; sim.open(); return; } // no save yet: open where it is added
-  sim.showTraffic(box.checked);
+  sim.showTraffic(box.checked); syncUi();
 };
 function set3dTerrain() {
   map.setTerrain(state.terrain3d ? { source: 'dem', exaggeration: 1.2 } : null);

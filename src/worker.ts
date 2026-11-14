@@ -162,7 +162,7 @@ self.onmessage = async (e: MessageEvent) => {
       // .vellummap: back to the estimated lanes
       if (vellumCtx?.savedRouter) { routeOn(vellumCtx.est, vellumCtx.stopNames, vellumCtx.closable); vellumCtx.savedRouter = false; }
     } else if (msg.type === 'traffic') {
-      router?.setTraffic(!!msg.on);
+      router?.setTraffic(!!msg.on); router?.setTrafficDir(!!msg.dir);
     } else if (msg.type === 'lang') {
       setLang(msg.lang, false); // directions text is written in the UI language
     } else if (msg.type === 'contours' && lastHeight) {

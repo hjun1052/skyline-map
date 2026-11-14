@@ -61,6 +61,7 @@ void ['Simulation data', 'Close', 'Enhance your map with real traffic, populatio
 // end i18n-keys
 
 /** compass octants from east, counter-clockwise (same keys as the closure tool) */
+export type TrafficMode = 'combined' | 'directional';
 const COMPASS = ['Heading east', 'Heading northeast', 'Heading north', 'Heading northwest', 'Heading west', 'Heading southwest', 'Heading south', 'Heading southeast'];
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const num = (v: number) => v.toLocaleString(locale());
@@ -71,7 +72,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     open: false, busy: false, step: '', file: '', id: 0, src: null as File | null,
     data: null as SimData | null, fail: null as SimFailure | null,
     layer: 'none' as Layer,
-    bikes: [] as number[], traffic: new Map<number, number>(), dir: new Map<number, { f: number; b: number; ok: boolean; q: number; h: number }>(), drawn: [] as number[], bld: new Map<number, number>(), tm: new Map<number, TmSeg>(), lines: new Map<number, SimLine>(),
+    bikes: [] as number[], traffic: new Map<number, number>(), dir: new Map<number, { f: number; b: number; ok: boolean; q: number; h: number }>(), mode: 'combined' as TrafficMode, drawn: [] as number[], bld: new Map<number, number>(), tm: new Map<number, TmSeg>(), lines: new Map<number, SimLine>(),
   };
 
   const el = document.createElement('div');
@@ -166,7 +167,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
       if (!d.traffic) return;
       for (const [id, v] of st.traffic) {
         // two-way roads with enough evidence: a value per direction (sim/directional.ts), drawn side by side when zoomed in
-        const x = st.dir.get(id), split = !!x && x.ok;
+        const x = st.dir.get(id), split = st.mode === 'directional' && !!x && x.ok;
         map.setFeatureState({ source: 'roads', id }, split ? { t: v, tf: x!.f, tb: x!.b, td: true } : { t: v });
         st.drawn.push(id);
       }
@@ -184,7 +185,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
             ['case', ['<', tv, 0], 0, ['boolean', ['feature-state', 'td'], false], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95]] as ExpressionSpecification,
         },
       }, before());
-      const splitIds = [...st.dir].filter(([id, x]) => x.ok && st.traffic.has(id)).map(([id]) => id);
+      const splitIds = st.mode === 'directional' ? [...st.dir].filter(([id, x]) => x.ok && st.traffic.has(id)).map(([id]) => id) : [];
       if (splitIds.length) {
         // each direction on the right of travel (left-hand-traffic saves get no split: sim/index.ts)
         const side = 1;
@@ -256,7 +257,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
   function legend(l: Layer) {
     if (l === 'none') return '';
     const [lo, hi] = l === 'traffic' ? [t('Free-flowing'), t('Jammed')] : [l === 'landValue' ? t('Low') : t('None'), t('High')];
-    const note = l === 'traffic' ? t('Matched roads only. The game\'s traffic view shows the same value.') + (st.dir.size ? ' ' + t('Zoomed in, two-way roads show each direction where the save\'s vehicles tell them apart: an estimate of the moment it was saved.') : '') : l === 'pollution' ? t('Whole map.') : t('The game records this only for the central 25 tiles.');
+    const note = l === 'traffic' ? t('Matched roads only. The game\'s traffic view shows the same value.') + (st.dir.size && st.mode === 'directional' ? ' ' + t('Zoomed in, two-way roads show each direction where the save\'s vehicles tell them apart: an estimate of the moment it was saved.') : '') : l === 'pollution' ? t('Whole map.') : t('The game records this only for the central 25 tiles.');
     return `<div class="sim-legend">${legendBar(l)}<div class="sim-legend-ends"><span>${esc(lo)}</span><span>${esc(hi)}</span></div><p class="sim-note">${esc(note)}</p></div>`;
   }
 
@@ -420,7 +421,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
       if (f.bike) rows += row('Bike lane', t('Yes'));
     }
     if (tv !== undefined) rows += row('Traffic', pct(tv));
-    const x = st.dir.get(id);
+    const x = st.mode === 'directional' ? st.dir.get(id) : undefined;
     if (tv !== undefined && x) {
       // the two directions, named by compass heading; a split with little evidence is the game's value both ways
       const head = (o: number) => t(COMPASS[o % 8]);
@@ -454,6 +455,10 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     hasRules: () => !!st.data?.rulesSummary,
     /** the traffic map layer is shown */
     trafficShown: () => !!st.data?.traffic && st.layer === 'traffic',
+    /** the save's vehicles gave traffic by direction (format 121034, right-hand traffic, directions confirmed) */
+    hasTrafficDir: () => !!st.data?.trafficDir?.ids.length,
+    /** how the traffic layer and road panels show traffic: the game's value per road (default) or the estimate per direction */
+    setTrafficMode(m: TrafficMode) { if (m === st.mode) return; st.mode = m; if (st.data?.traffic && st.layer === 'traffic') draw(); if (st.open) render(); },
     /** show or hide the traffic map layer (Layers menu); does nothing without a save's traffic */
     showTraffic(on: boolean) { if (!st.data?.traffic) return; st.layer = on ? 'traffic' : 'none'; draw(); syncChip(); if (st.open) render(); },
     /** densities of matched roads are loaded in the worker's router, for traffic-aware routing */
