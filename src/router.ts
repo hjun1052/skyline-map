@@ -30,6 +30,8 @@ interface Edge {
   id: number; a: number; b: number; len: number; pts: XY[]; cls: string; name: string; speed: number; bike: boolean; brunnel: string;
   /** the speed limit comes from the segment type's lanes (else `speed` is a class default) */
   limKnown: boolean;
+  /** lanes estimated from the road class (.vellummap, no matched save naming it): a TM:PE limit's direction is a guess too */
+  guessed?: boolean;
   /** closed for the closure being analysed (see setClosure): unusable by every mode */
   x?: boolean;
   /** one-way: +1 traffic a→b, -1 b→a, 0 two-way; `sure` = backed by transit or keep-right evidence */
@@ -166,7 +168,7 @@ export class Router {
         // estimated lanes (.vellummap) give a speed to drive at, never a posted limit to show
         speed: (lanes.speed > 0 && lanes.speed < 200 ? lanes.speed : DRIVE_DEFAULT[c.cls] ?? 30) / 3.6, limKnown: lanes.speed > 0 && lanes.speed < 200 && !guessed,
         bike: guessed ? /Bicycle|Bike/i.test(seg.icls) : lanes.bike || /Bicycle|Bike/i.test(seg.name), brunnel: /Tunnel/i.test(both) ? 'tunnel' : /Elevated|Bridge/i.test(both) ? 'bridge' : '',
-        acc, gate: tolls?.gateOf.get(seg.id) ?? 0, ow: oneway?.dir.get(seg.id) ?? 0, sure: !!oneway && oneway.source.get(seg.id) !== 'prior' && oneway.source.has(seg.id), confirmed: oneway?.source.get(seg.id) === 'transit',
+        ...(guessed ? { guessed: true } : {}), acc, gate: tolls?.gateOf.get(seg.id) ?? 0, ow: oneway?.dir.get(seg.id) ?? 0, sure: !!oneway && oneway.source.get(seg.id) !== 'prior' && oneway.source.has(seg.id), confirmed: oneway?.source.get(seg.id) === 'transit',
         hA: headRad(pts), hB: headRad([...pts].reverse()),
       };
       const ei = this.edges.push(e) - 1;
@@ -867,7 +869,8 @@ export class Router {
     for (const p of parts) {
       if (mode === 'drive') {
         const e = p.ed, fwd = this.drivesForward(p);
-        const lim = e.spd ? e.spd[fwd ? 0 : 1] * 3.6 : e.limKnown ? e.speed * 3.6 : 0;
+        // a TM:PE limit on guessed lanes is shown only when both directions agree (which lanes run which way is a guess)
+        const lim = e.spd && (!e.guessed || e.spd[0] === e.spd[1]) ? e.spd[fwd ? 0 : 1] * 3.6 : e.limKnown ? e.speed * 3.6 : 0;
         spans.push({ i: coords.length, v: this.driveSpeed(e, fwd), name: e.name, cls: e.cls, brunnel: e.brunnel, ...(lim ? { limit: Math.round(lim) } : {}) });
       }
       coords.push(...p.pts);

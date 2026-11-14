@@ -31,25 +31,33 @@ async function gzipped(b: Blob): Promise<Blob> {
   return new Response(b.stream().pipeThrough(new CompressionStream('gzip'))).blob();
 }
 
-/** newest first; [] when storage is blocked */
-export async function listRecent(): Promise<Recent[]> {
+/** writes run one after another: a save remembered while its map is still being gzipped and stored must land on that
+ *  record, not be dropped (no record yet) or overwritten by the map's write */
+let queue: Promise<unknown> = Promise.resolve();
+const serial = <T>(f: () => Promise<T>): Promise<T> => { const p = queue.then(f, f); queue = p.catch(() => {}); return p; };
+
+/** newest first, after any write still running (a save just loaded shows up); [] when storage is blocked */
+export const listRecent = (): Promise<Recent[]> => serial(listNow);
+async function listNow(): Promise<Recent[]> {
   try { return ((await req('readonly', (s) => s.getAll())) as Recent[]).sort((a, b) => b.opened - a.opened); }
   catch { return []; }
 }
 
 /** remember a map that just opened; keeps the stored save only if it is the same file being reopened */
-export async function rememberMap(name: string, file: string, generated: string, map: Blob): Promise<void> {
+export const rememberMap = (name: string, file: string, generated: string, map: Blob) => serial(() => rememberMapNow(name, file, generated, map));
+async function rememberMapNow(name: string, file: string, generated: string, map: Blob): Promise<void> {
   try {
     const old = (await req('readonly', (s) => s.get(name))) as Recent | undefined;
     const keepSave = old && old.generated === generated ? old.save : undefined;
     const rec: Recent = { name, file, generated, opened: Date.now(), map: old && old.generated === generated ? old.map : await gzipped(map), save: keepSave };
     await req('readwrite', (s) => s.put(rec));
-    for (const r of (await listRecent()).slice(KEEP)) await forget(r.name);
+    for (const r of (await listNow()).slice(KEEP)) await forgetNow(r.name);
   } catch { /* storage blocked or full: the city simply isn't remembered */ }
 }
 
 /** remember the save loaded over a remembered map */
-export async function rememberSave(name: string, file: string, save: Blob): Promise<void> {
+export const rememberSave = (name: string, file: string, save: Blob) => serial(() => rememberSaveNow(name, file, save));
+async function rememberSaveNow(name: string, file: string, save: Blob): Promise<void> {
   try {
     const rec = (await req('readonly', (s) => s.get(name))) as Recent | undefined;
     if (!rec) return;
@@ -58,6 +66,7 @@ export async function rememberSave(name: string, file: string, save: Blob): Prom
   } catch { /* ignore */ }
 }
 
-export async function forget(name: string): Promise<void> {
+export const forget = (name: string) => serial(() => forgetNow(name));
+async function forgetNow(name: string): Promise<void> {
   try { await req('readwrite', (s) => s.delete(name)); } catch { /* ignore */ }
 }

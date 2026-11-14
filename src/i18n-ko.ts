@@ -874,7 +874,6 @@ export const KO: Record<string, string> = {
   // .vellummap approximate directions
   "Directions on this map are approximate": "이 지도의 길찾기는 근사치예요",
   "Approximate route": "근사 경로",
-  "This map has no lane data: speeds and one-way streets are estimated from each road's type, so times may be off and a route may use a one-way street the wrong way. Check in game. For more accurate directions, open a .cslmap export of the same city.": "이 지도에는 차로 정보가 없어 속도와 일방통행을 도로 종류로 추정합니다. 시간이 다를 수 있고, 일방통행 도로를 역주행하는 경로가 나올 수 있습니다. 게임에서 확인하세요. 더 정확한 길찾기를 원하면 같은 도시의 .cslmap 내보내기를 여세요.",
   "Ride times are estimated from each road and track's type, with acceleration, stops and traffic. Waiting times are estimates: the file has no timetable.": "탑승 시간은 도로와 선로 종류로 추정하며 가속, 정차, 교통을 반영합니다. 대기 시간도 추정치입니다. 파일에 시간표가 없습니다.",
   "Approximate: this map has no lane data, so speeds and one-way streets are estimated from road types.": "근사치예요: 이 지도에는 차로 정보가 없어서 속도와 일방통행을 도로 종류로 추정해요.",
   "No driving route between these places on the estimated road network.": "추정한 도로망에서는 이 두 곳을 잇는 자동차 경로가 없습니다.",
@@ -952,4 +951,6 @@ export const KO: Record<string, string> = {
   "Road class": "도로 분류",
   "Road class is from the .vellummap file, which has no lanes. The road type, lanes and speed limit below come from your save.": "도로 분류는 차로 정보가 없는 .vellummap 파일에서 가져와요. 아래의 도로 종류, 차로, 제한 속도는 세이브 파일에서 가져와요.",
   "Road class is from the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.": "도로 분류는 .vellummap 파일에서 가져오고, 지도 표시는 도로 폭도 함께 써요. 이 파일에는 차로, 제한 속도, 일방통행 정보가 없어요.",
+  "Speeds and one-way streets on this map are estimated from road types, so times may be off. For more accurate directions, add the save (.crp) the export was made from, or open a .cslmap export.": "이 지도의 속도와 일방통행은 도로 종류로 추정해서 시간이 다를 수 있어요. 더 정확한 길찾기를 원하면 이 파일을 내보낸 시점의 세이브 파일(.crp)을 추가하거나 .cslmap 파일을 여세요.",
+  "This map has no lane data, so which streets and paths can be used, and how fast, is estimated from each road's type. Times may be off.": "이 지도에는 차로 정보가 없어서 어떤 길과 보행로를 얼마나 빠르게 지날 수 있는지 도로 종류로 추정해요. 시간이 다를 수 있어요.",
 };

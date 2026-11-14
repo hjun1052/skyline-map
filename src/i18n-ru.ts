@@ -874,7 +874,6 @@ export const RU: Record<string, string> = {
   // .vellummap approximate directions
   "Directions on this map are approximate": "Маршруты на этой карте приблизительные",
   "Approximate route": "Приблизительный маршрут",
-  "This map has no lane data: speeds and one-way streets are estimated from each road's type, so times may be off and a route may use a one-way street the wrong way. Check in game. For more accurate directions, open a .cslmap export of the same city.": "На этой карте нет данных о полосах: скорость и одностороннее движение оцениваются по типу дороги, поэтому время может отличаться, а маршрут может проехать по односторонней улице против движения. Проверьте в игре. Для более точных маршрутов откройте экспорт .cslmap того же города.",
   "Ride times are estimated from each road and track's type, with acceleration, stops and traffic. Waiting times are estimates: the file has no timetable.": "Время в пути оценивается по типу дорог и путей с учётом разгона, остановок и движения. Время ожидания тоже примерное: в файле нет расписания.",
   "Approximate: this map has no lane data, so speeds and one-way streets are estimated from road types.": "Приблизительно: на этой карте нет данных о полосах, поэтому скорость и одностороннее движение оцениваются по типу дорог.",
   "No driving route between these places on the estimated road network.": "По оценённой дорожной сети между этими местами нет автомобильного маршрута.",
@@ -952,4 +951,6 @@ export const RU: Record<string, string> = {
   "Road class": "Класс дороги",
   "Road class is from the .vellummap file, which has no lanes. The road type, lanes and speed limit below come from your save.": "Класс дороги взят из файла .vellummap, в котором нет полос. Тип дороги, полосы и ограничение скорости ниже взяты из сохранения.",
   "Road class is from the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.": "Класс дороги взят из файла .vellummap; стиль на карте учитывает и ширину дороги. В файле нет полос, ограничений скорости и одностороннего движения.",
+  "Speeds and one-way streets on this map are estimated from road types, so times may be off. For more accurate directions, add the save (.crp) the export was made from, or open a .cslmap export.": "Скорости и одностороннее движение на этой карте оценены по типу дороги, поэтому время может отличаться. Для более точных маршрутов добавьте сохранение (.crp), из которого сделан экспорт, или откройте экспорт .cslmap.",
+  "This map has no lane data, so which streets and paths can be used, and how fast, is estimated from each road's type. Times may be off.": "На этой карте нет данных о полосах, поэтому какие улицы и дорожки доступны и с какой скоростью, оценено по типу каждой дороги. Время может отличаться.",
 };

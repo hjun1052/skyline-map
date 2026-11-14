@@ -171,7 +171,7 @@ export function createDirections(d: DirectionsDeps) {
     render();
   }
   function onResult(msg: { id: number; mode: Mode; routes: Route[] }) {
-    if (msg.id !== st.req) return;
+    if (msg.id !== st.req || !isOpen()) return; // closed meanwhile: nothing to draw
     st.results[msg.mode] = msg.routes;
     if (msg.mode === st.mode) { drawRoutes(true); }
     render();
@@ -280,7 +280,11 @@ export function createDirections(d: DirectionsDeps) {
   function approxNote(): string {
     const saved = d.approx() ? d.savedLanes() : null;
     if (saved !== null) return `<div class="toll-note approx-note">${esc(t('Approximate route'))}<div class="small">${esc(saved >= 1 ? t('Lanes and one-way streets come from your save. Times may still differ a little from the game.') : t('Lanes and one-way streets come from your save on {pct}% of the road network (by length); the rest are estimated from road types, so times may be a little off.', { pct: Math.floor(100 * saved) }))}</div></div>`;
-    return d.approx() ? `<div class="toll-note approx-note">${esc(t('Approximate route'))}<div class="small">${esc(t('This map has no lane data: speeds and one-way streets are estimated from each road\'s type, so times may be off and a route may use a one-way street the wrong way. Check in game. For more accurate directions, open a .cslmap export of the same city.'))}</div></div>` : '';
+    if (!d.approx()) return '';
+    const why = st.mode === 'drive'
+      ? t('Speeds and one-way streets on this map are estimated from road types, so times may be off. For more accurate directions, add the save (.crp) the export was made from, or open a .cslmap export.')
+      : t('This map has no lane data, so which streets and paths can be used, and how fast, is estimated from each road\'s type. Times may be off.');
+    return `<div class="toll-note approx-note">${esc(t('Approximate route'))}<div class="small">${esc(why)}</div></div>`;
   }
   /** Traffic-aware driving: what traffic adds, against the same route without it, and how much of it has data. */
   function trafficNote(r: Route): string {
@@ -345,7 +349,8 @@ export function createDirections(d: DirectionsDeps) {
     $<HTMLElement>('#dirTrafficRow').hidden = !tr;
     trafficBox.checked = st.traffic;
     sendTraffic(); // a new load resets the router's switch: send the page's choice again
-    if (st.from && st.to) compute();
+    // only while Directions is open: a closed panel must not draw its last route again (opening it re-routes)
+    if (st.from && st.to && isOpen()) compute();
   }
 
   // autocomplete for the two fields

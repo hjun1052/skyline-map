@@ -835,6 +835,14 @@ window.addEventListener('keydown', (e) => {
     // the start screen reopened over a map: Esc goes back to it (not while a map is loading)
     if (!$('welcome').hidden && state.city && $('loading').hidden) { $('welcome').hidden = true; return; }
     closePanel(); closeDrawer(); hideCtx(); $('layerPop').hidden = true;
+    // tool panels close too when focus is on the map (their own Esc handling covers focus inside them); not while
+    // navigating (nav has its own Esc) or typing
+    if (!document.body.classList.contains('nav-on') && !(document.activeElement instanceof HTMLInputElement)) {
+      if (closure.isActive()) closure.close();
+      if (reach.isActive()) reach.close();
+      if (sim.isOpen()) sim.close();
+      discoveries.close();
+    }
   }
 });
 
