@@ -133,38 +133,89 @@
   </div>
 
   <div id="welcome">
-    <div class="welcome-card">
-      <div class="welcome-top"><h1 class="brand big"><span class="logo"></span>Skyline Map</h1><div class="lang-switch" role="radiogroup" aria-label="Language"></div></div>
-      <p class="lede" data-i18n="Cartographic viewer for Cities: Skylines CSLMapView exports.">Cartographic viewer for Cities: Skylines CSLMapView exports.</p>
-      <div id="recentMaps" hidden></div>
-      <label class="dropzone" id="dropzone">
-        <input type="file" id="fileInput" hidden />
-        <svg viewBox="0 0 24 24"><path d="M19.4 10A7.5 7.5 0 0 0 5.4 8 6 6 0 0 0 6 20h13a5 5 0 0 0 .4-10zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
-        <span><b data-i18n="Drop a .cslmap file">Drop a .cslmap file</b> <span data-i18n="or click to browse">or click to browse</span></span>
-        <span class="muted small" data-i18n=".cslmap and .cslmap.gz supported">.cslmap and .cslmap.gz supported</span>
-      </label>
-      <p class="export-guide"><a href="/blog/cities-skylines-city-map.html" target="_blank" rel="noopener" data-i18n="How to export your city with CSLMapView">How to export your city with CSLMapView</a></p>
-      <button class="tour-link sample-link" id="sampleBtn" type="button">
-        <span class="sample-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15 11V5l-3-3-3 3v2H3v14h18V11h-6zm-8 8H5v-2h2v2zm0-4H5v-2h2v2zm0-4H5V9h2v2zm6 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V9h2v2zm0-4h-2V5h2v2zm6 12h-2v-2h2v2zm0-4h-2v-2h2v2z"/></svg></span>
-        <span class="tour-text"><b data-i18n="Try a sample city">Try a sample city</b><span data-i18n="No export yet? Open Seorang, a real city of 9,600 buildings and 37 transit lines.">No export yet? Open Seorang, a real city of 9,600 buildings and 37 transit lines.</span></span>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.3 5.3 7.9 6.7l5.3 5.3-5.3 5.3 1.4 1.4 6.7-6.7z"/></svg>
-      </button>
-      <section id="findFile" class="find-file" aria-label="Where is my file?" data-i18n-aria="Where is my file?">
-        <div class="ff-head"><b>Where is my file?</b></div>
-        <p class="ff-lede">CSLMapView saves your exports in the CSLMapView folder of your Cities: Skylines install:</p>
-        <ul class="ff-static">
-          <li>macOS: <code>~/Library/Application Support/Steam/steamapps/common/Cities_Skylines/CSLMapView</code></li>
-          <li>Windows: <code>C:\Program Files (x86)\Steam\steamapps\common\Cities_Skylines\CSLMapView</code></li>
-          <li>Linux: <code>~/.local/share/Steam/steamapps/common/Cities_Skylines/CSLMapView</code></li>
-        </ul>
-      </section>
-      <a class="tour-link" href="/showcase">
-        <img src="/showcase/tour-thumb.webp" width="180" height="100" alt="" />
-        <span class="tour-text"><b data-i18n="See what Skyline Map can do">See what Skyline Map can do</b><span data-i18n="A tour of maps, directions, transit maps and more, from the real app.">A tour of maps, directions, transit maps and more, from the real app.</span></span>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.3 5.3 7.9 6.7l5.3 5.3-5.3 5.3 1.4 1.4 6.7-6.7z"/></svg>
-      </a>
-      <p class="guides"><span data-i18n="New to CSLMapView?">New to CSLMapView?</span> <a href="/blog/" data-i18n="Read the guides">Read the guides</a><span class="guides-sep" aria-hidden="true">·</span><a href="https://github.com/hjun1052/skyline-map" target="_blank" rel="noopener" data-i18n="Open source on GitHub">Open source on GitHub</a></p>
-      <div id="localMaps"></div>
+    <div class="start">
+      <header class="start-top">
+        <h1 class="brand"><span class="logo" aria-hidden="true"></span>Skyline Map</h1>
+        <div class="start-top-right">
+          <button type="button" class="start-back" id="startBack" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="M11 6l-6 6 6 6"/></svg><span data-i18n="Back to the map">Back to the map</span></button>
+          <div class="lang-switch" role="radiogroup" aria-label="Language"></div>
+        </div>
+      </header>
+
+      <main>
+        <section class="start-hero first" id="startHero">
+          <figure class="print print-left" aria-hidden="true">
+            <span class="tape"></span>
+            <span class="print-frame"><img src="/showcase/d-schem-960.webp" srcset="/showcase/d-schem-960.webp 960w, /showcase/d-schem-1600.webp 1600w" sizes="(max-width: 1100px) 230px, 390px" width="960" height="600" alt="" decoding="async" /></span>
+            <figcaption data-i18n="The transit map, drawn from your lines">The transit map, drawn from your lines</figcaption>
+          </figure>
+
+          <div class="start-copy">
+            <h2 class="start-title" data-i18n="Open your city as a real map">Open your city as a real map</h2>
+            <p class="start-lede" data-i18n="Drop in a CSLMapView export from Cities: Skylines and get search, directions, a metro map and more, right in your browser. Your file never leaves your computer.">Drop in a CSLMapView export from Cities: Skylines and get search, directions, a metro map and more, right in your browser. Your file never leaves your computer.</p>
+            <div class="start-actions">
+              <div class="start-buttons">
+                <label class="start-btn primary" id="dropzone">
+                  <input type="file" id="fileInput" class="start-file" />
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16"/><path d="M12 15V4"/><path d="M7 9l5-5 5 5"/></svg>
+                  <span data-i18n="Choose a .cslmap file">Choose a .cslmap file</span>
+                </label>
+                <button class="start-btn ghost" id="sampleBtn" type="button">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V9l5-3v15"/><path d="M10 21V4l9 4v13"/><path d="M14 10h2M14 14h2"/></svg>
+                  <span data-i18n="Try the sample city">Try the sample city</span>
+                </button>
+              </div>
+              <p class="start-hint"><span data-i18n="or drop it anywhere on this page">or drop it anywhere on this page</span> <span class="start-formats" data-i18n="(.cslmap or .cslmap.gz)">(.cslmap or .cslmap.gz)</span></p>
+              <a class="start-guide" href="#needFile"><span data-i18n="No .cslmap file yet? Here's how to get one">No .cslmap file yet? Here's how to get one</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M6 13l6 6 6-6"/></svg></a>
+            </div>
+            <div id="recentMaps" hidden></div>
+          </div>
+
+          <figure class="print print-right" aria-hidden="true">
+            <span class="tape"></span>
+            <span class="print-frame"><img src="/showcase/d-3d-night-960.webp" srcset="/showcase/d-3d-night-960.webp 960w, /showcase/d-3d-night-1600.webp 1600w" sizes="(max-width: 860px) 300px, (max-width: 1100px) 230px, 390px" width="960" height="600" alt="" decoding="async" /></span>
+            <figcaption data-i18n="Your city in 3D, at night">Your city in 3D, at night</figcaption>
+          </figure>
+        </section>
+
+        <div id="localMaps"></div>
+
+        <section class="need-file" id="needFile" aria-labelledby="needFileTitle">
+          <h2 id="needFileTitle" data-i18n="Need your file?">Need your file?</h2>
+          <p class="need-sub" data-i18n="Skyline Map reads the .cslmap file the CSLMapView mod writes from your city.">Skyline Map reads the .cslmap file the CSLMapView mod writes from your city.</p>
+          <div class="need-cols">
+            <div>
+              <span class="need-n" aria-hidden="true">1</span>
+              <h3 data-i18n="Export it from the game">Export it from the game</h3>
+              <ol class="need-steps">
+                <li data-i18n="Subscribe to CSLMapView on the Steam Workshop and enable it in Content Manager.">Subscribe to CSLMapView on the Steam Workshop and enable it in Content Manager.</li>
+                <li data-i18n="Load your city, open the mod's options and press Export.">Load your city, open the mod's options and press Export.</li>
+                <li data-i18n="Optional: turn on exporting every time you save, so the newest file is always there.">Optional: turn on exporting every time you save, so the newest file is always there.</li>
+              </ol>
+              <a class="start-guide" href="/blog/cities-skylines-city-map.html" target="_blank" rel="noopener" data-i18n="Read the full guide">Read the full guide</a>
+            </div>
+            <div>
+              <span class="need-n" aria-hidden="true">2</span>
+              <h3 data-i18n="Find it on your computer">Find it on your computer</h3>
+              <section id="findFile" class="find-file" aria-label="Where is my file?" data-i18n-aria="Where is my file?">
+                <p class="ff-lede">CSLMapView saves your exports in the CSLMapView folder of your Cities: Skylines install:</p>
+                <ul class="ff-static">
+                  <li>macOS: <code>~/Library/Application Support/Steam/steamapps/common/Cities_Skylines/CSLMapView</code></li>
+                  <li>Windows: <code>C:\Program Files (x86)\Steam\steamapps\common\Cities_Skylines\CSLMapView</code></li>
+                  <li>Linux: <code>~/.local/share/Steam/steamapps/common/Cities_Skylines/CSLMapView</code></li>
+                </ul>
+              </section>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="start-foot">
+        <a href="/showcase" data-i18n="Product tour">Product tour</a>
+        <a href="/blog/" data-i18n="Guides">Guides</a>
+        <a href="https://github.com/hjun1052/skyline-map" target="_blank" rel="noopener" data-i18n="Open source on GitHub">Open source on GitHub</a>
+        <span class="start-private" data-i18n="Runs in your browser. Map files are never uploaded.">Runs in your browser. Map files are never uploaded.</span>
+      </footer>
     </div>
   </div>
 
