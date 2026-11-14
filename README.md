@@ -21,7 +21,7 @@
 - **City time-lapse:** watch the city grow across older exports.
 - **Save file (optional):** load your `.crp` save for traffic, line ridership, land value, noise, crime and pollution. Directions then follow your TM:PE one-ways, speed limits, U-turn bans and lane arrows, with an optional traffic-aware mode.
 - **Vellum Bridge exports (experimental):** `.vellummap` files open as a map, with approximate directions. These files have no lane data, so speeds and one-way streets are estimated from each road's type and every route is labelled approximate.
-- **English, Korean and Russian** interface, desktop and phone layouts.
+- **English, Korean and Russian** interface, desktop and phone layouts, with metric or imperial units.
 
 Everything runs in the browser. Map and save files are read on the visitor's own device and never uploaded. Cities: Skylines 1 only.
 
@@ -36,7 +36,7 @@ npm ci
 npm run dev
 ```
 
-Open the address Vite prints and click **Try a sample city**, or drop in your own `.cslmap` file.
+Open the address Vite prints and click **Try the sample city**, or choose or drop your own `.cslmap` file.
 
 The dev server also lists the exports in your CSLMapView folder on the start screen. On macOS it looks in `~/Library/Application Support/Steam/steamapps/common/Cities_Skylines/CSLMapView`; set `CSLMAP_DIR=/path/to/folder` to use another folder.
 

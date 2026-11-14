@@ -11,22 +11,24 @@ import { EXPORT_DIRS, BRIDGE_DIRS, OS_NAMES, detectOS, type OS } from './findfil
 
 const kbd = (...keys: string[]) => keys.map((k) => `<kbd>${k}</kbd>`).join('');
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+/** the start screen's file button, named in the steps */
+const btn = () => `<b>${esc(t('Choose a .cslmap file'))}</b>`;
 
 /** Numbered steps for jumping to a folder in each OS's file picker (HTML; keys as <kbd>). */
 function steps(os: OS): string[] {
   if (os === 'mac') return [
     t('Copy the folder path above.'),
-    t('Click the box above. In the window that opens, press {keys}.', { keys: kbd('⌘', '⇧', 'G') }),
+    t('Click {button} at the top of the page. In the window that opens, press {keys}.', { button: btn(), keys: kbd('⌘', '⇧', 'G') }),
     t('Paste with {keys}, press {enter}, then pick the newest file.', { keys: kbd('⌘', 'V'), enter: kbd('Return') }),
   ];
   if (os === 'windows') return [
     t('Copy the folder path above.'),
-    t('Click the box above. In the window that opens, press {keys} to jump to the address bar.', { keys: kbd('Alt', 'D') }),
+    t('Click {button} at the top of the page. In the window that opens, press {keys} to jump to the address bar.', { button: btn(), keys: kbd('Alt', 'D') }),
     t('Paste with {keys}, press {enter}, then pick the newest file.', { keys: kbd('Ctrl', 'V'), enter: kbd('Enter') }),
   ];
   return [
     t('Copy the folder path above.'),
-    t('Click the box above. In the window that opens, press {keys} to type a location.', { keys: kbd('Ctrl', 'L') }),
+    t('Click {button} at the top of the page. In the window that opens, press {keys} to type a location.', { button: btn(), keys: kbd('Ctrl', 'L') }),
     t('Paste with {keys}, press {enter}, then pick the newest file.', { keys: kbd('Ctrl', 'V'), enter: kbd('Enter') }),
   ];
 }
@@ -45,7 +47,6 @@ export function mountFindFile(el: HTMLElement) {
   const render = () => {
     el.innerHTML = `
       <div class="ff-head">
-        <b>${esc(t('Where is my file?'))}</b>
         <div class="ff-os" role="tablist" aria-label="${esc(t('Operating system'))}">${(Object.keys(OS_NAMES) as OS[]).map((o) => `<button type="button" role="tab" data-os="${o}" aria-selected="${o === os}"${o === os ? '' : ' tabindex="-1"'}>${OS_NAMES[o]}</button>`).join('')}</div>
       </div>
       ${detected ? '' : `<p class="ff-note">${esc(t('Open this page on the computer you play on, then pick your system.'))}</p>`}

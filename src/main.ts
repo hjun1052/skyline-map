@@ -24,6 +24,7 @@ import { mountFindFile } from './findfile';
 import { listRecent, rememberMap, rememberSave, forget, type Recent } from './recent';
 import { showDistrictGlow, clearDistrictGlow } from './district-glow';
 import { t, tn, initLang, setLang, onLang, applyStatic, getLang, LANGS, locale, fmtFixed, type Lang } from './i18n';
+import { getUnits, setUnits, onUnits, imperial, fmtLength, fmtHeight, fmtWidth, fmtAreaSmall, fmtAreaLarge, fmtSpeed, type Units } from './units';
 
 initLang();
 applyStatic();
@@ -60,7 +61,8 @@ const map = new maplibregl.Map({
 });
 (window as any).__map = map;
 const styleReady = new Promise<void>((res) => (map.loaded() ? res() : map.once('load', () => res())));
-map.addControl(new maplibregl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-right');
+const scaleBar = new maplibregl.ScaleControl({ maxWidth: 110, unit: imperial() ? 'imperial' : 'metric' });
+map.addControl(scaleBar, 'bottom-right');
 // i18n-keys
 void ["Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL)."];
 // end i18n-keys
@@ -286,16 +288,27 @@ const fmtDate = (ms: number) => new Date(ms).toLocaleString(locale(), { dateStyl
 async function renderRecent() {
   const box = $('recentMaps'), list = await listRecent();
   box.hidden = !list.length;
+  // a first visit has no cities yet: a shorter top, so "Need your file?" shows above the fold
+  $('startHero').classList.toggle('first', !list.length);
   if (!list.length) { box.innerHTML = ''; return; }
-  const palette = ['#1a73e8', '#188038', '#e37400', '#a142f4', '#d93025'];
-  box.innerHTML = `<h3>${t('Recent cities')}</h3>` + list.map((r, i) => `
-    <div class="city-group">
-      <div class="city-row" role="button" tabindex="0" data-recent="${esc(r.name)}">
-        <span class="avatar" style="background:${palette[i % palette.length]}">${esc([...r.name][0] ?? '?')}</span>
-        <span class="grow"><div class="cname">${esc(r.name)}</div><div class="cmeta">${esc(t('Opened {date}', { date: fmtDate(r.opened) }))}${r.save ? ' · ' + esc(t('with save')) : ''}</div></span>
-        <button class="forget" data-forget="${esc(r.name)}" title="${esc(t('Forget'))}" aria-label="${esc(t('Forget {city}', { city: r.name }))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
-      </div>
-    </div>`).join('') + `<p class="recent-note">${esc(t('Kept in this browser only. Forget a city to remove it.'))}</p>`;
+  const palette = ['#188038', '#1a73e8', '#e37400', '#a142f4', '#d93025'];
+  const X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  const meta = (r: Recent) => esc(t('Opened {date}', { date: fmtDate(r.opened) })) + (r.save ? ' · ' + esc(t('with save')) : '');
+  const initial = (r: Recent) => esc([...r.name][0] ?? '?');
+  const forgetBtn = (r: Recent, small = '') => `<button type="button" class="forget${small}" data-forget="${esc(r.name)}" title="${esc(t('Forget'))}" aria-label="${esc(t('Forget {city}', { city: r.name }))}">${X}</button>`;
+  const [latest, ...rest] = list;
+  box.innerHTML = `
+    <div class="recent-latest">
+      <span class="avatar" style="background:${palette[0]}" aria-hidden="true">${initial(latest)}</span>
+      <div class="recent-who"><div class="recent-label">${esc(t('Continue where you left off'))}</div><div class="recent-name">${esc(latest.name)}</div><div class="recent-when">${meta(latest)}</div></div>
+      <button type="button" class="start-btn ghost small" data-recent="${esc(latest.name)}" aria-label="${esc(t('Open {city}', { city: latest.name }))}">${esc(t('Open'))}</button>
+      ${forgetBtn(latest)}
+    </div>
+    ${rest.length ? `<div class="recent-more"><div class="recent-more-label">${esc(t('Other recent cities'))}</div>
+      <ul class="recent-list${rest.length > 2 ? ' two' : ''}">${rest.map((r, i) => `<li class="recent-city">
+        <button type="button" class="recent-open" data-recent="${esc(r.name)}"><span class="mini" style="background:${palette[(i + 1) % palette.length]}" aria-hidden="true">${initial(r)}</span><span class="recent-text"><span class="recent-cname">${esc(r.name)}</span><span class="recent-cwhen">${meta(r)}</span></span></button>
+        ${forgetBtn(r, ' small')}</li>`).join('')}</ul></div>` : ''}
+    <p class="recent-note">${esc(t('Kept in this browser only. Forget a city to remove it.'))}</p>`;
   box.onclick = async (e) => {
     const el = e.target as HTMLElement;
     const f = (el.closest('[data-forget]') as HTMLElement | null)?.dataset.forget;
@@ -304,7 +317,6 @@ async function renderRecent() {
     const r = n !== undefined && list.find((x) => x.name === n);
     if (r) void openRecent(r);
   };
-  box.onkeydown = (e) => { if (e.key === 'Enter' && (e.target as HTMLElement).matches('[data-recent]')) (e.target as HTMLElement).click(); };
 }
 $('sampleBtn').onclick = () => { const u = new URL(location.href); u.searchParams.set('sample', ''); history.replaceState(null, '', u); void openSample(); };
 if (new URL(location.href).searchParams.has('sample')) void openSample();
@@ -336,7 +348,7 @@ function renderDrawer(city: BuiltCity) {
       <div class="stat"><b>${n(s.lines)}</b><span>${t('Transit lines')}</span></div>
       <div class="stat"><b>${n(s.stations)}</b><span>${t('Stations')}</span></div>
       <div class="stat"><b>${n(s.districts)}</b><span>${t('Districts')}</span></div>
-      <div class="stat"><b>${Math.round(city.meta.elevation.max)} m</b><span>${t('Highest point')}</span></div>
+      <div class="stat"><b>${fmtHeight(city.meta.elevation.max)}</b><span>${t('Highest point')}</span></div>
     </div>`;
   const order = ['train', 'metro', 'monorail', 'tram', 'ferry', 'cablecar', 'bus', 'tour', 'air', 'other'];
   const lines = [...city.meta.lines].filter((l) => l.bbox).sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type) || a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -351,7 +363,9 @@ $('lineList').addEventListener('click', (e) => {
 const openDrawer = () => { $('drawer').hidden = false; $('scrim').hidden = false; };
 const closeDrawer = () => { $('drawer').hidden = true; $('scrim').hidden = true; };
 $('menuBtn').onclick = openDrawer; $('drawerClose').onclick = closeDrawer; $('scrim').onclick = closeDrawer;
-$('openOther').onclick = () => { closeDrawer(); void renderRecent(); $('welcome').hidden = false; };
+$('openOther').onclick = () => { closeDrawer(); void renderRecent(); $('startBack').hidden = !state.city; $('welcome').hidden = false; $('welcome').scrollTop = 0; if (state.city) $('startBack').focus(); };
+// reopened over a map: a way back to it (button or Esc)
+$('startBack').onclick = () => { $('welcome').hidden = true; };
 $('fitCity').onclick = () => { closeDrawer(); if (state.city) map.fitBounds(state.city.meta.bounds, { padding: 40, bearing: 0, pitch: 0 }); };
 $('exportPng').onclick = () => {
   closeDrawer();
@@ -363,7 +377,6 @@ $('exportPng').onclick = () => {
   });
   map.triggerRepaint();
 };
-$('welcome').addEventListener('click', (e) => { if (e.target === $('welcome') && state.city) $('welcome').hidden = true; });
 
 // ------------------------------------------------------------------ selection / info panel
 // i18n-keys
@@ -448,6 +461,7 @@ function selectLine(id: number, fit: boolean) {
 }
 
 function describe(f: MapGeoJSONFeature, lng: number, lat: number) {
+  panelRefresh = () => describe(f, lng, lat); // units or language changed: redraw in place (line/toll panels set their own)
   const p = f.properties as any;
   const layer = f.layer.id;
   const geom = (f.geometry as any);
@@ -464,7 +478,7 @@ function describe(f: MapGeoJSONFeature, lng: number, lat: number) {
   if (layer === 'district-label') { showDistrict(p.name); return; }
   if (layer === 'park-label') { panel(head(p.name, L(p.poi) ?? t('Park area'), iconDataUrl(p.poi)) + `<div class="p-rows">${row('Type', L(p.poi))}${row('Position', coordText(lng, lat))}</div>`, '#34a05a'); return; }
   if (layer === 'toll') { showToll(p); panelRefresh = () => showToll(p); return; }
-  if (layer === 'poi') { panel(head(p.name, L(p.poi) ?? t('Point of interest'), iconDataUrl(p.poi)) + `<div class="p-rows">${row('Lot area', p.area ? p.area + ' m²' : null)}${row('Position', coordText(lng, lat))}</div>`); return; }
+  if (layer === 'poi') { panel(head(p.name, L(p.poi) ?? t('Point of interest'), iconDataUrl(p.poi)) + `<div class="p-rows">${row('Lot area', p.area ? fmtAreaSmall(p.area) : null)}${row('Position', coordText(lng, lat))}</div>`); return; }
   describeRest(f, p, layer, geom, lng, lat);
 }
 function showToll(p: any) {
@@ -488,7 +502,7 @@ function describeRest(f: MapGeoJSONFeature, p: any, layer: string, geom: any, ln
     const grp = p.grp ?? p.id, parts = Number(p.nparts) > 1 ? c.sources.lots.features.filter((x) => (x.properties.grp ?? x.properties.id) === grp) as any[] : lot ? [lot] : [];
     setSelection(parts.map((x) => ({ type: 'Feature', geometry: x.geometry, properties: {} })));
     const level = /Level ?(\d)/.exec(p.icls ?? '')?.[1];
-    panel(head(nameOf(p) || L(p.cat) || t('Building'), L(p.cat) ?? p.cat) + `<div class="p-rows">${row('District', p.district)}${row('This part', p.part ? p.asset : null)}${row('Buildings in asset', Number(p.nparts) > 1 ? p.nparts : null)}${row('Zone / service', String(p.srv ?? '').replace(/([a-z])([A-Z])/g, '$1 $2'))}${row('Class', p.icls)}${p.named && !p.part ? row('Asset', p.asset) : ''}${row('Level', level)}${row('Lot area', p.area ? p.area + ' m²' : null)}${row('Est. height', bld?.properties.h ? bld.properties.h + ' m' : null)}${row('Asset ID', p.id)}</div>${sim.buildingHtml(Number(p.id))}`);
+    panel(head(nameOf(p) || L(p.cat) || t('Building'), L(p.cat) ?? p.cat) + `<div class="p-rows">${row('District', p.district)}${row('This part', p.part ? p.asset : null)}${row('Buildings in asset', Number(p.nparts) > 1 ? p.nparts : null)}${row('Zone / service', String(p.srv ?? '').replace(/([a-z])([A-Z])/g, '$1 $2'))}${row('Class', p.icls)}${p.named && !p.part ? row('Asset', p.asset) : ''}${row('Level', level)}${row('Lot area', p.area ? fmtAreaSmall(p.area) : null)}${row('Est. height', bld?.properties.h ? fmtHeight(bld.properties.h) : null)}${row('Asset ID', p.id)}</div>${sim.buildingHtml(Number(p.id))}`);
     return;
   }
   if (layer === 'water') { panel(head(t('Water'), t('Lake, river or sea')) + `<div class="p-rows">${row('Position', coordText(lng, lat))}</div>`, '#a2cdf3'); return; }
@@ -502,7 +516,7 @@ function describeRest(f: MapGeoJSONFeature, p: any, layer: string, geom: any, ln
   setSelection(sel);
   const totalLen = p.name ? Math.round(sel.reduce((s, x) => s + lineLen(x.geometry.coordinates), 0)) : p.len;
   panel(head(name, (L(p.cls) ?? p.cls) + (p.brunnel === 'bridge' ? ' · ' + t('Bridge / elevated') : p.brunnel === 'tunnel' ? ' · ' + t('Tunnel') : '')) +
-    `<div class="p-rows">${row('Road type', p.type)}${row('District', p.district)}${row('Lanes', p.lanes || null)}${row('Speed limit', p.speed ? p.speed + ' km/h' : null)}${row('Bike lane', p.bike ? t('Yes') : null)}${row('Carriageway', p.w ? p.w + ' m' : null)}${row('One-way', p.oneway ? t('Yes') : null)}${row(p.name ? t('Total length') : t('Segment length'), totalLen ? (totalLen > 1000 ? (totalLen / 1000).toFixed(2) + ' km' : totalLen + ' m') : null)}${row('Elevation', p.z !== undefined ? Math.round(p.z) + ' m' : null)}</div>${hasLanes() ? '' : `<p class="p-note">${esc(t('Road type is the class in the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.'))}</p>`}${p.id !== undefined && !/rail|subway|monorail|tram|cablecar/.test(p.cls) ? sim.roadHtml(Number(p.id)) : ''}${p.id !== undefined && !['runway', 'taxiway', 'canal', 'ferry'].includes(p.cls) ? `<div class="p-actions">${closeBtn({ kind: /rail|subway|monorail|tram|cablecar/.test(p.cls) ? 'rail' : 'road', seg: Number(p.id) })}</div>` : ''}`);
+    `<div class="p-rows">${row('Road type', p.type)}${row('District', p.district)}${row('Lanes', p.lanes || null)}${row('Speed limit', p.speed ? fmtSpeed(p.speed) : null)}${row('Bike lane', p.bike ? t('Yes') : null)}${row('Carriageway', p.w ? fmtWidth(p.w) : null)}${row('One-way', p.oneway ? t('Yes') : null)}${row(p.name ? t('Total length') : t('Segment length'), totalLen ? panelLen(totalLen) : null)}${row('Elevation', p.z !== undefined ? fmtHeight(p.z) : null)}</div>${hasLanes() ? '' : `<p class="p-note">${esc(t('Road type is the class in the .vellummap file; the drawn style also uses the road width. The file has no lanes, speed limits or one-way streets.'))}</p>`}${p.id !== undefined && !/rail|subway|monorail|tram|cablecar/.test(p.cls) ? sim.roadHtml(Number(p.id)) : ''}${p.id !== undefined && !['runway', 'taxiway', 'canal', 'ferry'].includes(p.cls) ? `<div class="p-actions">${closeBtn({ kind: /rail|subway|monorail|tram|cablecar/.test(p.cls) ? 'rail' : 'road', seg: Number(p.id) })}</div>` : ''}`);
 }
 /** The district shown as a soft region (estimated: no district shapes in the export), redrawn on theme changes. */
 let glowDistrict: number | null = null;
@@ -512,6 +526,7 @@ function drawGlow() {
   showDistrictGlow(map, f, glowDistrict, state.mode === 'night' ? '#b7a6e8' : '#7d5fc4', state.mode === 'night');
 }
 function showDistrict(name: string) {
+  panelRefresh = () => showDistrict(name);
   const c = state.city!;
   const dl = c.sources.places.features.find((f) => f.properties.kind === 'district' && f.properties.name === name);
   panelPlace = dl ? { label: name, ll: (dl.geometry as any).coordinates } : null;
@@ -527,7 +542,7 @@ function showDistrict(name: string) {
   const exact = !!c.meta.source?.exactDistricts, dp = dl?.properties ?? {};
   const about = (v: number | null) => (v ? (exact ? String(v) : '≈ ' + v) : null);
   const num = (v: unknown) => (typeof v === 'number' ? v.toLocaleString(locale()) : null);
-  panel(head(name, exact ? t('District, from the game\'s district map') : t('District, estimated area')) + `<div class="p-rows">${row('Area', area ? (exact ? '' : '≈ ') + fmtFixed(area / 1e6, 2) + ' km²' : null)}${row('Population', num(dp.pop))}${row('Homes', num(dp.homes))}${row('Jobs', num(dp.jobs))}${row('Specializations', dp.spec ? String(dp.spec) : null)}${row('Buildings', about(blds.length))}${row('Residential', about(by('residential')))}${row('Commercial / office', about(by('commercial') + by('office')))}${row('Industrial', about(by('industrial')))}${row('Stations', stations.join(', ') || null)}</div>
+  panel(head(name, exact ? t('District, from the game\'s district map') : t('District, estimated area')) + `<div class="p-rows">${row('Area', area ? (exact ? '' : '≈ ') + fmtAreaLarge(area) : null)}${row('Population', num(dp.pop))}${row('Homes', num(dp.homes))}${row('Jobs', num(dp.jobs))}${row('Specializations', dp.spec ? String(dp.spec) : null)}${row('Buildings', about(blds.length))}${row('Residential', about(by('residential')))}${row('Commercial / office', about(by('commercial') + by('office')))}${row('Industrial', about(by('industrial')))}${row('Stations', stations.join(', ') || null)}</div>
     <p class="p-note">${exact ? t('Boundaries and figures come from the game itself (Vellum Bridge export).') : t('The export has no district boundaries. This area is estimated from the district label and the transit stops that record it, so its edges and counts are approximate.')}</p>`, '#7d5fc4');
 }
 function ringAreaLL(r: [number, number][]) { let a = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const p = fromLngLat(r[i][0], r[i][1]), q = fromLngLat(r[j][0], r[j][1]); a += (q[0] - p[0]) * (q[1] + p[1]); } return a / 2; }
@@ -541,6 +556,8 @@ function closeBtn(p: import('./closure').ClosurePick) {
   return `<button class="pill" data-close-pick="${esc(JSON.stringify(p))}"><svg viewBox="0 0 24 24" width="16" height="16"><path fill-rule="evenodd" d="${CLOSURE_ICON}"/></svg>${t('What if it closes?')}</button>`;
 }
 function lineLen(c: [number, number][]) { let l = 0; for (let i = 1; i < c.length; i++) { const a = fromLngLat(c[i - 1][0], c[i - 1][1]), b = fromLngLat(c[i][0], c[i][1]); l += Math.hypot(a[0] - b[0], a[1] - b[1]); } return l; }
+/** road lengths in panels: metric exactly as before (2 decimals over 1 km), else feet/miles */
+const panelLen = (m: number) => (imperial() ? fmtLength(m) : m > 1000 ? (m / 1000).toFixed(2) + ' km' : m + ' m');
 function coordText(lng: number, lat: number) { const [x, z] = fromLngLat(lng, lat); return `x ${Math.round(x)}, z ${Math.round(z)}`; }
 
 $('panelBody').addEventListener('click', (e) => {
@@ -772,22 +789,25 @@ function runSearch() {
   }).join('') : `<div class="result-empty">${esc(t('No results for “{q}”', { q: searchInput.value }))}</div>`;
   $('searchbox').classList.add('open');
 }
+/** A whole road picked in search: every segment selected, with its total length. Redraws in place (units, language). */
+function showSearchedRoad(name: string) {
+  const all = state.city!.sources.roads.features.filter((x) => x.properties.name === name) as any[];
+  setSelection(all.map((x) => ({ type: 'Feature', geometry: x.geometry, properties: {} })));
+  const f = all[0];
+  if (!f) return;
+  panelRefresh = () => showSearchedRoad(name);
+  const p = f.properties;
+  const len = Math.round(all.reduce((t, x) => t + lineLen(x.geometry.coordinates), 0));
+  panel(head(name, L(p.cls) ?? t('Road')) + `<div class="p-rows">${row('Road type', p.type)}${row('Total length', panelLen(len))}${row('Segments', all.length)}</div>`);
+}
 function choose(s: SearchEntry) {
   $('searchbox').classList.remove('open');
   searchInput.value = s.name; searchInput.blur();
   if (s.kind === 'line') { const l = state.city!.meta.lines.find((x) => x.name === s.name); if (l) return selectLine(l.id, true); }
   if (s.bbox) map.fitBounds([[s.bbox[0], s.bbox[1]], [s.bbox[2], s.bbox[3]]], { padding: { top: 100, bottom: 60, left: innerWidth > 700 ? 420 : 40, right: 60 }, maxZoom: 16.5 });
   else map.flyTo({ center: s.center, zoom: s.zoom, speed: 1.6 });
-  if (s.kind === 'road') {
-    const all = state.city!.sources.roads.features.filter((x) => x.properties.name === s.name) as any[];
-    setSelection(all.map((x) => ({ type: 'Feature', geometry: x.geometry, properties: {} })));
-    const f = all[0];
-    if (f) {
-      const p = f.properties;
-      const len = Math.round(all.reduce((t, x) => t + lineLen(x.geometry.coordinates), 0));
-      panel(head(s.name, L(p.cls) ?? t('Road')) + `<div class="p-rows">${row('Road type', p.type)}${row('Total length', len > 1000 ? fmtFixed(len / 1000, 2) + ' km' : len + ' m')}${row('Segments', all.length)}</div>`);
-    }
-  } else {
+  if (s.kind === 'road') showSearchedRoad(s.name);
+  else {
     map.once('moveend', () => {
       const pt = map.project(s.center);
       const f = map.queryRenderedFeatures([[pt.x - 20, pt.y - 20], [pt.x + 20, pt.y + 20]], { layers: ['district-label', 'park-label', 'poi', 'station'].filter((l) => map.getLayer(l)) }).find((x) => x.properties.name === s.name);
@@ -809,7 +829,11 @@ searchInput.addEventListener('blur', () => setTimeout(() => $('searchbox').class
 $('searchClear').onclick = () => { searchInput.value = ''; runSearch(); searchInput.focus(); closePanel(); };
 window.addEventListener('keydown', (e) => {
   if (e.key === '/' && document.activeElement !== searchInput && state.city) { e.preventDefault(); searchInput.focus(); }
-  if (e.key === 'Escape') { closePanel(); closeDrawer(); hideCtx(); $('layerPop').hidden = true; }
+  if (e.key === 'Escape') {
+    // the start screen reopened over a map: Esc goes back to it (not while a map is loading)
+    if (!$('welcome').hidden && state.city && $('loading').hidden) { $('welcome').hidden = true; return; }
+    closePanel(); closeDrawer(); hideCtx(); $('layerPop').hidden = true;
+  }
 });
 
 // ------------------------------------------------------------------ chips, layers, controls
@@ -902,13 +926,34 @@ document.addEventListener('click', (e) => {
 worker.postMessage({ type: 'lang', lang: getLang() });
 onLang(() => {
   worker.postMessage({ type: 'lang', lang: getLang() });
-  applyStatic(); renderLangSwitches(); applyStyle();
+  applyStatic(); renderLangSwitches(); renderUnitSwitches(); applyStyle();
   if (state.city) { renderDrawer(state.city); cityTexts(state.city); }
   if (!$('panel').hidden) { if (panelRefresh) panelRefresh(); else closePanel(); }
   dir.relang(); nav.relang(); measure.refresh(); pricingEd.refresh(); schem.relang(); discoveries.refresh(); closure.refresh();
   if (!$('welcome').hidden) { loadLocalList(); void renderRecent(); }
 });
 renderLangSwitches();
+
+// ------------------------------------------------------------------ units
+function renderUnitSwitches() {
+  const focused = (document.activeElement as HTMLElement | null)?.closest('.unit-switch');
+  document.querySelectorAll<HTMLElement>('.unit-switch').forEach((box) => {
+    box.innerHTML = (['metric', 'imperial'] as Units[]).map((u) => `<button role="radio" aria-checked="${u === getUnits()}" class="${u === getUnits() ? 'on' : ''}" data-units="${u}">${t(u === 'metric' ? 'Metric' : 'Imperial')}</button>`).join('');
+  });
+}
+document.addEventListener('click', (e) => {
+  const u = ((e.target as HTMLElement).closest('[data-units]') as HTMLElement | null)?.dataset.units as Units | undefined;
+  if (u) setUnits(u);
+});
+// every number with a unit is redrawn: the menu, scale bar, contour labels, panels and open tools (directions, reach,
+// closures and the time-lapse listen themselves)
+onUnits(() => {
+  renderUnitSwitches(); scaleBar.setUnit(imperial() ? 'imperial' : 'metric'); applyStyle();
+  if (state.city) renderDrawer(state.city);
+  if (!$('panel').hidden) { if (panelRefresh) panelRefresh(); else closePanel(); }
+  measure.refresh(); discoveries.refresh(); nav.relang(); schem.relang();
+});
+renderUnitSwitches();
 
 syncUi();
 loadLocalList();
