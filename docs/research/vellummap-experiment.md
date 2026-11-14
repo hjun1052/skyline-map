@@ -26,10 +26,10 @@ Everything below was measured on the sample city: Skyline's `public/samples/seor
   - node and building service, from the item class (a 103-entry table read off 7 real exports; every class has exactly one service);
   - road type for drawing, from item class + width;
   - transit stop-to-stop legs, cut out of each line's whole route by dynamic programming.
-- **Routing:** first switched off; now approximate, on estimated lanes (see [Approximate directions](#approximate-directions)). Save files (`.crp`) stay off.
+- **Routing:** first switched off; now approximate, on estimated lanes (see [Approximate directions](#approximate-directions)). Save files (`.crp`) now work too (see [Saves](#saves-on-the-real-pair)).
   - The buttons stay visible but dimmed, with `aria-disabled`. Clicking one opens a panel that explains why.
   - Panel and right-click direction actions are hidden, and a one-time toast appears.
-  - The drawer says "Opened from … (.vellummap, experimental)".
+  - The drawer says "Opened from … (.vellummap)".
 - **Uses data `.cslmap` doesn't have:**
   - the game's district grid draws real district areas instead of the estimate;
   - the district panel shows population, homes, jobs and specializations;
@@ -62,7 +62,7 @@ Everything below was measured on the sample city: Skyline's `public/samples/seor
 | Toll booths | 12 | 12 | a booth's " Sub" building is recognised by its prefab name |
 | Discoveries | 33 | 20, all also in `.cslmap` | left out without the data: widest road (lanes), footprint and parts (building chains), longest bridge and viaduct (low bridges missed); station and street ones need names |
 | Driving, walking, transit directions | yes | **approximate** | estimated lanes, see below |
-| Save files (`.crp`) | yes | **off** | the save is matched by segment prefab names |
+| Save files (`.crp`) | yes | **yes** | matched by ids and geometry instead of prefab names (see below) |
 
 **`.cslmap` behaviour is unchanged.** On the sample city, `main` and this branch produce identical hashes for:
 
@@ -161,6 +161,8 @@ A second pass after the first experiment.
 ## Assessment
 
 **Not production-ready as a headline feature, but solid as an "experimental: map only" option.**
+
+_Written before routing and saves existed; superseded by [Approximate directions](#approximate-directions), [A real matched pair](#a-real-matched-pair) and [Saves on the real pair](#saves-on-the-real-pair)._
 
 - The map itself is close to the `.cslmap` one and the reader is robust.
 - Two things block calling it equivalent:
@@ -268,3 +270,18 @@ What remains can't be told apart from the file:
 - What is reliable: a same-prefix building mostly inside a bigger one of a different class, as glass, roof and platform overlays are. That is right for 212 of 215 links on 7 cities, a third of all parts. These are linked; the rest stay separate.
 - On the real file, buildings drawn only on the Bridge map dropped from 127 to 1.
 - The records that add parts up stay off.
+
+## Saves on the real pair
+
+The 서랑시 save (`.crp`) that the CSLMapView export was written with also matches the Bridge export (`npm run check:vellum-sim`; catalogue from the other 6 cities):
+
+- every node, road and building of the Bridge export matches the save, and all 36 lines;
+- traffic density on 9,000+ shared roads, occupancy on 9,000+ shared buildings and every line's ridership are identical to the same save on the `.cslmap`;
+- grids and city statistics read; one-way count identical; TM:PE and U-turn rules placed (at least 98% / 95% of the `.cslmap` count);
+- 95% of driving roads get their real prefab lanes from the save; the rest stay estimated;
+- driving with the save matches CSLMapView + save within 5% for 98% of 60 trips.
+
+In the browser (built catalogue, which includes this city) the save covers 100% of roads, the traffic layer draws, and every panel names where its lanes come from.
+
+**What this can't show:** one save on one city. A save from another game version, a city with many workshop road prefabs the catalogue doesn't know, or a Bridge export made long after the save will match fewer objects; the panel says so (close match / too far apart), as it does for `.cslmap`.
+
