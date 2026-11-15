@@ -19,7 +19,7 @@ One city and one mod version were tested. Other cities, game states or mod versi
 - **Detection:** the worker gunzips first, as for any file. The data is taken as `.cmm` when it is a JSON object whose first key is `schema_version` with a `cmm-` value; the mod writes that key first [mod].
 - **Version:** only `cmm-v1` is read. Any other `cmm-…` value shows "uses format …, which Skyline Map does not read yet". Missing or damaged structure shows "This .cmm is damaged: …" with the place that failed. No value turns into NaN on the map. Terrain grids must inflate to exactly 1081 × 1081 × 4 bytes and are cut off past that.
 - **Size:** the test file is 12 MB gzipped and 60 MB of JSON.
-- **Optional `traffic` key [mod]:** the mod can embed a TM:PE traffic snapshot under a top-level `traffic` key. The test file has none, so the reader ignores it.
+- **Optional `traffic` key [mod]:** the mod embeds a TM:PE traffic snapshot (`TrafficSnapshotExporter`) under a top-level `traffic` key. The test file has one (8.6 MB: 4,464 road segments, 123 traffic lights), but it holds no measurements: all 10,549 vehicle lanes are counted as `vehicleLanesNoTmpeStats`. Every lane has `relativeSpeed` and `congestion` -1 and `vehicleCount` 0, and the city averages are -1. The mod fills them from TM:PE's `TrafficMeasurementManager.GetLaneTrafficData`, and every lookup failed here. Even when filled, a lane would carry only a relative speed (`meanSpeed / 10000`), and only for the road classes the snapshot exports. With no measured snapshot to check a mapping against, the reader skips the snapshot before parsing, which also saves memory. Traffic comes from a matched save instead, as for a `.cslmap`.
 
 ## Coordinates and geometry
 
@@ -87,7 +87,7 @@ Lanes come from the shipped lane catalogue (`src/lane-catalog.json`, prefab → 
 ### Node fields
 
 - **`mode_hint` [mod][cslmap]:** `TUNNEL` if the UnderGround flag is set, else `GROUND` if OnGround, else `ELEVATED`. Underground matches 14,321/14,321.
-- **OnGround is lost under `TUNNEL`:** because `TUNNEL` takes precedence, OnGround is lost for nodes that have both flags. That affects 6 tunnel-portal nodes, which differ from the `.cslmap`. Terrain height doesn't tell them apart, so they stay "not on ground". As a result, bridge and tunnel counts in the discoveries summary differ slightly (126 → 122 bridges, 36 → 38 tunnels).
+- **OnGround is lost under `TUNNEL`:** because `TUNNEL` takes precedence, OnGround is lost for nodes that have both flags. That affects 6 tunnel-portal nodes, which differ from the `.cslmap`. Nothing in the file tells them apart: like the other 290 tunnel nodes, they join only `TUNNEL` networks and sit well below the terrain. So they stay "not on ground". As a result, bridge and tunnel counts in the discoveries summary differ slightly (126 → 122 bridges, 36 → 38 tunnels).
 - **Service is not in the file:**
   - from the sub-service: transport, park;
   - otherwise from the node's networks: roads, paths, tracks, dams and power lines (Electricity), canals (Beautification);
@@ -113,7 +113,7 @@ Lanes come from the shipped lane catalogue (`src/lane-catalog.json`, prefab → 
 ## Transit
 
 - **Lines [mod][cslmap]:** `transit_lines` match on id, name, type (`source_raw` = the game's transport type) and stop list, 37/37.
-- **Colours:** 36/37 match. 전차 0호선 is (73, 6, 134) in the `.cmm` and (169, 15, 255) in the `.cslmap`. Either the colour changed between the exports or the two mods read different colour fields; not resolved.
+- **Colours:** 36/37 match. 전차 0호선 (line 8) is (73, 6, 134) in the `.cmm` and (169, 15, 255) in the `.cslmap`. Explained [save]: the matched save has line 8 with flags Created + Temporary + Hidden and no CustomColor. It is the transport tool's unfinished line, with no stops (its route's `stop_ids` is empty). The mod writes `TransportLine.GetColor()`, which falls back to the game's default colour when no custom colour is set. Neither value is a colour the player chose, and the default differed between the two exports, a week apart. The line has no stops or path, so nothing is drawn for it either way.
 - **White [mod]:** the mod writes a white colour as `null`; the reader treats it as white.
 - **Stops [mod]:** stops are line nodes; `network_node_id` is the node, as in a `.cslmap`. Stop names are always empty: the mod writes `Name("", "empty")`.
 - **Stop names:** the reader names stops the same way as for a `.cslmap`, from nearby named station buildings, never invented. No other field carries a stop name.
@@ -207,26 +207,30 @@ Which rebuilt legs are used:
 
 ## Performance (서랑시: 12 MB `.cmm.gz`, 60 MB JSON; 20 MB `.cslmap`)
 
-Measured on an M-series Mac, two runs each for Node and three opens each in the browser:
+Measured on an M-series Mac. "Before" is the first version of the reader, which ran `JSON.parse` on the whole file. "After" adds `parseDoc`, which takes the district cells and the traffic snapshot out of the bytes first. Node: three runs each of a stage-timing script with `--expose-gc`, kernel peak RSS. Browser: three opens each in headless Chromium (software GL), RSS of the browser and all its processes sampled every 50 ms.
 
-| | `.cslmap` | `.cmm.gz` |
-|---|---|---|
-| Read into `CityData` (Node) | 175 ms | 765 ms (gunzip ~90 ms + `JSON.parse` and mapping) |
-| Build the map (Node, same code) | 690 ms | 707 ms |
-| Peak memory while reading and building (Node RSS) | 338 MB | 857 MB |
-| Open to ready map (headless Chromium, software GL) | 1.60 s | 1.99 s |
-| Page JS heap after opening | 77 MB | 86 MB |
-| Pan frame time, zoom 14.5 (median / p95, software GL) | 131 / 359 ms | 132 / 362 ms |
+| | `.cslmap` | `.cmm.gz` before | `.cmm.gz` after |
+|---|---|---|---|
+| Read into `CityData` (Node) | 185–192 ms | 829–917 ms | 647–667 ms |
+| of which parsing (gunzip excluded) | n/a (XML scan) | 920–1,230 ms (decode + `JSON.parse`, with GC pressure) | 549–689 ms (`parseDoc`) |
+| Build the map (Node, same code) | 728–777 ms | 713–843 ms | 707–742 ms |
+| Peak RSS after reading (Node) | 194 MB | 705–712 MB | 496–547 MB |
+| Peak RSS reading and building (Node) | 328 MB | 762–840 MB | 549–680 MB |
+| Heap kept after loading (city and built map) | 82 MB | 52 MB | 52 MB |
+| Browser RSS rise while opening (all processes) | 710–760 MB | 826–1,093 MB | 806–828 MB |
+| Open to ready map (headless) | 1.6–1.7 s | 2.0–2.7 s | 2.1–2.3 s |
+| Page JS heap after opening | 54–60 MB | 60–64 MB | 64–68 MB |
 
-- **Why reading is slower:** `JSON.parse` builds the whole 60 MB document as JavaScript objects, every coordinate an array. The `.cslmap` reader scans the XML string without building it.
-- **Memory:** the peak is in the worker while loading, and it is released afterwards. The page itself holds about the same as for a `.cslmap`. A phone with little memory could fail to open a much larger city; the test city opened in phone emulation. A streaming reader would lower the peak if that becomes a problem.
+- **Where the memory went before** (Node heap, after GC at each step): gunzipped bytes 60 MB; the decoded string 120 MB (two bytes per character, because the file has Korean names); the parsed document 165 MB, of which 117 MB was the districts' `grid_points`. Every 19.2 m cell of the map is listed at least once, as a two-number array: 1.62 million arrays. The traffic snapshot was another 10 MB, and all of these coexisted at the peak.
+- **What changed:** `parseDoc` makes one string-aware pass over the bytes. It reads each `grid_points` list straight into a `Float64Array` (26 MB in all, freed once the district grid is built), drops the traffic snapshot, and parses the rest, which is 34 MB of JSON instead of 60 MB. The reader's output is byte-identical to before on the test city: city data and time-lapse identities both compared.
+- **Trade-offs:** about 60 lines of hand-written scanning (string-aware, checks pair shape, unit-tested in `check:cmm`), and the traffic snapshot is no longer available to future code without changing `parseDoc`. Parsing got faster, not slower.
+- **What's left:** the gunzipped bytes, the decoded string and the parsed document still overlap briefly. Going further would take a streaming JSON parser, a larger change for what is now about 100 MB more than a `.cslmap` in the browser. The heap kept after loading is smaller than for a `.cslmap`.
 - **Rendering:** the drawn map is the same, so frame times are the same.
 
 ## Unresolved
 
-- One line colour differs (above).
-- 6 tunnel-portal nodes lose their OnGround flag in the format.
+- 6 tunnel-portal nodes lose their OnGround flag in the format. The file has nothing that tells them apart (above).
 - Bus and train legs without an exported path are left without one: their rebuild isn't reliable enough to show.
-- Lanes for prefabs the catalogue doesn't know come from the file's facts and carry no sidewalks. A city with many workshop roads walks around them.
-- The mod's optional `traffic` snapshot (TM:PE) is not read; no test file has one.
-- Left-hand-traffic cities are untested; the mod applies the game's final lane directions, which already account for it [mod].
+- The mod's `traffic` snapshot (TM:PE) is not read. The test file's snapshot holds no measurements, so a mapping can't be validated (above).
+- **Left-hand traffic: untested.** The file doesn't record the traffic side, and the mod never reads the game's setting. One-way directions, car access and speeds come from the game's final lane directions with Invert applied [mod], so they should hold. Catalogue lane positions, and anything that depends on which side vehicles keep to, have only been checked on right-hand cities.
+- **Unknown workshop prefabs: partial.** Where the catalogue doesn't know a road prefab, or its lanes contradict the file, the road gets car lanes from the file's facts only: no sidewalks, bike lanes, parking or tram lanes. Driving is exact, but walking and cycling avoid those roads. Unknown track, ferry and path prefabs get no lanes. The test city had none, because the catalogue was partly built from it, so other cities will show this more.

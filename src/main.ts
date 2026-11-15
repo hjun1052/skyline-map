@@ -352,7 +352,7 @@ function renderDrawer(city: BuiltCity) {
   $('cityInfo').innerHTML = `
     <div class="city-title">${esc(city.meta.name)}</div>
     <div class="city-meta">${t('Saved {date}', { date: esc(fmtGenerated(city.meta.generated)) })}${state.currentFile ? ' · ' + esc(state.currentFile) : ''}</div>
-    ${city.meta.source ? `<div class="city-source">${esc(city.meta.source.format === 'cmm' ? t('Opened from {producer} (.cmm)', { producer: city.meta.source.producer }) : t('Opened from {producer} (.vellummap)', { producer: city.meta.source.producer || 'Vellum' }))}${city.meta.source.lanes ? '' : ` <button class="link-btn" data-why-no-route>${esc(!city.meta.source.approxRoutes ? t('Directions are off for this map') : sim.savedLanes() !== null ? t('Directions use lanes from your save') : t('Directions on this map are approximate'))}</button>`}</div>` : ''}
+    ${city.meta.source ? `<div class="city-source">${esc(city.meta.source.format === 'cmm' ? t('Opened from {producer} (.cmm)', { producer: city.meta.source.producer }) : t('Opened from {producer} (.vellummap)', { producer: city.meta.source.producer || 'Vellum' }))}${city.meta.source.format === 'cmm' ? ` <span class="exp-tag">${esc(t('Experimental'))}</span>` : ''}${city.meta.source.lanes ? '' : ` <button class="link-btn" data-why-no-route>${esc(!city.meta.source.approxRoutes ? t('Directions are off for this map') : sim.savedLanes() !== null ? t('Directions use lanes from your save') : t('Directions on this map are approximate'))}</button>`}</div>` : ''}
     <div class="stats">
       <div class="stat"><b>${n(s.buildings)}</b><span>${t('Buildings')}</span></div>
       <div class="stat"><b>${n(s.roads)}</b><span>${t('Road segments')}</span></div>

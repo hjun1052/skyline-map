@@ -11,7 +11,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { parseCity, type CityData, type CSeg, type Vec3 } from '../src/parse';
-import { readCmm, isCmm, laneFacts, rebuildLeg, legContext, cmmIdentities } from '../src/cmm';
+import { readCmm, isCmm, laneFacts, rebuildLeg, legContext, cmmIdentities, parseDoc } from '../src/cmm';
 import { laneInfo, buildCity } from '../src/build';
 import { Router, type Mode, type Route } from '../src/router';
 import { inferOneWay } from '../src/oneway';
@@ -104,6 +104,24 @@ async function unit() {
   // bus legs are never rebuilt into the map (not validated well enough), even where a path exists
   if (c.segs.find((s) => s.id === 14)!.path || c.extras!.cmm!.legs.why['not validated'] !== 1) fail('a bus leg without a path must stay without one');
   if (rebuildLeg(c, inv, 'TOUR', { x: 8600, y: 0, z: 1 }, { x: 150, y: 0, z: 1 }).why !== 'outside connection') fail('legs to the map edge (outside connections) must not be rebuilt');
+
+  // district cells are read before JSON.parse (parseDoc): same grid as reading them from the parsed lists would give,
+  // strings that mention the key left alone, odd numbers parsed, bad cell lists reported, the traffic snapshot skipped
+  const cells = [[-8630.4, -8630.4], [-8611.2, -8630.4], [9.6, 2.88e1], [-1.92e+1, 0.5E1]];
+  const ds = [
+    { id: 0, name: 'grid_points', kind: 'DISTRICT', grid_points: [[0, 0]], grid_cell: 19.2, position: [0, 0, 0] },
+    { id: 3, name: 'Old "grid_points": [[1, 2]] town', kind: 'DISTRICT', grid_points: cells, grid_cell: 19.2, position: [9.6, 0, 9.6] }];
+  const dd = doc({ districts: ds,
+    traffic: { schemaVersion: '1.2', segments: [{ roadName: 'a } ] " \\" {', lanes: [[1]] }] } });
+  const pd = parseDoc(enc(dd));
+  if (pd.d.traffic !== null || pd.d.districts[1].name !== ds[1].name || pd.grids.length !== 2 || pd.d.districts[1].grid_points !== 1
+    || Array.from(pd.grids[1]).join() !== cells.flat().join()) fail(`parseDoc: ${JSON.stringify({ t: pd.d.traffic, g: pd.grids.map((g) => Array.from(g)) })}`);
+  const cd = await readCmm(enc(dd), cat), g = cd.extras!.districtGrid!;
+  const at = ([x, z]: number[]) => g[(Math.floor((z + 8640) / 19.2) * 900 + Math.floor((x + 8640) / 19.2)) * 8];
+  if (!cells.every((p) => at(p) === 3) || at([500, 500]) !== 0) fail('district grid from the pre-read cells');
+  await expectError(enc(doc({ districts: [{ id: 3, name: 'x', kind: 'DISTRICT', grid_points: [[1, 'a']], grid_cell: 19.2 }] })), /damaged.*district cells are not numbers/, 'cells that are not numbers');
+  await expectError(enc(doc({ districts: [{ id: 3, name: 'x', kind: 'DISTRICT', grid_points: [[1, 2, 3]], grid_cell: 19.2 }] })), /damaged.*not \[x, z\] pairs/, 'cells that are not pairs');
+  await expectError(new TextEncoder().encode('{"schema_version":"cmm-v1","districts":[{"grid_points":[[1,2],'), /damaged.*cut off/, 'cells cut off');
 }
 
 // ------------------------------------------------------------------ 2. a matched pair of exports

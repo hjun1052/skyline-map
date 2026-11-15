@@ -47,6 +47,67 @@ const xz = (p: any, where: string): [number, number] => { if (!Array.isArray(p) 
 
 const T = 1081, CELL = 15.985198889916743, A = 900;
 
+/** The file as a JSON object, with two parts taken out before JSON.parse, as they'd be most of the memory it needs:
+ *  - each district's `grid_points` (a [x, z] pair per 19.2 m cell, every cell of the map at least once: 1.6 million
+ *    small arrays for a full city, over 100 MB parsed). Each is read here into a Float64Array (x, z, x, z…) and the
+ *    list in the document is replaced by its index into `grids`;
+ *  - the top-level `traffic` (a TM:PE snapshot, which nothing reads yet: see docs/research/cmm-format.md), replaced by null.
+ *  One pass over the bytes, aware of strings, so a name that says "grid_points" is left alone. */
+export function parseDoc(b: Uint8Array): { d: any; grids: Float64Array[] } {
+  const grids: Float64Array[] = [], cuts: [number, number, string][] = [];
+  const n = b.length, ws = (c: number) => c === 32 || c === 10 || c === 13 || c === 9;
+  const is = (s: number, e: number, key: string) => { if (e - s !== key.length) return false; for (let k = 0; k < key.length; k++) if (b[s + k] !== key.charCodeAt(k)) return false; return true; };
+  let depth = 0, i = 0;
+  while (i < n) {
+    const c = b[i];
+    if (c !== 34) { if (c === 123 || c === 91) depth++; else if (c === 125 || c === 93) depth--; i++; continue; }
+    const s = ++i;
+    while (i < n && b[i] !== 34) i += b[i] === 92 ? 2 : 1;
+    const e = i++;
+    let v = i; while (ws(b[v])) v++;
+    if (b[v] !== 58) continue; // a value, not a key
+    v++; while (ws(b[v])) v++;
+    if (b[v] === 91 && is(s, e, 'grid_points')) {
+      const xs: number[] = [];
+      let p = v + 1, level = 1, pairs = 0;
+      while (level > 0) {
+        if (p >= n) throw damaged('district cells are cut off');
+        const ch = b[p];
+        if (ch === 91) { if (++level > 2) throw damaged('district cells are not [x, z] pairs'); pairs++; p++; } else if (ch === 93) { level--; p++; } else if (ch === 44 || ws(ch)) p++;
+        else {
+          // a JSON number: integer mantissa, then the decimal point and exponent applied once (exact for these values)
+          const neg = ch === 45; if (neg) p++;
+          let m = 0, scale = 0, digits = 0;
+          while (b[p] >= 48 && b[p] <= 57) { m = m * 10 + b[p++] - 48; digits++; }
+          if (b[p] === 46) { p++; while (b[p] >= 48 && b[p] <= 57) { m = m * 10 + b[p++] - 48; scale++; digits++; } }
+          if (b[p] === 101 || b[p] === 69) { p++; const es = b[p] === 45 ? -1 : 1; if (b[p] === 45 || b[p] === 43) p++; let x = 0; while (b[p] >= 48 && b[p] <= 57) x = x * 10 + b[p++] - 48; scale -= es * x; }
+          if (!digits) throw damaged('district cells are not numbers');
+          const val = scale > 0 ? m / 10 ** scale : m * 10 ** -scale;
+          xs.push(neg ? -val : val);
+        }
+      }
+      if (xs.length !== pairs * 2) throw damaged('district cells are not [x, z] pairs');
+      cuts.push([v, p, String(grids.length)]); grids.push(Float64Array.from(xs));
+      i = p;
+    } else if (depth === 1 && is(s, e, 'traffic')) {
+      let p = v, level = 0;
+      do {
+        if (p >= n) break;
+        const ch = b[p];
+        if (ch === 34) { p++; while (p < n && b[p] !== 34) p += b[p] === 92 ? 2 : 1; } else if (ch === 123 || ch === 91) level++; else if (ch === 125 || ch === 93) level--;
+        p++;
+      } while (level > 0);
+      cuts.push([v, p, 'null']); i = p;
+    }
+  }
+  let size = n; for (const [s, e, r] of cuts) size += r.length - (e - s);
+  const out = new Uint8Array(size);
+  let o = 0, from = 0;
+  for (const [s, e, r] of cuts) { out.set(b.subarray(from, s), o); o += s - from; for (let k = 0; k < r.length; k++) out[o++] = r.charCodeAt(k); from = e; }
+  out.set(b.subarray(from), o);
+  try { return { d: JSON.parse(new TextDecoder('utf-8').decode(out)), grids }; } catch { throw damaged('not valid JSON'); }
+}
+
 /** a terrain grid: base64 of zlib-compressed little-endian float32, row-major, rows north (+z), metres */
 async function grid(g: any, where: string): Promise<Float32Array | null> {
   if (!g || g.data == null) return null;
@@ -236,8 +297,7 @@ export interface CmmInfo {
 }
 
 export async function readCmm(bytes: Uint8Array, cat: LaneCatalog): Promise<CityData> {
-  let d: any;
-  try { d = JSON.parse(new TextDecoder('utf-8').decode(bytes)); } catch { throw damaged('not valid JSON'); }
+  const { d, grids } = parseDoc(bytes);
   if (!d || typeof d !== 'object' || Array.isArray(d)) throw damaged('not a JSON object');
   const ver = str(d.schema_version);
   if (ver !== 'cmm-v1') {
@@ -263,10 +323,11 @@ export async function readCmm(bytes: Uint8Array, cat: LaneCatalog): Promise<City
     const [x, z] = a.position ? xz(a.position, where) : [0, 0];
     (park ? parks : districts).push({ id: gid, name: str(a.name?.text), x, y: ground(x, z), z, type: str(a.source_raw) || undefined });
     // district 0 is the game's "no district"; the grid keeps the others (same layout as a .vellummap's, see areaAt)
-    if (!park && gid > 0 && gid < 256 && Array.isArray(a.grid_points) && a.grid_points.length && Math.abs(a.grid_cell - 19.2) < 1e-6) {
+    const g = typeof a.grid_points === 'number' ? grids[a.grid_points] : undefined;
+    if (!park && gid > 0 && gid < 256 && g?.length && Math.abs(a.grid_cell - 19.2) < 1e-6) {
       districtGrid ??= new Uint8Array(A * A * 8);
-      for (const p of a.grid_points) {
-        const [px, pz] = xz(p, where), i = Math.floor((px + 8640) / 19.2), j = Math.floor((pz + 8640) / 19.2);
+      for (let k = 0; k + 1 < g.length; k += 2) {
+        const i = Math.floor((g[k] + 8640) / 19.2), j = Math.floor((g[k + 1] + 8640) / 19.2);
         if (i < 0 || j < 0 || i >= A || j >= A) continue;
         const c = (j * A + i) * 8; districtGrid[c] = gid; districtGrid[c + 4] = 255;
       }
@@ -411,8 +472,7 @@ export async function readCmm(bytes: Uint8Array, cat: LaneCatalog): Promise<City
 
 /** Time-lapse: the identities in an older .cmm (same keys as history.ts scans from .cslmap). */
 export function cmmIdentities(bytes: Uint8Array) {
-  let d: any;
-  try { d = JSON.parse(new TextDecoder('utf-8').decode(bytes)); } catch { throw damaged('not valid JSON'); }
+  const { d } = parseDoc(bytes);
   const segs = list(d, 'networks', 'file').filter((w) => w?.id >= 0).map((w): [number, number, number] => [sid(w.id, 'network'), sid(w.start_id, 'network'), sid(w.end_id, 'network')]);
   const blds = list(d, 'buildings', 'file').map((b): [number, string] => [sid(b?.id, 'building'), str(b.name)]);
   const lines = list(d, 'transit_lines', 'file').map((l): [number, string] => [sid(l?.id, 'line'), str(l.source_raw) || str(l.kind)]);
