@@ -60,8 +60,8 @@ export function buildPlan(r: Route): NavPlan | null {
 
   // spans index the raw coords (with repeats): place each by its first point instead
   const raw = leg.coords.map((c) => fromLngLat(c[0], c[1]));
-  const spans = placeSpans(leg.spans ?? [], raw, pts, cum);
-  const lineEnd = cum[Math.max(0, pts.length - 2)];
+  const lineEnd = roadEnd(raw, pts, cum);
+  const spans = placeSpans(leg.spans ?? [], raw, pts, cum, lineEnd);
   const tp = leg.traffic ?? [], ts = placeAt(tp.map((x) => x.i), raw, pts, cum);
   const traffic: NavTraffic[] = tp.map((x, k) => ({ s0: ts[k], s1: k + 1 < tp.length ? ts[k + 1] : lineEnd, color: trafficColor(x.pct), delay: x.delay ?? 0 }));
   const cs = leg.controls ?? [], cAt = placeAt(cs.map((x) => x.i), raw, pts, cum);
@@ -106,7 +106,17 @@ export function jamsOf(traffic: NavTraffic[]): Jam[] {
   return out.filter((jam) => jam.delay >= JAM.minDelay);
 }
 
-function placeSpans(raw: Span[], coords: XY[], pts: XY[], cum: Float64Array): NavSpan[] {
+/** distance along the line where the road ends: the last road point, before the link to the destination. The raw
+ *  coords end with the destination; when it lies on the road it repeats the road's last point and is merged away,
+ *  so the road ends at the very end of the line rather than one point before it */
+function roadEnd(coords: XY[], pts: XY[], cum: Float64Array): number {
+  const c = coords[Math.max(0, coords.length - 2)];
+  let j = pts.length - 1;
+  while (j > 0 && Math.hypot(pts[j][0] - c[0], pts[j][1] - c[1]) > 0.05) j--;
+  return cum[j];
+}
+
+function placeSpans(raw: Span[], coords: XY[], pts: XY[], cum: Float64Array, end: number): NavSpan[] {
   const out: NavSpan[] = [];
   let j = 0;
   for (let k = 0; k < raw.length; k++) {
@@ -115,7 +125,7 @@ function placeSpans(raw: Span[], coords: XY[], pts: XY[], cum: Float64Array): Na
     out.push({ s0: cum[j], s1: 0, name: sp.name, cls: sp.cls, brunnel: sp.brunnel, limit: sp.limit, v: sp.v });
   }
   // a span ends where the next starts; the last one where the line meets the destination link
-  for (let k = 0; k < out.length; k++) out[k].s1 = k + 1 < out.length ? out[k + 1].s0 : cum[Math.max(0, pts.length - 2)];
+  for (let k = 0; k < out.length; k++) out[k].s1 = k + 1 < out.length ? out[k + 1].s0 : end;
   return out;
 }
 

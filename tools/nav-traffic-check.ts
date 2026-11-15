@@ -64,6 +64,15 @@ function unit() {
   else { const c = east.legs[0].coords[east.legs[0].controls![0].i], p2 = R.route([-250, 0], [250, 0], 'drive')[0].legs[0].coords.find((q) => Math.abs(q[0]) < 1e-9); if (!p2 || c[0] !== p2[0] || c[1] !== p2[1]) fail('the light should sit at the junction it controls'); }
   if (at(west).length) fail(`westbound arrives on segment 11, which has no light: ${at(west)}`);
   if (!at(toNode2).length) fail('turning at node 2 (arriving on 10) should still meet its light');
+  // a destination on the road itself: the route's last road point and the destination are one point, merged in the
+  // plan; the last road's traffic must still run to the end of the line (its colour and callout ahead of the car)
+  R.applyTraffic(new Uint16Array([10, 11]), new Uint8Array([95, 95])); R.setTraffic(true);
+  const busy = R.route([-250, 0], [250, 0], 'drive')[0], bp = busy && buildPlan(busy);
+  const lastT = bp?.traffic.at(-1);
+  if (!bp || !lastT || Math.abs(lastT.s1 - bp.total) > 0.5 || lastT.s1 - lastT.s0 < 100) fail(`traffic on the last road should run to the end of the line: ${JSON.stringify(lastT)} (total ${bp?.total})`);
+  if (!bp || !bp.jams.length || bp.jams[0].s1 - bp.jams[0].s0 < 100) fail(`a jam on the last road should keep its length: ${JSON.stringify(bp?.jams)}`);
+  if (bp && Math.abs(bp.spans.at(-1)!.s1 - bp.total) > 0.5) fail('the last road span should run to the end of the line');
+  R.setTraffic(false); R.clearTraffic();
   R.applyControls([]);
   if (R.route([-250, 0], [250, 0], 'drive')[0].legs[0].controls) fail('no save, no controls');
 }
