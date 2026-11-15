@@ -460,7 +460,7 @@ export class Router {
   }
 
   /** `fromSeg` / `toSeg`: the road segment drawn on top where the user set that end (a click on a road); used for
-   *  driving when it is a motorway, ramp or highway (see pickedHit), ignored otherwise */
+   *  driving when it is a motorway, ramp or highway (see highwayEnd), ignored otherwise */
   route(from: XY, to: XY, mode: Mode, opts: { avoidTolls?: boolean; rules?: boolean; fromSeg?: number; toSeg?: number } = {}): Route[] {
     // the save's traffic rules apply by default once loaded; `rules: false` compares against the export alone
     if (opts.rules === false && this.rulesOn) {
@@ -678,7 +678,7 @@ export class Router {
     const SH = ends(from, false), TH = ends(to, false);
     if (onRoads) {
       // avoiding tolls: if the road joins only lead through a gate, a nearby junction may not
-      if (this.avoidTolls && gated(onRoads)) { const alt = SH.length && TH.length ? this.driveSearchOn(SH, TH, penalty) : null; if (alt && !gated(alt)) return alt; }
+      if (this.avoidTolls && gated(onRoads)) { const [S, T] = this.stopOkEnds(from, to, SH, TH); const alt = S.length && T.length ? this.driveSearchOn(S, T, penalty) : null; if (alt && !gated(alt)) return alt; }
       return onRoads;
     }
     if (!SH.length || !TH.length) return null;
@@ -687,21 +687,21 @@ export class Router {
     // stop at a node on a motorway or ramp alone: that would be a jump across to it); and no route drives a likely
     // one-way backwards from or to it
     const onHighway = this.highwayEnd(from).length > 0 || this.highwayEnd(to).length > 0;
-    const stopOk = (h: DriveHit) => !h.node || this.adj[this.edges[h.e][h.frac ? 'b' : 'a']].some((ei) => this.allowed(this.edges[ei], 'drive') && !HIGHWAY.has(this.edges[ei].cls));
-    const r = onHighway ? this.driveSearchOn(SH.filter(stopOk), TH.filter(stopOk), penalty) : this.driveSearchOn(SH, TH, penalty);
+    const [S, T] = this.stopOkEnds(from, to, SH, TH);
+    const r = this.driveSearchOn(S, T, penalty);
     if (r || onHighway) return r;
     // no route obeys every inferred one-way: as a last resort a likely (keep-right) direction may be driven
     // against, heavily penalised and flagged; a direction confirmed by vehicles never is (then: no route)
     this.relaxed = true;
     try { const b = this.driveSearchOn(SH, TH, penalty); return b ? { ...b, bent: true } : null; } finally { this.relaxed = false; }
   }
-  /**
-   * The drivable roads a point can join: the nearest point on each of the few nearest roads a car may use
-   * (lane access; big connected network only), as for walking: only roads nearly as close as the nearest,
-   * the extra distance at double cost. Inside a multi-part asset, measured from its footprint. A trip can't
-   * begin or end part-way along a motorway, ramp or highway (no access there), so those only count when no
-   * other road is in reach.
-   */
+  /** With an end on a motorway, ramp or highway, the other end's junction stand-ins only where an ordinary road meets
+   *  (a car can't stop at a node on a motorway or ramp alone); otherwise the joins unchanged */
+  private stopOkEnds(from: XY, to: XY, SH: DriveHit[], TH: DriveHit[]): [DriveHit[], DriveHit[]] {
+    if (!this.highwayEnd(from).length && !this.highwayEnd(to).length) return [SH, TH];
+    const ok = (h: DriveHit) => !h.node || this.adj[this.edges[h.e][h.frac ? 'b' : 'a']].some((ei) => this.allowed(this.edges[ei], 'drive') && !HIGHWAY.has(this.edges[ei].cls));
+    return [SH.filter(ok), TH.filter(ok)];
+  }
   /**
    * The road under an end the user put on a motorway, ramp or highway (issue #16): such a road is otherwise never
    * joined while any ordinary road is within 3 km (driveHits), so the route started on a road beside or under it.
@@ -726,6 +726,13 @@ export class Router {
     const top = Math.max(-1, ...on.map(level)), shown = on.filter((ei) => level(ei) === top);
     return shown.some((ei) => HIGHWAY.has(this.edges[ei].cls)) ? shown.map(hitOn) : [];
   }
+  /**
+   * The drivable roads a point can join: the nearest point on each of the few nearest roads a car may use
+   * (lane access; big connected network only), as for walking: only roads nearly as close as the nearest,
+   * the extra distance at double cost. Inside a multi-part asset, measured from its footprint. A trip can't
+   * begin or end part-way along a motorway, ramp or highway (no access there), so those only count when no
+   * other road is in reach.
+   */
   private driveHits(p: XY, k = 4, max = 450): DriveHit[] {
     // nothing drivable in reach (a point in open country): the nearest road farther out, still a road
     // rather than a single junction that may sit on a motorway carriageway

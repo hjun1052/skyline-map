@@ -738,7 +738,6 @@ function closurePickAt(pt: { x: number; y: number }) {
   }
 }
 
-/** Name of whatever labelled thing is under a screen point, else a generic pin label. */
 /** the road segment drawn on top at a point (what a click there would pick), so directions start or end on the
  *  road the user clicked even where roads overlap (issue #16); the router uses it for motorways, ramps and highways */
 function roadAt(pt: { x: number; y: number }): { seg?: number } {
@@ -746,6 +745,7 @@ function roadAt(pt: { x: number; y: number }): { seg?: number } {
   const f = map.queryRenderedFeatures([[pt.x - 3, pt.y - 3], [pt.x + 3, pt.y + 3]], { layers })[0];
   return f?.properties.id !== undefined ? { seg: Number(f.properties.id) } : {};
 }
+/** Name of whatever labelled thing is under a screen point, else a generic pin label. */
 function placeLabelAt(pt: { x: number; y: number }): string {
   const order = ['station', 'poi', 'park-label', 'building', 'lots'];
   const f = map.queryRenderedFeatures([[pt.x - 10, pt.y - 10], [pt.x + 10, pt.y + 10]], { layers: order.filter((l) => map.getLayer(l)) })
