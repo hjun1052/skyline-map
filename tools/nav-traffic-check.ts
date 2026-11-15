@@ -6,7 +6,7 @@ import { buildCity } from '../src/build';
 import { Router, type Route } from '../src/router';
 import { inferOneWay, type OneWayResult } from '../src/oneway';
 import { detectTolls } from '../src/tolls';
-import { buildPlan, jamsOf, JAM, type NavTraffic } from '../src/nav';
+import { buildPlan, jamsOf, JAM, buildingsNearRoute, type NavTraffic } from '../src/nav';
 import { junctionControls } from '../src/sim/controls';
 import { loadSim } from '../src/sim';
 import type { SaveNet } from '../src/sim/net';
@@ -73,6 +73,17 @@ function unit() {
   if (!bp || !bp.jams.length || bp.jams[0].s1 - bp.jams[0].s0 < 100) fail(`a jam on the last road should keep its length: ${JSON.stringify(bp?.jams)}`);
   if (bp && Math.abs(bp.spans.at(-1)!.s1 - bp.total) > 0.5) fail('the last road span should run to the end of the line');
   R.setTraffic(false); R.clearTraffic();
+  // see-through buildings: footprints beside the route ahead (a corner, or an edge's middle, within 30 m)
+  const ep = buildPlan(R.route([-250, 0], [250, 0], 'drive')[0])!;
+  const sq = (x: number, z: number, h = 5): [number, number][] => [[x - h, z - h], [x + h, z - h], [x + h, z + h], [x - h, z + h], [x - h, z - h]];
+  const near = buildingsNearRoute(ep, 0, [
+    { id: 1, rings: [sq(0, 20)] }, // beside the road
+    { id: 2, rings: [sq(0, 80)] }, // a block away
+    { id: 3, rings: [sq(-400, 10)] }, // behind the start
+    { id: 4, rings: [[[100, -100], [110, -100], [110, 100], [100, 100], [100, -100]]] }, // straddles the road, corners far off
+  ], { near: 30, ahead: 900, behind: 40 });
+  if ([...near].sort().join() !== '1,4') fail(`buildings beside the route ahead: ${[...near]} (want 1 and 4)`);
+  if (buildingsNearRoute(ep, 400, [{ id: 1, rings: [sq(-200, 20)] }], { near: 30, ahead: 900, behind: 40 }).size) fail('a building the car has passed should no longer be see-through');
   R.applyControls([]);
   if (R.route([-250, 0], [250, 0], 'drive')[0].legs[0].controls) fail('no save, no controls');
 }

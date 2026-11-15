@@ -3,8 +3,8 @@
 import * as maplibregl from 'maplibre-gl';
 import type { Map as MLMap, GeoJSONSource, LayerSpecification } from 'maplibre-gl';
 import type { Route } from './router';
-import { buildPlan, stateAt, timeAt, pointAt, bearing, spanAt, nextManeuver, type NavPlan, type Maneuver } from './nav';
-import { toLngLat, type XY } from './geo';
+import { buildPlan, stateAt, timeAt, pointAt, bearing, spanAt, nextManeuver, buildingsNearRoute, type NavPlan, type Maneuver } from './nav';
+import { toLngLat, fromLngLat, type XY } from './geo';
 import { maneuverIcon, fmtDist, fmtTime } from './directions';
 import { isPhone } from './sheet';
 import { t, applyStatic, getLang, locale } from './i18n';
@@ -117,11 +117,59 @@ export function createNav(d: NavDeps) {
       { id: 'nav-turn-head', type: 'symbol', source: 'nav-turn', filter: ['==', ['geometry-type'], 'Point'], layout: { 'icon-image': 'nav-head', 'icon-rotate': ['get', 'b'], 'icon-rotation-alignment': 'map', 'icon-pitch-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-size': ['interpolate', ['exponential', 1.5], ['zoom'], 13, 0.35, 19, 1.4] } },
     ] as LayerSpecification[];
     for (const l of layers) map.addLayer(l);
+    addFade();
     // the directions lines stay underneath, hidden while driving
     hidRoute = map.getLayersOrder().filter((id) => id.startsWith('route-') && map.getLayoutProperty(id, 'visibility') !== 'none');
     for (const id of hidRoute) map.setLayoutProperty(id, 'visibility', 'none');
   }
+  /** 3D buildings beside the route ahead turn see-through, so the route (draped on the terrain, which buildings stand
+   *  in front of) stays visible behind them: those buildings move to a copy of the 3D layer at lower opacity (the
+   *  layer's opacity can't vary per building); the rest stay as they are. Restored on exit. */
+  const FADE = { near: 30, ahead: 900, behind: 40, opacity: 0.4 };
+  let fadeIds = '', fadeAt = -1e9;
+  function addFade() {
+    // built from the 3D layer's own properties (map.getStyle() isn't available while the style is still settling)
+    const base = map.getLayer('building-3d');
+    if (!base || map.getLayer('nav-bld-fade')) return;
+    const paint = (k: string) => map.getPaintProperty('building-3d', k as any);
+    const order = map.getLayersOrder(), next = order[order.indexOf('building-3d') + 1];
+    map.addLayer({
+      id: 'nav-bld-fade', type: 'fill-extrusion', source: 'buildings', minzoom: base.minzoom, filter: ['in', ['id'], ['literal', []]],
+      layout: { visibility: map.getLayoutProperty('building-3d', 'visibility') ?? 'visible' },
+      paint: { 'fill-extrusion-color': paint('fill-extrusion-color'), 'fill-extrusion-height': paint('fill-extrusion-height'), 'fill-extrusion-vertical-gradient': paint('fill-extrusion-vertical-gradient') ?? true, 'fill-extrusion-opacity': FADE.opacity },
+    } as LayerSpecification, next);
+    fadeIds = ''; fadeAt = -1e9;
+    map.on('idle', fadeIdle);
+  }
+  // tiles that load after a seek or a pause: their buildings are checked once the map settles
+  const fadeIdle = () => { if (plan) { fadeAt = -1e9; drawFade(stateAt(plan, tp).s); } };
+  function removeFade() {
+    map.off('idle', fadeIdle);
+    if (map.getLayer('nav-bld-fade')) map.removeLayer('nav-bld-fade');
+    if (map.getLayer('building-3d')) map.setFilter('building-3d', null);
+    fadeIds = '';
+  }
+  function drawFade(s: number) {
+    // every 15 m driven (or sought); a pause or a seek ends the frames soon after, so no time throttle
+    if (!map.getLayer('nav-bld-fade') || Math.abs(s - fadeAt) < 15) return;
+    fadeAt = s;
+    const feats: { id: number; rings: XY[][] }[] = [];
+    for (const f of map.querySourceFeatures('buildings')) {
+      if (f.id === undefined) continue;
+      const g = f.geometry as { type: string; coordinates: any };
+      const rings: number[][][] = g.type === 'Polygon' ? [g.coordinates[0]] : g.type === 'MultiPolygon' ? g.coordinates.map((c: number[][][]) => c[0]) : [];
+      feats.push({ id: Number(f.id), rings: rings.map((r) => r.map((c) => fromLngLat(c[0], c[1]))) });
+    }
+    const ids = buildingsNearRoute(plan!, s, feats, FADE);
+    const key = [...ids].sort((a, b) => a - b).join(',');
+    if (key === fadeIds) return;
+    fadeIds = key;
+    const list = ['literal', [...ids]];
+    map.setFilter('nav-bld-fade', ['in', ['id'], list] as any);
+    map.setFilter('building-3d', ids.size ? (['!', ['in', ['id'], list]] as any) : null);
+  }
   function removeLayers() {
+    removeFade();
     for (const id of LAYERS) if (map.getLayer(id)) map.removeLayer(id);
     for (const s of ['nav-route', 'nav-turn', 'nav-ctl']) if (map.getSource(s)) map.removeSource(s);
     for (const j of jamMarks) j.m.remove();
@@ -365,6 +413,7 @@ export function createNav(d: NavDeps) {
     drawProgress(s);
     drawControls(s);
     drawJams(s);
+    drawFade(s);
     drawTurn(nextManeuver(p, s), p.maneuvers[nextManeuver(p, s)].at - s);
     if (playing || s >= p.total - 0.5) speak(s, v);
   }

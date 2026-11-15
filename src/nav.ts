@@ -129,6 +129,31 @@ function placeSpans(raw: Span[], coords: XY[], pts: XY[], cum: Float64Array, end
   return out;
 }
 
+/**
+ * Buildings beside the route ahead (the simulation shows them see-through, so the route behind them stays visible):
+ * a footprint corner, or the middle of a footprint edge, within `near` metres of the line between `behind` metres back
+ * and `ahead` metres on from distance `s`. Footprints in game metres.
+ */
+export function buildingsNearRoute(p: NavPlan, s: number, feats: { id: number; rings: XY[][] }[], o: { near: number; ahead: number; behind: number }): Set<number> {
+  const cell = 32, grid = new Map<string, XY[]>();
+  // the line every 8 m, bucketed by cell, so each corner only checks the samples around it
+  for (let x = Math.max(0, s - o.behind); x <= Math.min(p.total, s + o.ahead); x += 8) {
+    const q = pointAt(p, x).xy, k = Math.floor(q[0] / cell) + ',' + Math.floor(q[1] / cell);
+    (grid.get(k) ?? grid.set(k, []).get(k)!).push(q);
+  }
+  const near = (v: XY) => {
+    const cx = Math.floor(v[0] / cell), cz = Math.floor(v[1] / cell);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const q of grid.get(cx + i + ',' + (cz + j)) ?? []) if (Math.hypot(q[0] - v[0], q[1] - v[1]) < o.near) return true;
+    return false;
+  };
+  const ids = new Set<number>();
+  for (const f of feats) {
+    if (ids.has(f.id)) continue;
+    if (f.rings.some((r) => r.some((a, i) => near(a) || (i + 1 < r.length && near([(a[0] + r[i + 1][0]) / 2, (a[1] + r[i + 1][1]) / 2]))))) ids.add(f.id);
+  }
+  return ids;
+}
+
 /** Point and segment index at distance s along the line. */
 export function pointAt(p: NavPlan, s: number): { xy: XY; i: number } {
   const { cum, pts } = p;
