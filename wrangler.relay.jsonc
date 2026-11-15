@@ -1,9 +1,8 @@
 {
-  // The app plus the Send to Phone relay. NOT the production default: `npm run deploy` and the deploy workflow use
-  // wrangler.jsonc (static assets only), so the relay stays off in production until it is deliberately switched on.
-  // To switch it on (needs the owner's approval; see docs/send-to-phone-billing.md, "Before deploying"):
-  //   wrangler secret put RELAY_SECRET -c wrangler.relay.jsonc
-  //   VITE_SEND_TO_PHONE=1 npm run build && wrangler deploy -c wrangler.relay.jsonc
+  // Production: the app plus the Send to Phone relay. `npm run deploy` and the deploy workflow build with
+  // VITE_SEND_TO_PHONE=1 and deploy this. The relay needs the RELAY_SECRET Worker secret (without it, it refuses
+  // everything). wrangler.jsonc is the same site without the relay: deploying it switches Send to Phone off
+  // (docs/send-to-phone-billing.md, section 6).
   // Locally: VITE_SEND_TO_PHONE=1 npm run build, then the relay-* configurations in .claude/launch.json.
   // name, compatibility_date, assets and routes must match wrangler.jsonc (npm run check:phone checks this).
   "name": "skyline-atlas",

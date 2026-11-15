@@ -278,7 +278,7 @@ async function unit() {
   console.log('deploy configuration');
   const jsonc = (f: string) => JSON.parse(readFileSync(f, 'utf8').replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g, (m, str) => str ?? ''));
   const prod = jsonc('wrangler.jsonc'), rel = jsonc('wrangler.relay.jsonc');
-  ok(!prod.main && !prod.durable_objects && !prod.migrations && !prod.ratelimits && !prod.assets.run_worker_first, 'the default deploy (wrangler.jsonc) is static assets only: the relay stays off in production');
+  ok(!prod.main && !prod.durable_objects && !prod.migrations && !prod.ratelimits && !prod.assets.run_worker_first, 'wrangler.jsonc (the off switch) is static assets only');
   ok(rel.main === 'worker/index.ts' && rel.assets.run_worker_first?.join() === '/relay/*', 'the relay configuration runs the worker for /relay/* only');
   for (const k of ['name', 'compatibility_date', 'routes']) ok(JSON.stringify(prod[k]) === JSON.stringify(rel[k]), `wrangler.relay.jsonc matches wrangler.jsonc: ${k}`);
   ok(prod.assets.directory === rel.assets.directory && prod.assets.not_found_handling === rel.assets.not_found_handling, 'wrangler.relay.jsonc serves the same assets the same way');

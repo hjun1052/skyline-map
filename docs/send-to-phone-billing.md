@@ -1,12 +1,8 @@
 # Send to Phone: billing risk review
 
-**Status: not deployed, and off by default.** Written 2026-11-15; updated the same day for signed tickets, the per-client room cap, phone confirmation and the final review.
+**Status: switched on in production on 2026-11-16** (the owner's decision). Written 2026-11-15; updated for signed tickets, the per-client room cap, phone confirmation, the final review and going live.
 
-**Off until switched on.** Merging this code changes nothing in production:
-- the default `wrangler.jsonc` (used by `npm run deploy` and the deploy workflow) is still static assets only: no Worker code, no Durable Objects, no rate-limit namespace;
-- the app is built without the feature unless `VITE_SEND_TO_PHONE=1`, so there is no menu item and pairing links are ignored.
-
-Everything below applies only once it is switched on (section 6).
+`npm run deploy` and the deploy workflow build with `VITE_SEND_TO_PHONE=1` and deploy `wrangler.relay.jsonc`. Section 6 says how to switch it off. Before going live, current usage of the included amounts could not be read (the CLI login lacks billing access), and no real phone had been tried.
 
 **Account:** the Cloudflare account is on **Workers Paid** and hosts other Workers, some of which use Durable Objects; they share the included usage below. **No account-wide spend limit is set**, and this feature doesn't set one. Current billable usage was not checked for this review.
 
@@ -122,11 +118,11 @@ An attacker who opens the day's 50 rooms and keeps each one awake for its full 1
 
 ## 6. Switching it on and off
 
-- **On (needs the owner's approval):**
-  1. `wrangler secret put RELAY_SECRET -c wrangler.relay.jsonc`, with a long random value (for example `openssl rand -base64 32`).
-  2. `VITE_SEND_TO_PHONE=1 npm run build && wrangler deploy -c wrangler.relay.jsonc`, and change the deploy workflow the same way so later deploys keep it.
+- **On (done 2026-11-16):**
+  1. `openssl rand -base64 32 | wrangler secret put RELAY_SECRET -c wrangler.relay.jsonc` (a random value nobody sees).
+  2. `npm run deploy` (builds with `VITE_SEND_TO_PHONE=1`, deploys `wrangler.relay.jsonc`); the deploy workflow does the same.
   - This creates the two Durable Object classes (`TransferRoom`, `RelayBudget`, migration `v1`) and the rate-limit namespace (`73001`) on the `skyline-atlas` Worker. It changes no plan or billing setting.
-- **Off fast:** delete the secret (`wrangler secret delete RELAY_SECRET -c wrangler.relay.jsonc`). Every relay request is then refused by the Worker (`503`) without touching a Durable Object, and the app says "isn't available right now". Deploying with the default `wrangler.jsonc` again removes the Worker code entirely (the Durable Object classes stay, idle, until a deleting migration).
+- **Off fast:** delete the secret (`wrangler secret delete RELAY_SECRET -c wrangler.relay.jsonc`). Every relay request is then refused by the Worker (`503`) without touching a Durable Object, and the app says "isn't available right now". To remove it, change `npm run deploy` and the deploy workflow back to `wrangler.jsonc` without the flag; that removes the Worker code entirely (the Durable Object classes stay, idle, until a deleting migration).
 - **Caps:** `BUDGET` (`roomsPerDay`, `roomsPerClient`, `bytesPerDay`) and `LIMITS` (`maxMs`, `maxMessages`) in `worker/room-core.ts`, and `ratelimits` in `wrangler.relay.jsonc`.
   - Halving `roomsPerDay` halves the worst-case duration in section 4.
   - Shortening `maxMs` to 10 minutes cuts it by a third.

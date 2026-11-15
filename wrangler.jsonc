@@ -1,6 +1,6 @@
 {
-  // Static deploy of the built app to Cloudflare (Workers static assets).
-  // npm run deploy  →  https://skyline.codz.me
+  // The built app without the Send to Phone relay (static assets only). Production deploys wrangler.relay.jsonc;
+  // deploying this one instead (built without VITE_SEND_TO_PHONE) switches Send to Phone off.
   "name": "skyline-atlas",
   "compatibility_date": "2026-10-01",
   "assets": { "directory": "./dist", "not_found_handling": "404-page" },

@@ -1,6 +1,8 @@
 name: Deploy
 
-# Deploys main to https://skyline.codz.me (Cloudflare Workers static assets, see wrangler.jsonc).
+# Deploys main to https://skyline.codz.me: the static app plus the Send to Phone relay (wrangler.relay.jsonc; the app
+# is built with VITE_SEND_TO_PHONE=1). To switch Send to Phone off, deploy with wrangler.jsonc and build without the flag
+# (docs/send-to-phone-billing.md, section 6).
 # The job uses the "production" environment, which waits for a maintainer's approval before it runs.
 
 on:
@@ -35,13 +37,15 @@ jobs:
       - run: npm ci
       - name: Type check and build
         run: npm run build
+        env:
+          VITE_SEND_TO_PHONE: '1'
       - name: Self-checks
         run: npm run check && npm run check:i18n
       - name: Deploy to Cloudflare
         id: deploy
         run: |
           set -o pipefail
-          npx --yes wrangler@4.40.3 deploy | tee deploy.log
+          npx --yes wrangler@4.40.3 deploy -c wrangler.relay.jsonc | tee deploy.log
           echo "version=$(grep -oE 'Current Version ID: [0-9a-f-]+' deploy.log | awk '{print $4}')" >> "$GITHUB_OUTPUT"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -52,7 +56,7 @@ jobs:
         run: |
           want="${{ steps.deploy.outputs.version }}"
           [ -n "$want" ] || { echo "::error::No version ID in the deploy output"; exit 1; }
-          npx --yes wrangler@4.40.3 deployments status --json > status.json
+          npx --yes wrangler@4.40.3 deployments status -c wrangler.relay.jsonc --json > status.json
           node -e '
             const s = require("./status.json"), want = process.argv[1];
             const v = s.versions.find((x) => x.version_id === want);
