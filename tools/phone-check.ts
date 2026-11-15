@@ -3,10 +3,10 @@
 import { webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
-  LIMITS, Dir, T, b64url, unb64url, newRoom, newKeyText, newPhoneId, pairingUrl, parsePairing, importKey, pairingCode, seal, open,
+  LIMITS, Dir, T, b64url, unb64url, newRoom, newKeyText, newDeviceKeys, sessionKey, pairingUrl, parsePairing, importKey, pairingCode, seal, open,
   jsonMsg, dataMsg, readMsg, validManifest, Sender, Receiver, type Manifest, type Wire, type AbortReason,
 } from '../src/phone/protocol';
-import { join, message, expired, nextCheck, spend, issueTicket, checkTicket, clientKey, clientOf, LIMITS as ROOM, BUDGET, type RoomState } from '../worker/room-core';
+import { join, message, expired, nextCheck, spend, issueTicket, checkTicket, clientKey, clientOf, restore, LIMITS as ROOM, BUDGET, type RoomState } from '../worker/room-core';
 
 if (!globalThis.crypto) (globalThis as any).crypto = webcrypto;
 const newRoomId = newRoom; // a room id the relay never issued (the live tests below get theirs from the relay)
@@ -60,12 +60,20 @@ async function unit() {
   ok(!!p && p.room === room && p.key === keyText && p.ticket === ticket, 'pairing link round trip (room, key, ticket)');
   ok(!parsePairing('#phone=short.key') && !parsePairing('#other=' + room + '.' + keyText + '.' + ticket) && !parsePairing('#phone=' + room + '.' + keyText), 'malformed or ticketless pairing links are ignored');
   ok(url.length < 200, `pairing link stays short enough for a small QR code (${url.length} chars)`);
-  const phoneId = newPhoneId();
-  const code = await pairingCode(phoneId);
-  ok(/^\d{4}$/.test(code) && code === (await pairingCode(phoneId)), 'a phone\'s code is 4 stable digits');
+  const phoneKeys = await newDeviceKeys(), deskKeys = await newDeviceKeys();
+  ok(/^[A-Za-z0-9_-]{87}$/.test(phoneKeys.pub) && phoneKeys.pub !== deskKeys.pub, 'device public keys are 87 characters (65 raw bytes) and random');
+  const code = await pairingCode(phoneKeys.pub);
+  ok(/^\d{4}$/.test(code) && code === (await pairingCode(phoneKeys.pub)), 'a phone\'s code is 4 stable digits');
   let distinct = 0;
-  for (let i = 0; i < 20; i++) if ((await pairingCode(newPhoneId())) !== code) distinct++;
+  for (let i = 0; i < 20; i++) if ((await pairingCode((await newDeviceKeys()).pub)) !== code) distinct++;
   ok(distinct >= 18, 'different phones show different codes');
+  const sp = await sessionKey(phoneKeys.pair, deskKeys.pub, phoneKeys.pub, deskKeys.pub), sd = await sessionKey(deskKeys.pair, phoneKeys.pub, phoneKeys.pub, deskKeys.pub);
+  const probe = await seal(sd, Dir.ToPhone, new TextEncoder().encode('session'));
+  ok(new TextDecoder().decode(await open(sp, Dir.ToPhone, probe)) === 'session', 'phone and desktop derive the same session key');
+  const outsider = await newDeviceKeys();
+  const so = await sessionKey(outsider.pair, deskKeys.pub, phoneKeys.pub, deskKeys.pub);
+  let leaked = true; try { await open(so, Dir.ToPhone, probe); } catch { leaked = false; }
+  ok(!leaked, 'someone with only the public keys (and the QR key) cannot derive the session key');
 
   console.log('tickets');
   const T0 = Date.UTC(2026, 10, 15, 10), exp = Math.floor(T0 / 1000) + 900;
@@ -118,7 +126,7 @@ async function unit() {
     let got: Got | null = null, rAbort: [AbortReason, boolean] | null = null, sAbort: AbortReason | null = null, sDone = false, progress = 0;
     const m = o.manifest ?? manifest;
     const s = new Sender(key, m, o.blobs ?? [new Blob([map as BlobPart]), new Blob([save as BlobPart])], { done: () => (sDone = true), abort: (r) => (sAbort = r) });
-    const r = new Receiver(key, newPhoneId(), { manifest: () => o.vetoManifest ?? null, progress: (g) => (progress = g), done: (files, mm) => (got = { files, m: mm }), abort: (why, peer) => (rAbort = [why, peer]) });
+    const r = new Receiver(key, await newDeviceKeys(), { manifest: () => o.vetoManifest ?? null, progress: (g) => (progress = g), done: (files, mm) => (got = { files, m: mm }), abort: (why, peer) => (rAbort = [why, peer]) });
     let downs = 0;
     const l = link({ tamper: (msg, dir) => { if (dir === 'down' && o.cancelAfter !== undefined && ++downs === o.cancelAfter) s.cancel(); return o.tamper ? o.tamper(msg, dir) : msg; } });
     const drops = [...(o.drops ?? [])];
@@ -145,7 +153,7 @@ async function unit() {
     const big = rand(12 * LIMITS.chunk + 5);
     let got: Blob | null = null, why: AbortReason | null = null;
     const s = new Sender(key, { v: 1, city: 'x', files: [{ kind: 'map', name: 'b', size: big.length }] }, [new Blob([big as BlobPart])]);
-    const r = new Receiver(key, newPhoneId(), { done: (f) => (got = f[0].blob), abort: (w) => (why = w) });
+    const r = new Receiver(key, await newDeviceKeys(), { done: (f) => (got = f[0].blob), abort: (w) => (why = w) });
     let phoneUp = true, delivered = 0;
     const toPhone: Uint8Array[] = [];
     // the relay: desktop → phone messages wait in a queue (as in flight); the phone drops after 3 of them
@@ -183,13 +191,22 @@ async function unit() {
   {
     const key = await importKey(keyText);
     let why: AbortReason | null = null;
-    const r = new Receiver(key, newPhoneId(), { abort: (w) => (why = w) });
+    const pk = await newDeviceKeys(), dk = await newDeviceKeys();
+    const r = new Receiver(key, pk, { abort: (w) => (why = w) });
     await r.attach({ send() {} });
+    await r.receive(await seal(key, Dir.ToPhone, jsonMsg(T.Key, { pub: dk.pub })));
+    const sess = await sessionKey(dk.pair, pk.pub, pk.pub, dk.pub);
     const m1: Manifest = { v: 1, city: 'x', files: [{ kind: 'map', name: 'a', size: 10 }] };
-    await r.receive(await seal(key, Dir.ToPhone, jsonMsg(T.Manifest, m1)));
-    await r.receive(await seal(key, Dir.ToPhone, dataMsg(0, new Uint8Array(6))));
-    await r.receive(await seal(key, Dir.ToPhone, jsonMsg(T.End, { total: 10 })));
+    await r.receive(await seal(sess, Dir.ToPhone, jsonMsg(T.Manifest, m1)));
+    await r.receive(await seal(sess, Dir.ToPhone, dataMsg(0, new Uint8Array(6))));
+    await r.receive(await seal(sess, Dir.ToPhone, jsonMsg(T.End, { total: 10 })));
     ok(why === 'mismatch' && !r.done, 'a truncated transfer is refused');
+    // the map under the QR key alone (not from the desktop that confirmed this phone) is refused
+    why = null;
+    const r2 = new Receiver(key, await newDeviceKeys(), { abort: (w) => (why = w) });
+    await r2.attach({ send() {} });
+    await r2.receive(await seal(key, Dir.ToPhone, jsonMsg(T.Manifest, m1)));
+    ok(why === 'decrypt' && !r2.manifest, 'a manifest under the QR key alone is refused');
   }
   // the sender ignores messages that aren't from its phone (wrong key), instead of acting on them
   {
@@ -197,13 +214,16 @@ async function unit() {
     const sent: Uint8Array[] = [];
     const s = new Sender(key, { v: 1, city: 'x', files: [{ kind: 'map', name: 'a', size: 4 }] }, [new Blob([new Uint8Array(4)])]);
     s.attach({ send: (m) => sent.push(m) });
-    const id = newPhoneId();
-    await s.receive(await seal(wrong, Dir.ToDesktop, jsonMsg(T.Hello, { offset: 0, id })));
+    const id = (await newDeviceKeys()).pub;
+    await s.receive(await seal(wrong, Dir.ToDesktop, jsonMsg(T.Hello, { offset: 0, pub: id })));
     ok(sent.length === 0, 'a hello under another key is ignored (nothing is sent)');
     await s.receive(await seal(key, Dir.ToDesktop, jsonMsg(T.Hello, { offset: 0 })));
     await tick(); await tick();
-    ok(sent.length === 0, 'a hello without a phone id is ignored');
-    await s.receive(await seal(key, Dir.ToDesktop, jsonMsg(T.Hello, { offset: 0, id })));
+    ok(sent.length === 0, 'a hello without a public key is ignored');
+    await s.receive(await seal(key, Dir.ToDesktop, jsonMsg(T.Hello, { offset: 0, pub: 'A'.repeat(87) })));
+    await tick(); await tick();
+    ok(sent.length === 0, 'a hello with an unusable public key is ignored');
+    await s.receive(await seal(key, Dir.ToDesktop, jsonMsg(T.Hello, { offset: 0, pub: id })));
     await tick(); await tick();
     ok(sent.length >= 2, 'a hello from the phone starts the transfer');
   }
@@ -216,7 +236,7 @@ async function unit() {
     const mkSender = () => new Sender(key, { v: 1, city: 'x', files: [{ kind: 'map', name: 'a', size: data.length }] }, [new Blob([data as BlobPart])], { confirm: async (id) => { asked.push(id); return answer; } });
     // declined: the phone is told it was cancelled and gets nothing
     let s = mkSender(), why: AbortReason | null = null, got: Blob | null = null;
-    let r = new Receiver(key, newPhoneId(), { abort: (w) => (why = w), done: (f) => (got = f[0].blob) });
+    let r = new Receiver(key, await newDeviceKeys(), { abort: (w) => (why = w), done: (f) => (got = f[0].blob) });
     const pipe = (s: Sender, r: Receiver) => { s.attach({ send: (m) => void r.receive(m) }); return r.attach({ send: (m) => void s.receive(m) }); };
     await pipe(s, r);
     for (let i = 0; i < 50; i++) await tick();
@@ -224,8 +244,8 @@ async function unit() {
     // confirmed: the transfer runs; the same phone reconnecting is not asked again
     answer = true; asked.length = 0; why = null;
     s = mkSender();
-    const id = newPhoneId();
-    r = new Receiver(key, id, { abort: (w) => (why = w), done: (f) => (got = f[0].blob) });
+    const pk = await newDeviceKeys(), id = pk.pub;
+    r = new Receiver(key, pk, { abort: (w) => (why = w), done: (f) => (got = f[0].blob) });
     await pipe(s, r);
     await r.attach({ send: (m) => void s.receive(m) }); // a reconnect of the same phone
     for (let i = 0; i < 300 && !got; i++) await tick();
@@ -237,11 +257,19 @@ async function unit() {
     s = new Sender(key, { v: 1, city: 'x', files: [{ kind: 'map', name: 'a', size: data.length }] }, [new Blob([data as BlobPart])], { confirm: async (pid) => { asked.push(pid); return answer; }, declined: (a) => (another = a) });
     s.attach({ send: (m) => sent.push(m) });
     answer = true;
-    await s.receive(await seal(key, Dir.ToDesktop, jsonMsg(T.Hello, { offset: 0, id })));
+    await s.receive(await seal(key, Dir.ToDesktop, jsonMsg(T.Hello, { offset: 0, pub: id })));
     answer = false;
     for (let i = 0; i < 50; i++) await tick(); // the first phone's window is in flight
+    // someone who photographed the QR code and silently took over the phone's socket sees all of this, but with the QR
+    // key alone can read only the desktop's public key: the map is under the session key
+    const readable: number[] = [];
+    for (const m of sent) { try { readable.push(readMsg(await open(key, Dir.ToPhone, m)).t); } catch { /* not readable */ } }
+    ok(sent.length > 3 && readable.length === 1 && readable[0] === T.Key, `a silent socket with the QR key reads none of the map (${readable.length} of ${sent.length} messages readable)`);
+    // ... nor fake the phone's acknowledgements
+    await s.receive(await seal(key, Dir.ToDesktop, jsonMsg(T.Done, {})));
+    ok(!s.done, 'a Done under the QR key alone is ignored');
     const before = sent.length;
-    await s.receive(await seal(key, Dir.ToDesktop, jsonMsg(T.Hello, { offset: 0, id: newPhoneId() })));
+    await s.receive(await seal(key, Dir.ToDesktop, jsonMsg(T.Hello, { offset: 0, pub: (await newDeviceKeys()).pub })));
     for (let i = 0; i < 20; i++) await tick();
     ok(asked.length === 1 && s.stopped === 'cancelled' && another === true, 'another device after the confirmed phone is not asked about: the transfer stops');
     ok(sent.length - before === 1, 'the other device gets only the cancellation');
@@ -294,6 +322,21 @@ async function unit() {
   ok(r1.ok && r1.reserve === BUDGET.block, 'a room reserves a block from the budget before forwarding its first bytes');
   const r2 = message({ ...jr.state, bytes: 1000, allowance: BUDGET.block }, 1000, t0 + 1) as any;
   ok(r2.ok && r2.reserve === 0, 'within its allowance a room forwards without asking the budget');
+  // hibernation forgets a room's memory: waking it from storage must not let it reuse a reservation it had partly used
+  // (the room's storage rules, as in worker/index.ts: stored on a reservation, every 4 MB and every 64 messages)
+  {
+    let stored: RoomState = { ...jr.state, bytes: 0, msgs: 0, allowance: 0 }, reserved = 0, forwarded = 0;
+    for (let wake = 0; wake < 10; wake++) {
+      let st = restore(stored);
+      for (let k = 0; k < 3; k++) {
+        const m = message(st, 1 << 20, t0 + 1) as { ok: true; state: RoomState; reserve: number };
+        if (m.reserve) { reserved += m.reserve; st = { ...m.state, allowance: st.allowance + m.reserve }; stored = st; }
+        else { const prev = st; st = m.state; if (Math.floor(st.bytes / (4 << 20)) !== Math.floor(prev.bytes / (4 << 20)) || st.msgs % 64 === 0) stored = st; }
+        forwarded += 1 << 20;
+      }
+    }
+    ok(reserved >= forwarded, `waking from hibernation never forwards more than was reserved from the budget (${forwarded >> 20} MiB forwarded, ${reserved >> 20} MiB reserved)`);
+  }
   let cs = null as ReturnType<typeof spend>['state'] | null;
   for (let i = 0; i < BUDGET.roomsPerClient; i++) cs = spend(cs, 'room', 0, day, BUDGET, 'a').state;
   ok(!spend(cs, 'room', 0, day, BUDGET, 'a').ok && spend(cs, 'room', 0, day, BUDGET, 'b').ok, 'one client can\'t use up everyone\'s rooms; others still get theirs');
@@ -354,7 +397,7 @@ async function relay(base: string) {
   const manifest: Manifest = { v: 1, city: 'Relay', files: [{ kind: 'map', name: 'r.cslmap.gz', size: map.length }, { kind: 'save', name: 'r.crp', size: save.length }] };
   let done = null as { blob: Blob }[] | null;
   const sender = new Sender(key, manifest, [new Blob([map as BlobPart]), new Blob([save as BlobPart])]);
-  const receiver = new Receiver(key, newPhoneId(), { done: (f) => (done = f) });
+  const receiver = new Receiver(key, await newDeviceKeys(), { done: (f) => (done = f) });
   const wireOf = (ws: WebSocket): Wire => ({ send: (b) => { if (ws.readyState === 1) ws.send(b as Uint8Array<ArrayBuffer>); } });
   const desk = await sock(room, 'send');
   desk.ws.onmessage = (e) => { if (typeof e.data !== 'string') void sender.receive(new Uint8Array(e.data)); else desk.ctl.push(JSON.parse(e.data)); };
@@ -401,6 +444,16 @@ async function relay(base: string) {
   const rs = await sock(rr, 'send'), rp = await sock(rr, 'recv');
   ok(await until(() => rp.ctl.some((c) => c.code === 'expired'), 6000) && Date.now() - issued < 8000 + 2500, `a reopened room still closes when its tickets expire (after ${((Date.now() - issued) / 1000).toFixed(1)} s)`);
   rs.ws.close(); rp.ws.close();
+  // a phone reconnecting replaces its old socket; the old socket's close arrives later and must not tell the desktop the
+  // phone left (the desktop would pause and the transfer would stall)
+  const r6 = await newRoom();
+  const s6 = await sock(r6, 'send'), p6a = await sock(r6, 'recv');
+  ok(await until(() => s6.ctl.some((c) => c.t === 'peer' && c.on)), 'the desktop sees the phone');
+  const p6b = await sock(r6, 'recv');
+  await p6a.closed; await wait(500);
+  const peers = s6.ctl.filter((c) => c.t === 'peer');
+  ok(peers.length >= 2 && peers[peers.length - 1].on === true, `after a phone reconnects the desktop still sees it (${peers.map((c) => (c.on ? 'on' : 'off')).join(', ')})`);
+  s6.ws.close(); p6b.ws.close();
   // an oversized message closes the room for both
   const r4 = await newRoom();
   const s4 = await sock(r4, 'send'), p4 = await sock(r4, 'recv');

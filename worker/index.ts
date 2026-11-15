@@ -4,7 +4,7 @@
 // request is a static asset, which is free and never invokes the worker. The relay forwards end-to-end encrypted messages between a desktop and a phone
 // and stores nothing but a room's timestamps and byte count (see room-core.ts and docs/send-to-phone-feasibility.md).
 import { DurableObject } from 'cloudflare:workers';
-import { CLOSE, join, message, nextCheck, expired, other, spend, checkTicket, issueTicket, clientKey, clientOf, utcDay, b64, LIMITS, BUDGET, type Budget, type BudgetState, type Role, type RoomError, type RoomLimits, type RoomState } from './room-core';
+import { CLOSE, join, message, nextCheck, expired, other, restore, spend, checkTicket, issueTicket, clientKey, clientOf, utcDay, b64, LIMITS, BUDGET, type Budget, type BudgetState, type Role, type RoomError, type RoomLimits, type RoomState } from './room-core';
 
 interface Env {
   ROOMS: DurableObjectNamespace; BUDGET: DurableObjectNamespace; ASSETS: Fetcher;
@@ -75,7 +75,7 @@ export class TransferRoom extends DurableObject<Env> {
   }
 
   private async load(): Promise<RoomState | null> {
-    if (this.state === undefined) this.state = (await this.ctx.storage.get<RoomState>('room')) ?? null;
+    if (this.state === undefined) { const s = await this.ctx.storage.get<RoomState>('room'); this.state = s ? restore(s) : null; }
     return this.state;
   }
   private async save(s: RoomState) { this.state = s; await this.ctx.storage.put('room', s); }
@@ -141,7 +141,9 @@ export class TransferRoom extends DurableObject<Env> {
     return this.serial(async () => {
       const role = this.roleOf(ws);
       closeWs(ws, code === 1005 || code === 1006 ? 1000 : code, 'closed');
-      for (const peer of this.sockets(other(role))) sendJson(peer, { t: 'peer', on: false });
+      // a socket replaced by a reconnect closes after its replacement joined: the peer hasn't left
+      const stillHere = this.sockets(role).some((s) => s !== ws && s.readyState === 1);
+      if (!stillHere) for (const peer of this.sockets(other(role))) sendJson(peer, { t: 'peer', on: false });
       await this.tidy();
     });
   }

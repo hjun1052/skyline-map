@@ -91,6 +91,14 @@ export function join(s: RoomState | null, role: string, now: number, l = LIMITS,
   return { ok: true, state: role === 'recv' ? { ...s, paired: true } : s };
 }
 
+/**
+ * A room read back from storage (after hibernation, which forgets memory). Its stored byte count may be behind what it
+ * really forwarded since the last checkpoint, so whatever it had reserved and not yet stored as used is treated as
+ * spent: forwarding more needs a fresh reservation. Otherwise every wake-up could reuse the same reservation and the
+ * daily byte cap would leak.
+ */
+export function restore(s: RoomState): RoomState { return { ...s, allowance: Math.min(s.allowance, s.bytes) }; }
+
 /** a message of `size` bytes arrives: forward it, or close the room. `reserve`: bytes to reserve from the day's budget
  *  first (0 when the room's allowance already covers it) */
 export function message(s: RoomState, size: number, now: number, l = LIMITS, b = BUDGET): { ok: true; state: RoomState; reserve: number } | { ok: false; error: RoomError } {

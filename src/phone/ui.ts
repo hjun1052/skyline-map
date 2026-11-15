@@ -3,7 +3,7 @@
 // readers: the phone opens the very bytes the desktop opened, through the same path as a recent city.
 import { renderSVG } from 'uqr';
 import { t } from '../i18n';
-import { LIMITS, Sender, Receiver, newPhoneId, newKeyText, importKey, pairingUrl, parsePairing, ROOM_RE, TICKET_RE, pairingCode, type Manifest, type AbortReason, type Wire } from './protocol';
+import { LIMITS, Sender, Receiver, newDeviceKeys, newKeyText, importKey, pairingUrl, parsePairing, ROOM_RE, TICKET_RE, pairingCode, type Manifest, type AbortReason, type Wire } from './protocol';
 import type { Recent } from '../recent';
 import type { CityContext } from '../context';
 
@@ -116,8 +116,8 @@ export function openSendDialog(deps: SendDeps) {
     tick = window.setInterval(countdown, 1000);
     // a phone said hello: show its code and send only once the user confirms it is the phone in their hand
     const confirmBox = dlg.querySelector<HTMLElement>('.sp-confirm')!;
-    const confirm = async (phoneId: string) => {
-      confirmBox.querySelector('.sp-code')!.textContent = t('A phone is ready. Send only if it shows the code {code}.', { code: await pairingCode(phoneId) });
+    const confirm = async (phonePub: string) => {
+      confirmBox.querySelector('.sp-code')!.textContent = t('A phone is ready. Send only if it shows the code {code}.', { code: await pairingCode(phonePub) });
       confirmBox.hidden = false;
       confirmBox.querySelector<HTMLElement>('[data-yes]')!.focus();
       return new Promise<boolean>((res) => {
@@ -216,9 +216,9 @@ export function receiveFromHash(hash: string, deps: ReceiveDeps): boolean {
   void (async () => {
     let key: CryptoKey;
     try { key = await importKey(pair.key); } catch { end(t('This link has expired or was already used. On your computer, choose Send to phone again.')); return; }
-    const id = newPhoneId();
-    box.querySelector('.rp-code')!.textContent = t('Your computer will ask you to confirm this code: {code}', { code: await pairingCode(id) });
-    receiver = new Receiver(key, id, {
+    const keys = await newDeviceKeys();
+    box.querySelector('.rp-code')!.textContent = t('Your computer will ask you to confirm this code: {code}', { code: await pairingCode(keys.pub) });
+    receiver = new Receiver(key, keys, {
       manifest: (m) => {
         name = m.city;
         const map = m.files.find((f) => f.kind === 'map')!;
