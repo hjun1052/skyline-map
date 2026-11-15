@@ -31,6 +31,7 @@
     "check:traffic-dir": "tsx tools/traffic-dir-check.ts",
     "lane-catalog": "tsx tools/lane-catalog.ts",
     "check:cmm": "tsx tools/cmm-check.ts",
+    "check:route-ends": "tsx tools/route-ends-check.ts",
     "check:nav-traffic": "tsx tools/nav-traffic-check.ts"
   },
   "author": "",
