@@ -22,12 +22,15 @@ const HIGHWAY = new Set(['motorway', 'motorway_link', 'trunk']);
  * route follows the path instead of a straight line to the node.
  */
 /** A point on a drivable road where a trip can join it: edge, position along it (metres and fraction), seconds of extra access. */
-interface DriveHit { e: number; pt: XY; d: number; along: number; i: number; frac: number; extra: number }
+/** `node`: a junction standing in for an end (its point is the node, at one end of edge e) */
+interface DriveHit { e: number; pt: XY; d: number; along: number; i: number; frac: number; extra: number; node?: boolean }
 
 interface Join { node: number; extra: number; part?: Edge; snap?: { e: number; pt: XY; along: number; i: number; d: number } }
 
 interface Edge {
   id: number; a: number; b: number; len: number; pts: XY[]; cls: string; name: string; speed: number; bike: boolean; brunnel: string;
+  /** carriageway width (m), from the export */
+  w: number;
   /** the speed limit comes from the segment type's lanes (else `speed` is a class default) */
   limKnown: boolean;
   /** lanes estimated from the road class (.vellummap, no matched save naming it): a TM:PE limit's direction is a guess too */
@@ -145,6 +148,9 @@ export class Router {
   private assets: { rings: XY[][]; box: [number, number, number, number] }[] = [];
   /** the asset footprints a route endpoint stands in, for the current search (walk/bike/transit only) */
   private ends = new Map<string, XY[][]>();
+  /** driving: the road the user picked an end on (the segment drawn on top where they clicked), by end point */
+  private picked = new Map<string, number>();
+  private edgeOfSeg = new Map<number, number>();
 
   constructor(private city: CityData, private stopNames: Map<number, string>, oneway?: OneWayResult, tolls?: TollData) {
     for (const b of tolls?.booths ?? []) this.booths.set(b.id, { name: b.name, unconfirmed: !!b.unconfirmed, road: b.roads[0] ?? '' });
@@ -172,7 +178,7 @@ export class Router {
       const pts: XY[] = seg.pts.map((p) => [p.x, p.z]);
       const both = guessed ? seg.icls : seg.name + ' ' + seg.icls;
       const e: Edge = {
-        id: seg.id, a: node(seg.sn), b: node(seg.en), len: Math.max(1, len(pts)), pts, cls: c.cls, name: seg.customName,
+        id: seg.id, a: node(seg.sn), b: node(seg.en), len: Math.max(1, len(pts)), pts, cls: c.cls, name: seg.customName, w: seg.width > 0 ? seg.width : 8,
         // estimated lanes (.vellummap) give a speed to drive at, never a posted limit to show
         speed: (lanes.speed > 0 && lanes.speed < 200 ? lanes.speed : DRIVE_DEFAULT[c.cls] ?? 30) / 3.6, limKnown: lanes.speed > 0 && lanes.speed < 200 && !guessed,
         bike: guessed ? /Bicycle|Bike/i.test(seg.icls) : lanes.bike || /Bicycle|Bike/i.test(seg.name), brunnel: /Tunnel/i.test(both) ? 'tunnel' : /Elevated|Bridge/i.test(both) ? 'bridge' : '',
@@ -183,6 +189,7 @@ export class Router {
       const cs = city.extras?.carSpeed?.get(seg.id);
       if (cs && acc.drive) { const f = cs[0] ?? cs[1]!, b = cs[1] ?? cs[0]!; e.spd = [f, b]; e.speed = Math.max(f, b); e.limKnown = true; }
       const ei = this.edges.push(e) - 1;
+      this.edgeOfSeg.set(seg.id, ei);
       this.adj[e.a].push(ei); this.adj[e.b].push(ei);
     }
 
@@ -452,17 +459,23 @@ export class Router {
     return best;
   }
 
-  route(from: XY, to: XY, mode: Mode, opts: { avoidTolls?: boolean; rules?: boolean } = {}): Route[] {
+  /** `fromSeg` / `toSeg`: the road segment drawn on top where the user set that end (a click on a road); used for
+   *  driving when it is a motorway, ramp or highway (see highwayEnd), ignored otherwise */
+  route(from: XY, to: XY, mode: Mode, opts: { avoidTolls?: boolean; rules?: boolean; fromSeg?: number; toSeg?: number } = {}): Route[] {
     // the save's traffic rules apply by default once loaded; `rules: false` compares against the export alone
     if (opts.rules === false && this.rulesOn) {
       this.setRules(false);
       try { return this.route(from, to, mode, { ...opts, rules: undefined }); } finally { this.setRules(true); }
     }
-    return this.withEnds(mode, [from, to], () => {
-      if (mode === 'transit') return this.transit(from, to);
-      this.avoidTolls = mode === 'drive' && !!opts.avoidTolls;
-      try { return this.roadRoutes(from, to, mode); } finally { this.avoidTolls = false; }
-    });
+    if (opts.fromSeg !== undefined) this.picked.set(from[0] + ',' + from[1], opts.fromSeg);
+    if (opts.toSeg !== undefined) this.picked.set(to[0] + ',' + to[1], opts.toSeg);
+    try {
+      return this.withEnds(mode, [from, to], () => {
+        if (mode === 'transit') return this.transit(from, to);
+        this.avoidTolls = mode === 'drive' && !!opts.avoidTolls;
+        try { return this.roadRoutes(from, to, mode); } finally { this.avoidTolls = false; }
+      });
+    } finally { this.picked.clear(); }
   }
 
   private roadRoutes(from: XY, to: XY, mode: Mode): Route[] {
@@ -643,12 +656,16 @@ export class Router {
     // the block is the real way. Only if that finds no legal route (a point between motorway carriageways)
     // do the nearby junctions become options too, charged double for the straight distance beyond the road.
     const ends = (p: XY, roadsOnly: boolean): DriveHit[] => {
+      // an end set on a motorway, ramp or highway itself starts or ends on that road, in the directions it may be
+      // driven, and nowhere else: no nearby road or junction stands in for it (with no legal route, there is none)
+      const on = this.highwayEnd(p);
+      if (on.length) return on;
       const hits = this.driveHits(p), d0 = hits[0]?.d ?? Infinity;
       if (roadsOnly && hits.length) return hits; // (an end with no road in reach always uses junctions)
       // a junction as a point at the end of each road meeting there, so every way in and out is open
       const nodes = this.nearby(p, 'drive').flatMap(({ node }) => this.adj[node].filter((x) => this.allowed(this.edges[x], 'drive')).map((ei) => {
         const e = this.edges[ei], atA = e.a === node, d = this.reach(p, this.pos[node]);
-        return { e: ei, pt: this.pos[node], d, along: atA ? 0 : e.len, i: atA ? 0 : Math.max(0, e.pts.length - 2), frac: atA ? 0 : 1, extra: 0 };
+        return { e: ei, pt: this.pos[node], d, along: atA ? 0 : e.len, i: atA ? 0 : Math.max(0, e.pts.length - 2), frac: atA ? 0 : 1, extra: 0, node: true };
       }));
       // roads and junctions compete on the same footing: distance beyond the nearest of them costs double (a road
       // hit's own extra only counts distance beyond the nearest road, which may be far behind a closer junction)
@@ -661,16 +678,53 @@ export class Router {
     const SH = ends(from, false), TH = ends(to, false);
     if (onRoads) {
       // avoiding tolls: if the road joins only lead through a gate, a nearby junction may not
-      if (this.avoidTolls && gated(onRoads)) { const alt = SH.length && TH.length ? this.driveSearchOn(SH, TH, penalty) : null; if (alt && !gated(alt)) return alt; }
+      if (this.avoidTolls && gated(onRoads)) { const [S, T] = this.stopOkEnds(from, to, SH, TH); const alt = S.length && T.length ? this.driveSearchOn(S, T, penalty) : null; if (alt && !gated(alt)) return alt; }
       return onRoads;
     }
     if (!SH.length || !TH.length) return null;
-    const r = this.driveSearchOn(SH, TH, penalty);
-    if (r) return r;
+    // an end on a motorway, ramp or highway (highwayEnd) keeps only the road under it (ends() returns nothing else for
+    // it). The other end may still use nearby junctions as usual, but only where an ordinary road meets (a car can't
+    // stop at a node on a motorway or ramp alone: that would be a jump across to it); and no route drives a likely
+    // one-way backwards from or to it
+    const onHighway = this.highwayEnd(from).length > 0 || this.highwayEnd(to).length > 0;
+    const [S, T] = this.stopOkEnds(from, to, SH, TH);
+    const r = this.driveSearchOn(S, T, penalty);
+    if (r || onHighway) return r;
     // no route obeys every inferred one-way: as a last resort a likely (keep-right) direction may be driven
     // against, heavily penalised and flagged; a direction confirmed by vehicles never is (then: no route)
     this.relaxed = true;
     try { const b = this.driveSearchOn(SH, TH, penalty); return b ? { ...b, bent: true } : null; } finally { this.relaxed = false; }
+  }
+  /** With an end on a motorway, ramp or highway, the other end's junction stand-ins only where an ordinary road meets
+   *  (a car can't stop at a node on a motorway or ramp alone); otherwise the joins unchanged */
+  private stopOkEnds(from: XY, to: XY, SH: DriveHit[], TH: DriveHit[]): [DriveHit[], DriveHit[]] {
+    if (!this.highwayEnd(from).length && !this.highwayEnd(to).length) return [SH, TH];
+    const ok = (h: DriveHit) => !h.node || this.adj[this.edges[h.e][h.frac ? 'b' : 'a']].some((ei) => this.allowed(this.edges[ei], 'drive') && !HIGHWAY.has(this.edges[ei].cls));
+    return [SH.filter(ok), TH.filter(ok)];
+  }
+  /**
+   * The road under an end the user put on a motorway, ramp or highway (issue #16): such a road is otherwise never
+   * joined while any ordinary road is within 3 km (driveHits), so the route started on a road beside or under it.
+   *  - picked: the user clicked a road; the segment drawn on top there (the map's own pick) is that road;
+   *  - otherwise (a dragged pin, a typed point): the point lies on a carriageway (within half its width plus 2 m).
+   *    Where carriageways overlap at different levels, only those drawn on top count (bridge over ground over tunnel),
+   *    as a click there would pick.
+   * Only when that road is a motorway, ramp or highway; anything else keeps the usual joins (driveHits).
+   */
+  private highwayEnd(p: XY): DriveHit[] {
+    const { id, size } = this.comp('drive');
+    const big = Math.min(40, Math.max(...size, 0));
+    const usable = (e: Edge) => this.allowed(e, 'drive') && id[e.a] >= 0 && size[id[e.a]] >= big;
+    const hitOn = (ei: number): DriveHit => { const e = this.edges[ei], h = nearestOnLine(p, e.pts); return { e: ei, ...h, frac: e.len > 0 ? Math.min(1, h.along / e.len) : 0, extra: 0 }; };
+    const pick = this.picked.get(p[0] + ',' + p[1]);
+    if (pick !== undefined) {
+      const ei = this.edgeOfSeg.get(pick), e = ei === undefined ? null : this.edges[ei];
+      return e && HIGHWAY.has(e.cls) && usable(e) && nearestOnLine(p, e.pts).d <= 200 ? [hitOn(ei!)] : []; // (a click at low zoom may land metres off the centreline)
+    }
+    const on = this.edgesNear(p, 60).filter((ei) => { const e = this.edges[ei]; return usable(e) && nearestOnLine(p, e.pts).d <= e.w / 2 + 2; });
+    const level = (ei: number) => (this.edges[ei].brunnel === 'bridge' ? 2 : this.edges[ei].brunnel === 'tunnel' ? 0 : 1);
+    const top = Math.max(-1, ...on.map(level)), shown = on.filter((ei) => level(ei) === top);
+    return shown.some((ei) => HIGHWAY.has(this.edges[ei].cls)) ? shown.map(hitOn) : [];
   }
   /**
    * The drivable roads a point can join: the nearest point on each of the few nearest roads a car may use

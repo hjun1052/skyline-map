@@ -418,7 +418,7 @@ function setSelection(features: { type: 'Feature'; geometry: any; properties: an
 }
 
 // place shown in the panel, offered as a directions target
-let panelPlace: { label: string; ll: [number, number] } | null = null;
+let panelPlace: { label: string; ll: [number, number]; seg?: number } | null = null;
 function panel(html: string, accent?: string) {
   $('panelBody').innerHTML = (accent ? `<div class="p-hero" style="background:${accent}"></div>` : '') + html;
   if (panelPlace && canRoute()) {
@@ -524,6 +524,7 @@ function describeRest(f: MapGeoJSONFeature, p: any, layer: string, geom: any, ln
   }
   if (layer === 'water') { panel(head(t('Water'), t('Lake, river or sea')) + `<div class="p-rows">${row('Position', coordText(lng, lat))}</div>`, '#a2cdf3'); return; }
   // roads / rails
+  if (f.source === 'roads' && p.id !== undefined && panelPlace) panelPlace.seg = Number(p.id); // directions start on this very road
   const name = p.name || L(p.cls) || p.type;
   let sel: any[] = [{ type: 'Feature', geometry: geom, properties: {} }];
   if (p.name) {
@@ -607,7 +608,7 @@ map.on('click', (e) => {
   if (reach.isActive()) { reach.click([e.lngLat.lng, e.lngLat.lat]); return; }
   if (discoveries.isActive()) return;
   if (closure.isActive()) { closurePickAt(e.point); return; }
-  if (dir.isOpen()) { dir.mapClick([e.lngLat.lng, e.lngLat.lat], placeLabelAt(e.point)); return; }
+  if (dir.isOpen()) { dir.mapClick([e.lngLat.lng, e.lngLat.lat], placeLabelAt(e.point), roadAt(e.point).seg); return; }
   if (sim.isOpen()) sim.close();
   const r = 6;
   const feats = map.queryRenderedFeatures([[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]], { layers: interactive() });
@@ -737,6 +738,13 @@ function closurePickAt(pt: { x: number; y: number }) {
   }
 }
 
+/** the road segment drawn on top at a point (what a click there would pick), so directions start or end on the
+ *  road the user clicked even where roads overlap (issue #16); the router uses it for motorways, ramps and highways */
+function roadAt(pt: { x: number; y: number }): { seg?: number } {
+  const layers = ['bridge-fill', 'road-fill', 'tunnel-fill'].filter((id) => map.getLayer(id) && map.getLayoutProperty(id, 'visibility') !== 'none');
+  const f = map.queryRenderedFeatures([[pt.x - 3, pt.y - 3], [pt.x + 3, pt.y + 3]], { layers })[0];
+  return f?.properties.id !== undefined ? { seg: Number(f.properties.id) } : {};
+}
 /** Name of whatever labelled thing is under a screen point, else a generic pin label. */
 function placeLabelAt(pt: { x: number; y: number }): string {
   const order = ['station', 'poi', 'park-label', 'building', 'lots'];
@@ -750,12 +758,12 @@ function placeLabelAt(pt: { x: number; y: number }): string {
 const ctx = document.createElement('div');
 ctx.id = 'ctxMenu'; ctx.className = 'card'; ctx.hidden = true;
 document.body.appendChild(ctx);
-let ctxPlace: { label: string; ll: [number, number] } | null = null;
+let ctxPlace: { label: string; ll: [number, number]; seg?: number } | null = null;
 function hideCtx() { ctx.hidden = true; }
 map.on('contextmenu', (e) => {
   if (!state.city || nav.isActive()) return;
   e.preventDefault();
-  ctxPlace = { label: placeLabelAt(e.point), ll: [e.lngLat.lng, e.lngLat.lat] };
+  ctxPlace = { label: placeLabelAt(e.point), ll: [e.lngLat.lng, e.lngLat.lat], ...roadAt(e.point) };
   const [x, z] = fromLngLat(e.lngLat.lng, e.lngLat.lat);
   ctx.innerHTML = `<div class="ctx-title">${esc(ctxPlace.label === t('Dropped pin') ? `x ${Math.round(x)}, z ${Math.round(z)}` : ctxPlace.label)}</div>
     ${canRoute() ? `<button data-c="from">${t('Directions from here')}</button><button data-c="to">${t('Directions to here')}</button>` : ''}<button data-c="measure">${t('Measure distance')}</button>${canRoute() ? `<button data-c="reach">${t('How far can I get from here?')}</button>` : ''}`;
