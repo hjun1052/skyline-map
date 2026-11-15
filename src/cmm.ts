@@ -218,6 +218,19 @@ function distTo(p: Vec3, pts: Vec3[]) {
   return best;
 }
 
+/** how far along a polyline (metres from its first point) the point nearest p is */
+function along(p: Vec3, pts: Vec3[]) {
+  let best = Infinity, at = 0, walked = 0;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i], b = pts[i + 1], dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz, l = Math.sqrt(l2);
+    const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / l2)) : 0;
+    const d = Math.hypot(a.x + t * dx - p.x, a.z + t * dz - p.z);
+    if (d < best) { best = d; at = walked + t * l; }
+    walked += l;
+  }
+  return at;
+}
+
 /** acceptance: a stop must lie on its network (lane offsets plus curve sampling) and the path must not wander */
 export const LEG = { snap: 24, detour: 4 };
 
@@ -234,13 +247,15 @@ export function rebuildLeg(city: Pick<CityData, 'nodes' | 'segs' | 'segTypes'>, 
   const near = (p: Vec3) => { let best: { s: CSeg; d: number } | null = null; for (const s of ctx.segs) { const d = distTo(p, s.pts); if (!best || d < best.d) best = { s, d }; } return best && best.d <= LEG.snap ? best.s : null; };
   const s0 = near(a), s1 = near(b);
   if (!s0 || !s1) return { path: null, why: 'stop off network' };
-  if (s0 === s1) return { path: [s0.id], len: Math.hypot(b.x - a.x, b.z - a.z) };
+  const ways = (s: CSeg) => ctx.ways.get(s.id)!; // bit 1: sn→en, bit 2: en→sn
+  // both stops on one segment: the direct hop only where the segment may be driven that way; otherwise (a one-way
+  // segment, stops in the wrong order) the search below has to leave it and come back round into it
+  if (s0 === s1) { const ta = along(a, s0.pts), tb = along(b, s0.pts); if (ways(s0) & (tb >= ta ? 1 : 2)) return { path: [s0.id], len: Math.abs(tb - ta) }; }
   // Dijkstra over nodes: leave s0 by an end it may be driven towards, arrive at s1 through an end it may be driven from
   const dist = new Map<number, number>(), prev = new Map<number, { node: number; seg: number }>();
   const heap: [number, number][] = [];
   const push = (n: number, d: number) => { heap.push([d, n]); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
   const pop = () => { const top = heap[0], last = heap.pop()!; if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } } return top; };
-  const ways = (s: CSeg) => ctx.ways.get(s.id)!; // bit 1: sn→en, bit 2: en→sn
   for (const [bit, end] of [[1, s0.en], [2, s0.sn]] as const) if (ways(s0) & bit) { dist.set(end, 0); push(end, 0); }
   const goal = new Map<number, number>(); // node → s1 enterable from it
   if (ways(s1) & 1) goal.set(s1.sn, 1);

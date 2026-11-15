@@ -97,6 +97,12 @@ async function unit() {
   const back = rebuildLeg(c, inv, 'BUS', { x: 350, y: 0, z: 3 }, { x: 150, y: 0, z: 3 });
   if (back.path) fail(`a leg against one-way roads was rebuilt: ${back.path}`);
   if (rebuildLeg(c, inv, 'BUS', { x: 150, y: 0, z: 200 }, { x: 350, y: 0, z: 3 }).why !== 'stop off network') fail('a stop far from the network must not be snapped');
+  // both stops on one segment: the direct hop only in a direction the segment allows (11 is one-way 2→3, x 200→300;
+  // the way round back into it runs over path 13, which buses can't use, so the wrong-way hop has no path)
+  const same = (x0: number, x1: number) => rebuildLeg(c, inv, 'BUS', { x: x0, y: 0, z: 3 }, { x: x1, y: 0, z: 3 });
+  if (same(220, 280).path?.join() !== '11' || Math.abs(same(220, 280).len! - 60) > 1e-6) fail(`same-segment hop with the one-way: ${JSON.stringify(same(220, 280))}`);
+  if (same(280, 220).path) fail(`same-segment hop against a one-way was accepted: ${same(280, 220).path}`);
+  if (same(180, 120).path?.join() !== '10') fail(`same-segment hop either way on a two-way road: ${same(180, 120).path}`);
   if (rebuildLeg(c, inv, 'SHIP', { x: 150, y: 0, z: 3 }, { x: 350, y: 0, z: 3 }).why !== 'no network') fail('ship legs have no network in the file');
   const tour = rebuildLeg(c, inv, 'TOUR', { x: 350, y: 0, z: 1 }, { x: 150, y: 0, z: 1 });
   if (!tour.path) fail('a walking tour should be able to walk any direction');
