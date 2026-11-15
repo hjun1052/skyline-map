@@ -58,12 +58,15 @@ for (const f of files) {
       else if (av?.tollsUnavoidable) {
         unavoidable++;
         // prove it: with every gate banned outright there must be no route at all
+        // an end put on a toll gate itself (a pin on the plaza: routes start or end on the road under it, issue #16)
+        // can't avoid that gate; banning it would only make the end join some other road instead
+        const onGate = [a, b].some((q) => r.highwayEnd(q).some((h: any) => r.edges[h.e].gate));
         const saved = r.edges.filter((e: any) => e.gate).map((e: any) => [e, e.acc] as const);
         for (const [e] of saved) e.acc = { ...e.acc, drive: false };
         // the router's own search from the same joins; legal routes only (not its flagged last resort)
         const banned = r.driveRoute(a, b, new Map());
         for (const [e, acc] of saved) e.acc = acc;
-        if (banned && !banned.bent) fakeUnavoidable++;
+        if (banned && !banned.bent && !onGate) fakeUnavoidable++;
       }
     }
   }

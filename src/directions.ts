@@ -11,7 +11,8 @@ import { trafficFactor } from './sim/traffic';
 import type { ContextStore, TollCost, FareCost } from './context-ui';
 
 type LL = [number, number];
-interface Place { label: string; ll: LL }
+/** an end of the trip; `seg`: the road segment drawn on top where the user clicked to set it, if they clicked a road */
+interface Place { label: string; ll: LL; seg?: number }
 
 export const MODES: { id: Mode; label: string; icon: string }[] = [
   { id: 'drive', label: 'Driving', icon: '<path d="M18.9 6a1.5 1.5 0 0 0-1.4-1h-11a1.5 1.5 0 0 0-1.4 1L3 12v8a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-1h12v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-8l-2.1-6zM6.5 16a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm11 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM5 11l1.5-4.5h11L19 11H5z"/>' },
@@ -177,7 +178,7 @@ export function createDirections(d: DirectionsDeps) {
     if (!st.from || !st.to) { render(); return; }
     const id = ++st.req;
     const from = fromLngLat(...st.from.ll), to = fromLngLat(...st.to.ll);
-    for (const m of MODES) worker.postMessage({ type: 'route', id, mode: m.id, from, to, avoidTolls: st.avoidTolls, rules: st.rules });
+    for (const m of MODES) worker.postMessage({ type: 'route', id, mode: m.id, from, to, avoidTolls: st.avoidTolls, rules: st.rules, fromSeg: st.from.seg, toSeg: st.to.seg });
     render();
   }
   function onResult(msg: { id: number; mode: Mode; routes: Route[] }) {
@@ -419,7 +420,7 @@ export function createDirections(d: DirectionsDeps) {
     /** language changed: relabel and re-ask the worker, whose step text is in the UI language */
     relang() { applyStatic(el); if (isOpen()) compute(); },
     /** a click on the map while directions are open fills the active empty field */
-    mapClick(ll: LL, label: string) { const w = !st.from ? 'from' : !st.to ? 'to' : st.active; setPoint(w, { label, ll }); },
+    mapClick(ll: LL, label: string, seg?: number) { const w = !st.from ? 'from' : !st.to ? 'to' : st.active; setPoint(w, { label, ll, ...(seg !== undefined ? { seg } : {}) }); },
     setFrom: (p: Place) => { if (!isOpen()) open({ from: p }); else setPoint('from', p); },
     setTo: (p: Place) => { if (!isOpen()) open({ to: p }); else setPoint('to', p); },
   };
