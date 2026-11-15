@@ -37,7 +37,12 @@ const sim = {
   tmpe: { segs: [{ id: 7, kmh: [30, 50], typeDefault: null, parking: [true, false] }], modVersion: '11.9' },
   lines: [{ id: 4, residents: 120, tourists: 8, lastResidents: 100, lastTourists: 5, ageShares: [0.1, 0.2, 0.3, 0.3, 0.1], tripsSaved: 12 }],
   controls: [{ seg: 7, node: 2, kind: 'signal' }],
-  city: { population: 1234, workers: 600, workplaces: 700 },
+  city: {
+    population: 1234, workers: 600, workplaces: 700, unemployed: 30, unemploymentPct: 5, educationLevels: [100, 200, 300, 400], educationShares: [10, 20, 30, 40],
+    elementary: { graduatedPct: 90, eligible: 100, capacity: 120 }, highSchool: { graduatedPct: 70, eligible: 80, capacity: 90 }, university: { graduatedPct: 40, eligible: 50, capacity: 60 },
+    library: { capacity: 10, visitors: 5 }, births: 3, deaths: 2, touristsByWealth: [1, 2, 3], tourists: 6, happiness: 80, crimeRatePct: 2, landValue: 60, groundPollutionPct: 3,
+    taxRates: { residentialLow: 9, residentialHigh: 9, commercialLow: 9, commercialHigh: 9, industrial: 9, office: 9 },
+  },
   grids: { landValue: new Uint16Array(IMM_RES * IMM_RES).fill(3), noise: new Uint16Array(IMM_RES * IMM_RES), crime: new Uint16Array(IMM_RES * IMM_RES), pollution: new Uint8Array(NAT_RES * NAT_RES).fill(1) },
   unavailable: [],
   rules: {
@@ -97,6 +102,14 @@ async function unit() {
   ok(broken.unavailable.includes('controls') && broken.unavailable.includes('grids'), 'dropped parts are reported as unavailable');
   const badHeader = await loadSkysave(await encodeSkysave({ ...file, sim: { ...sim, v: { verdict: 'incompatible' } } as any }), city, step);
   ok(!badHeader.ok && badHeader.code === 'skysave-bad', 'a file without a usable match summary is refused');
+  // the panel reads every city figure: an empty or partial set is dropped, not shown broken
+  for (const bad of [{}, { ...sim.city, taxRates: undefined }, { ...sim.city, educationLevels: [1, 2] }, { ...sim.city, population: 'many' }]) {
+    const r = await loadSkysave(await encodeSkysave({ ...file, sim: { ...sim, city: bad } as any }), city, step) as any;
+    ok(r.ok && r.city === null && r.unavailable.includes('city'), `incomplete city figures are dropped (${JSON.stringify(bad).slice(0, 40)})`);
+  }
+  // many references to one region of the data would each allocate a copy: refused (the encoder writes every array once)
+  const refs = Array.from({ length: 100 }, () => ({ $t: 'u8', o: 0, n: 1 << 20 }));
+  ok((await why(raw({ ...base, sim: { refs } }, new Uint8Array(1 << 20)))) === 'bad', 'arrays that add up to more than the data (repeated references) are refused');
   const xss = await loadSkysave(await encodeSkysave({ ...file, sim: { ...sim, roadFacts: new Map([[7, { prefab: 'x'.repeat(5000) }]]) } as any }), city, step) as any;
   ok(xss.ok && xss.roadFacts === null, 'oversized strings are dropped');
   let rebuilt: unknown = null;

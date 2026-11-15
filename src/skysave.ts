@@ -76,10 +76,12 @@ function pack(x: unknown, bin: Uint8Array[], at: { n: number }): unknown {
   return null;
 }
 
-function unpack(x: unknown, bin: Uint8Array, depth = 0): unknown {
+/** `budget.left`: bytes of typed arrays still allowed. The encoder writes each array's bytes once, so together they can't
+ *  be more than the data section; without this, many references to one region would each allocate a copy. */
+function unpack(x: unknown, bin: Uint8Array, budget: { left: number }, depth = 0): unknown {
   if (depth > 32) throw new Error('too deep');
   if (x === null || typeof x !== 'object') return x;
-  if (Array.isArray(x)) return x.map((v) => unpack(v, bin, depth + 1));
+  if (Array.isArray(x)) return x.map((v) => unpack(v, bin, budget, depth + 1));
   const o = x as Record<string, unknown>;
   if ('$t' in o) {
     const T = typeof o.$t === 'string' && Object.hasOwn(TYPES, o.$t) ? TYPES[o.$t] : null;
@@ -87,13 +89,14 @@ function unpack(x: unknown, bin: Uint8Array, depth = 0): unknown {
     if (!T || !Number.isSafeInteger(off) || !Number.isSafeInteger(n) || (off as number) < 0 || (n as number) < 0) throw new Error('bad array');
     const end = (off as number) + (n as number) * T.BYTES_PER_ELEMENT;
     if (end > bin.length) throw new Error('array out of bounds');
+    if ((budget.left -= end - (off as number)) < 0) throw new Error('arrays larger than the data');
     return new T(bin.slice(off as number, end).buffer); // a copy: aligned, and independent of the file
   }
-  if ('$m' in o) { if (!Array.isArray(o.$m)) throw new Error('bad map'); return new Map((o.$m as unknown[]).map((e) => { if (!Array.isArray(e) || e.length !== 2) throw new Error('bad map'); return [unpack(e[0], bin, depth + 1), unpack(e[1], bin, depth + 1)] as [unknown, unknown]; })); }
-  if ('$s' in o) { if (!Array.isArray(o.$s)) throw new Error('bad set'); return new Set((o.$s as unknown[]).map((v) => unpack(v, bin, depth + 1))); }
+  if ('$m' in o) { if (!Array.isArray(o.$m)) throw new Error('bad map'); return new Map((o.$m as unknown[]).map((e) => { if (!Array.isArray(e) || e.length !== 2) throw new Error('bad map'); return [unpack(e[0], bin, budget, depth + 1), unpack(e[1], bin, budget, depth + 1)] as [unknown, unknown]; })); }
+  if ('$s' in o) { if (!Array.isArray(o.$s)) throw new Error('bad set'); return new Set((o.$s as unknown[]).map((v) => unpack(v, bin, budget, depth + 1))); }
   if ('$n' in o) return o.$n === 'Infinity' ? Infinity : o.$n === '-Infinity' ? -Infinity : NaN;
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(o)) out[k] = unpack(v, bin, depth + 1);
+  for (const [k, v] of Object.entries(o)) out[k] = unpack(v, bin, budget, depth + 1);
   return out;
 }
 
@@ -136,7 +139,8 @@ export async function decodeSkysave(b: Uint8Array): Promise<{ ok: true; s: Skysa
     if (raw.length < 4) return { ok: false, why: 'bad' };
     const n = new DataView(raw.buffer, raw.byteOffset, 4).getUint32(0, true);
     if (4 + n > raw.length) return { ok: false, why: 'bad' };
-    const s = unpack(JSON.parse(new TextDecoder().decode(raw.subarray(4, 4 + n))), raw.subarray(4 + n)) as Skysave;
+    const bin = raw.subarray(4 + n);
+    const s = unpack(JSON.parse(new TextDecoder().decode(raw.subarray(4, 4 + n))), bin, { left: bin.length }) as Skysave;
     if (!s || s.app !== 'skyline-atlas' || typeof s.v !== 'number' || !s.map || typeof s.map.fingerprint !== 'string' || typeof s.map.name !== 'string' || !s.sim || typeof s.sim !== 'object') return { ok: false, why: 'bad' };
     if (s.v > SKYSAVE_VERSION) return { ok: false, why: 'newer' };
     return { ok: true, s };
@@ -168,7 +172,7 @@ const check: { [K in keyof Skysave['sim']]?: (x: any) => boolean } = {
   lines: (x) => Array.isArray(x) && x.every((l: any) => isObj(l) && isInt(l.id) && ['residents', 'tourists', 'lastResidents', 'lastTourists'].every((k) => isNum(l[k]))
     && Array.isArray(l.ageShares) && l.ageShares.length === 5 && l.ageShares.every(isNum) && numOrNull(l.tripsSaved)),
   controls: (x) => Array.isArray(x) && x.every((c: any) => isObj(c) && isInt(c.seg) && isInt(c.node) && (c.kind === 'signal' || c.kind === 'stop' || c.kind === 'yield')),
-  city: (x) => isObj(x) && numbersOnly(x, 0),
+  city: (x) => cityOk(x),
   rules: (x) => isObj(x)
     && x.oneway instanceof Map && [...x.oneway].every(([k, v]) => isInt(k) && (v === 1 || v === -1))
     && x.speed instanceof Map && [...x.speed].every(([k, v]) => isInt(k) && pair(v, numOrNull))
@@ -184,12 +188,15 @@ const check: { [K in keyof Skysave['sim']]?: (x: any) => boolean } = {
     && (f.lanes === undefined || isInt(f.lanes)) && (f.speed === undefined || isNum(f.speed)) && (f.oneway === undefined || typeof f.oneway === 'boolean') && (f.bike === undefined || typeof f.bike === 'boolean')),
   prefabs: (x) => x instanceof Map && [...x].every(([k, p]) => isInt(k) && isObj(p) && str(p.name, 200) && isInt(p.lanes)),
 };
-/** an object or array (city figures) whose every leaf is a number or null, a few levels deep at most */
-function numbersOnly(x: unknown, depth: number): boolean {
-  if (x === null || isNum(x)) return true;
-  if (depth > 3) return false;
-  if (Array.isArray(x)) return x.length <= 64 && x.every((v) => numbersOnly(v, depth + 1));
-  return isObj(x) && Object.keys(x).length <= 64 && Object.values(x).every((v) => numbersOnly(v, depth + 1));
+/** every field the city figures (CityStats) have, with its shape: the panel reads them all */
+const SCHOOL = ['graduatedPct', 'eligible', 'capacity'] as const;
+const nums = (o: any, keys: readonly string[]) => isObj(o) && keys.every((k) => isNum(o[k]));
+const numArr = (a: unknown, n: number) => Array.isArray(a) && a.length === n && a.every(isNum);
+function cityOk(c: any): boolean {
+  return nums(c, ['population', 'workers', 'workplaces', 'unemployed', 'unemploymentPct', 'births', 'deaths', 'tourists', 'happiness', 'crimeRatePct', 'landValue', 'groundPollutionPct'])
+    && numArr(c.educationLevels, 4) && numArr(c.educationShares, 4) && numArr(c.touristsByWealth, 3)
+    && ['elementary', 'highSchool', 'university'].every((k) => nums(c[k], SCHOOL)) && nums(c.library, ['capacity', 'visitors'])
+    && nums(c.taxRates, ['residentialLow', 'residentialHigh', 'commercialLow', 'commercialHigh', 'industrial', 'office']);
 }
 function summaryOk(s: any) {
   return isObj(s) && ['oneway', 'speed', 'carRestrict', 'uturnBan', 'turnBan', 'track'].every((k) => isInt(s[k])) && ['restrictBan', 'leftHand', 'tmpe'].every((k) => typeof s[k] === 'boolean');
