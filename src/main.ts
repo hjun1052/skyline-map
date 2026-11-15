@@ -22,9 +22,17 @@ import { createContextStore, createContextEditor, moneyField, parseMoney, descri
 import { bottomSheet, isPhone } from './sheet';
 import { mountFindFile } from './findfile';
 import { listRecent, rememberMap, rememberSave, forget, recentId, type Recent, type MapFormat } from './recent';
+import { loadContext, saveContext, sanitizeContext, type CityContext } from './context';
 import { showDistrictGlow, clearDistrictGlow } from './district-glow';
 import { t, tn, initLang, setLang, onLang, applyStatic, getLang, LANGS, locale, fmtFixed, type Lang } from './i18n';
 import { getUnits, setUnits, onUnits, imperial, fmtLength, fmtHeight, fmtWidth, fmtAreaSmall, fmtAreaLarge, fmtSpeed, type Units } from './units';
+
+// Send to Phone is built in only when VITE_SEND_TO_PHONE=1 (it needs the relay of wrangler.relay.jsonc); otherwise the
+// menu item stays hidden and pairing links are ignored
+const SEND_TO_PHONE = import.meta.env.VITE_SEND_TO_PHONE === '1';
+// a Send to Phone pairing link (#phone=…), read before the map takes over the URL hash for its position
+const pairingHash = SEND_TO_PHONE && location.hash.startsWith('#phone=') ? location.hash : '';
+if (pairingHash) history.replaceState(null, '', location.pathname + location.search);
 
 initLang();
 applyStatic();
@@ -330,7 +338,28 @@ async function renderRecent() {
   };
 }
 $('sampleBtn').onclick = () => { const u = new URL(location.href); u.searchParams.set('sample', ''); history.replaceState(null, '', u); void openSample(); };
-if (new URL(location.href).searchParams.has('sample')) void openSample();
+// Send to Phone: a page opened from the desktop's QR code receives the city and opens it like a recent one
+const receiveDeps = {
+  open: async (map: Blob, file: string, save?: Recent['save']) => { dropSample(); state.currentFile = ''; pending = { blob: map, file, save }; await openBuffer(await map.arrayBuffer(), file); },
+  // what arrives is checked like an imported context file before it is stored
+  settings: async (raw: CityContext) => {
+    if (typeof raw?.city !== 'string' || !raw.city || raw.city.length > 200 || typeof raw.updated !== 'string') return;
+    const ctx = sanitizeContext(raw, raw.city), mine = await loadContext(ctx.city);
+    if (!mine || mine.updated < raw.updated) await saveContext(ctx);
+  },
+};
+// loaded only when used, so the app without Send to Phone (or before anyone uses it) carries none of its code
+const phoneUi = () => (SEND_TO_PHONE ? import('./phone/ui') : Promise.reject(new Error('Send to Phone is not built in')));
+const receiving = !!pairingHash;
+if (receiving) void phoneUi().then((m) => m.receiveFromHash(pairingHash, receiveDeps));
+// the page may already be open in this tab when the QR code is scanned: the browser then only changes the hash
+if (SEND_TO_PHONE) window.addEventListener('hashchange', () => {
+  if (!location.hash.startsWith('#phone=') || document.getElementById('receivePhone')) return;
+  const h = location.hash;
+  history.replaceState(null, '', location.pathname + location.search);
+  void phoneUi().then((m) => m.receiveFromHash(h, receiveDeps));
+});
+if (!receiving && new URL(location.href).searchParams.has('sample')) void openSample();
 
 mountFindFile($('findFile'));
 $('fileInput').addEventListener('change', (e) => { const el = e.target as HTMLInputElement, f = el.files?.[0]; el.value = ''; if (f) openFile(f); });
@@ -374,6 +403,14 @@ $('lineList').addEventListener('click', (e) => {
 const openDrawer = () => { $('drawer').hidden = false; $('scrim').hidden = false; };
 const closeDrawer = () => { $('drawer').hidden = true; $('scrim').hidden = true; };
 $('menuBtn').onclick = openDrawer; $('drawerClose').onclick = closeDrawer; $('scrim').onclick = closeDrawer;
+$('sendPhone').hidden = !SEND_TO_PHONE;
+$('sendPhone').onclick = () => {
+  closeDrawer();
+  void phoneUi().then((m) => m.openSendDialog({
+    current: async () => (state.recentId ? (await listRecent()).find((r) => r.id === state.recentId) ?? null : null),
+    settings: async () => (state.city ? loadContext(state.city.meta.name) : null),
+  }));
+};
 $('openOther').onclick = () => { closeDrawer(); void renderRecent(); $('startBack').hidden = !state.city; $('welcome').hidden = false; $('welcome').scrollTop = 0; if (state.city) $('startBack').focus(); };
 // reopened over a map: a way back to it (button or Esc)
 $('startBack').onclick = () => { $('welcome').hidden = true; };

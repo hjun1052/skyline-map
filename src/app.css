@@ -1172,3 +1172,25 @@ body.nav-on .dir-pin-b { pointer-events: none; }
 .vn-check input { width: 16px; height: 16px; accent-color: var(--accent); }
 .vn-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .vn-actions .pill:focus-visible, .vn-check input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Send to Phone: the desktop dialog and the phone's receive screen */
+.send-phone { border: 0; padding: 22px 24px 18px; width: min(400px, calc(100vw - 32px)); color: var(--fg); background: var(--bg); }
+.send-phone::backdrop { background: rgba(32,33,36,.45); }
+.send-phone h2, .rp-card h2 { font-size: 18px; font-weight: 600; margin: 0 0 10px; }
+.send-phone p, .rp-card p { font-size: 14px; line-height: 1.5; margin: 0 0 10px; }
+.sp-qr { display: grid; place-items: center; margin: 6px 0 4px; }
+.sp-qr svg { width: 220px; height: 220px; border-radius: 8px; background: #fff; }
+.sp-qr.used svg { opacity: .25; }
+.sp-code, .rp-code { text-align: center; font-weight: 600; letter-spacing: .04em; }
+.sp-confirm { border-top: 1px solid var(--line); padding-top: 12px; margin: 0 0 12px; }
+.sp-confirm .sp-actions .pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sp-opts { display: grid; gap: 6px; margin: 8px 0 10px; font-size: 14px; }
+.sp-opts label { display: flex; align-items: center; gap: 8px; }
+.sp-status, .rp-status { min-height: 21px; color: var(--muted); }
+.sp-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin: 0 0 12px; }
+.sp-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.sp-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+#receivePhone { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; background: rgba(32,33,36,.45); }
+.rp-card { width: min(420px, 100%); padding: 22px 22px 18px; background: var(--bg); color: var(--fg); }
+.rp-note { color: var(--muted); font-size: 13px; }
+.rp-warn { color: #b06000; font-size: 13px; }

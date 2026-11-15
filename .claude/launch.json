@@ -26,6 +26,73 @@
         "--strictPort"
       ],
       "port": 5179
+    },
+    {
+      "name": "relay-local",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "wrangler",
+        "dev",
+        "-c",
+        "wrangler.relay.jsonc",
+        "--port",
+        "8787",
+        "--ip",
+        "127.0.0.1",
+        "--var",
+        "RELAY_SECRET:local-dev-only-not-a-real-secret"
+      ],
+      "port": 8787
+    },
+    {
+      "name": "relay-test",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "wrangler",
+        "dev",
+        "-c",
+        "wrangler.relay.jsonc",
+        "--port",
+        "8788",
+        "--ip",
+        "127.0.0.1",
+        "--var",
+        "PAIR_MS:3000",
+        "--var",
+        "MAX_MS:8000",
+        "--persist-to",
+        "/tmp/skyline-relay-test",
+        "--var",
+        "ROOMS_PER_DAY:100000",
+        "--var",
+        "RELAY_SECRET:local-dev-only-not-a-real-secret",
+        "--var",
+        "ROOMS_PER_CLIENT:100000"
+      ],
+      "port": 8788
+    },
+    {
+      "name": "relay-budget",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "wrangler",
+        "dev",
+        "-c",
+        "wrangler.relay.jsonc",
+        "--port",
+        "8789",
+        "--ip",
+        "127.0.0.1",
+        "--var",
+        "ROOMS_PER_DAY:3",
+        "--var",
+        "BYTES_PER_DAY:3000000",
+        "--persist-to",
+        "/tmp/skyline-relay-budget",
+        "--var",
+        "RELAY_SECRET:local-dev-only-not-a-real-secret"
+      ],
+      "port": 8789
     }
   ]
 }
