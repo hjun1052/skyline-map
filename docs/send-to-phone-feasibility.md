@@ -1,6 +1,6 @@
 # Send to Phone: feasibility study
 
-Written 2026-11-15 against `main` at `ec6aa70` as a research study. **Option 1 (the encrypted relay) is now implemented** in `src/phone/` and `worker/`, off by default (see docs/send-to-phone-billing.md, "Switching it on"); see docs/architecture.md (Send to Phone) for what was built. The study below is unchanged.
+Written 2026-11-15 against `main` at `ec6aa70` as a research study. **Option 1 (the encrypted relay) is now implemented** in `src/phone/` and `worker/`, live since 2026-11-16 (see docs/send-to-phone-billing.md); see docs/architecture.md (Send to Phone) for what was built. The study below is unchanged.
 
 **Question:** can a user who has a city open in Skyline Atlas on a desktop browser move it to their phone, ideally by scanning a QR code, with **zero additional monetary cost**, no accounts, no permanent server storage, working on iOS Safari, for files up to the size of a large `.cmm.gz`?
 

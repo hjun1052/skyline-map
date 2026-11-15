@@ -9,7 +9,7 @@
     "typecheck": "tsc",
     "check": "tsx src/geo.check.ts && tsx src/context.check.ts && tsx src/findfile.check.ts",
     "check:oneway": "tsx tools/oneway-check.ts",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "VITE_SEND_TO_PHONE=1 npm run build && wrangler deploy -c wrangler.relay.jsonc",
     "check:access": "tsx tools/access-check.ts",
     "check:districts": "tsx tools/district-check.ts",
     "check:transit": "tsx tools/transit-check.ts",
