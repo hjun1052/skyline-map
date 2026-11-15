@@ -76,6 +76,15 @@ function unit() {
     const r = D.route(onMw, east, 'drive', opts);
     if (r.length) fail(`${what} on a dead-end one-way motorway: no legal route, yet one starts at ${line(r[0])[0].map(Math.round)}`);
   }
+  // one end on a motorway, the other nearest a street the car can't reach (it only feeds the motorway's far end):
+  // that other end still joins a nearby junction as usual, but one where an ordinary road meets, never a motorway node
+  //   motorway 1 → 2 → 3 (dead end); exit ramp 2 → 20; local road 20 – 21; street 40 – 41 with an entry ramp 41 → 3
+  const C = toy(
+    [[1, -600, 0], [2, 0, 0], [3, 600, 0], [20, 100, 100], [21, 400, 100], [40, 500, 170], [41, 800, 170]],
+    [[1, 1, 2, 'Highway'], [2, 2, 3, 'Highway'], [22, 2, 20, 'HighwayRamp'], [10, 20, 21, 'Basic Road'], [11, 40, 41, 'Basic Road'], [23, 41, 3, 'HighwayRamp']]);
+  const c1 = C.route(onMw, [470, 165], 'drive')[0];
+  if (!startsOn(c1, onMw)) fail('one end on a motorway: the other end should fall back to a nearby junction where a legal route exists');
+  else { const e = line(c1).at(-1)!; if (Math.hypot(e[0] - 400, e[1] - 100) > 1) fail(`the fallback should end at the local road's junction (400, 100), not ${e.map(Math.round)}`); }
   // and as a destination it is reached, but only along the motorway from its entry
   const d2 = D.route(east, onMw, 'drive')[0];
   if (!endsOn(d2, onMw) || !d2!.legs[0].spans?.some((s) => s.cls === 'motorway_link')) fail('a destination on the dead-end motorway should be reached by its entry ramp');

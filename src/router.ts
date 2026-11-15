@@ -22,7 +22,8 @@ const HIGHWAY = new Set(['motorway', 'motorway_link', 'trunk']);
  * route follows the path instead of a straight line to the node.
  */
 /** A point on a drivable road where a trip can join it: edge, position along it (metres and fraction), seconds of extra access. */
-interface DriveHit { e: number; pt: XY; d: number; along: number; i: number; frac: number; extra: number }
+/** `node`: a junction standing in for an end (its point is the node, at one end of edge e) */
+interface DriveHit { e: number; pt: XY; d: number; along: number; i: number; frac: number; extra: number; node?: boolean }
 
 interface Join { node: number; extra: number; part?: Edge; snap?: { e: number; pt: XY; along: number; i: number; d: number } }
 
@@ -664,7 +665,7 @@ export class Router {
       // a junction as a point at the end of each road meeting there, so every way in and out is open
       const nodes = this.nearby(p, 'drive').flatMap(({ node }) => this.adj[node].filter((x) => this.allowed(this.edges[x], 'drive')).map((ei) => {
         const e = this.edges[ei], atA = e.a === node, d = this.reach(p, this.pos[node]);
-        return { e: ei, pt: this.pos[node], d, along: atA ? 0 : e.len, i: atA ? 0 : Math.max(0, e.pts.length - 2), frac: atA ? 0 : 1, extra: 0 };
+        return { e: ei, pt: this.pos[node], d, along: atA ? 0 : e.len, i: atA ? 0 : Math.max(0, e.pts.length - 2), frac: atA ? 0 : 1, extra: 0, node: true };
       }));
       // roads and junctions compete on the same footing: distance beyond the nearest of them costs double (a road
       // hit's own extra only counts distance beyond the nearest road, which may be far behind a closer junction)
@@ -680,11 +681,15 @@ export class Router {
       if (this.avoidTolls && gated(onRoads)) { const alt = SH.length && TH.length ? this.driveSearchOn(SH, TH, penalty) : null; if (alt && !gated(alt)) return alt; }
       return onRoads;
     }
-    // an end on a motorway, ramp or highway (highwayEnd) has only the road under it: neither nearby junctions (a jump
-    // across to another road) nor driving a likely one-way backwards may stand in for a legal route
-    if (!SH.length || !TH.length || this.highwayEnd(from).length || this.highwayEnd(to).length) return null;
-    const r = this.driveSearchOn(SH, TH, penalty);
-    if (r) return r;
+    if (!SH.length || !TH.length) return null;
+    // an end on a motorway, ramp or highway (highwayEnd) keeps only the road under it (ends() returns nothing else for
+    // it). The other end may still use nearby junctions as usual, but only where an ordinary road meets (a car can't
+    // stop at a node on a motorway or ramp alone: that would be a jump across to it); and no route drives a likely
+    // one-way backwards from or to it
+    const onHighway = this.highwayEnd(from).length > 0 || this.highwayEnd(to).length > 0;
+    const stopOk = (h: DriveHit) => !h.node || this.adj[this.edges[h.e][h.frac ? 'b' : 'a']].some((ei) => this.allowed(this.edges[ei], 'drive') && !HIGHWAY.has(this.edges[ei].cls));
+    const r = onHighway ? this.driveSearchOn(SH.filter(stopOk), TH.filter(stopOk), penalty) : this.driveSearchOn(SH, TH, penalty);
+    if (r || onHighway) return r;
     // no route obeys every inferred one-way: as a last resort a likely (keep-right) direction may be driven
     // against, heavily penalised and flagged; a direction confirmed by vehicles never is (then: no route)
     this.relaxed = true;
