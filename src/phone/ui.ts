@@ -3,7 +3,7 @@
 // readers: the phone opens the very bytes the desktop opened, through the same path as a recent city.
 import { renderSVG } from 'uqr';
 import { t } from '../i18n';
-import { LIMITS, Sender, Receiver, newDeviceKeys, newKeyText, importKey, pairingUrl, parsePairing, ROOM_RE, TICKET_RE, pairingCode, type Manifest, type AbortReason, type Wire } from './protocol';
+import { LIMITS, Sender, Receiver, newDeviceKeys, type DeviceKeys, newKeyText, importKey, pairingUrl, parsePairing, ROOM_RE, TICKET_RE, pairingCode, type Manifest, type AbortReason, type Wire } from './protocol';
 import type { Recent } from '../recent';
 import type { CityContext } from '../context';
 
@@ -167,6 +167,44 @@ export function openSendDialog(deps: SendDeps) {
   })();
 }
 
+/**
+ * A phone can open one pairing link twice (iOS sometimes opens a scanned link in two tabs, or the code is scanned
+ * again). Every tab of this browser then uses the same key pair for that room, kept in IndexedDB (non-extractable)
+ * until the room's ticket expires, so the desktop sees one phone that reconnected (and resumes) rather than another
+ * device (which would end the transfer). Without IndexedDB each tab makes its own keys, as before.
+ */
+async function roomKeys(room: string, until: number): Promise<DeviceKeys> {
+  const mine = await newDeviceKeys();
+  try {
+    const db = await new Promise<IDBDatabase>((res, rej) => {
+      const r = indexedDB.open('skyline-send-to-phone', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('keys', { keyPath: 'room' });
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+    // one transaction: two tabs racing here end up with the same keys (whichever stored first)
+    const got = await new Promise<DeviceKeys>((res, rej) => {
+      const tx = db.transaction('keys', 'readwrite'), store = tx.objectStore('keys');
+      let out: DeviceKeys = mine;
+      const all = store.getAll();
+      all.onsuccess = () => {
+        const now = Date.now();
+        for (const e of all.result as { room: string; until: number }[]) if (e.until <= now) store.delete(e.room); // stale rooms
+        const e = (all.result as ({ room: string; until: number } & DeviceKeys)[]).find((x) => x.room === room && x.until > now);
+        if (e) out = { pair: e.pair, pub: e.pub }; else store.put({ room, until, pair: mine.pair, pub: mine.pub });
+      };
+      tx.oncomplete = () => res(out); tx.onerror = () => rej(tx.error);
+    });
+    db.close();
+    return got;
+  } catch { return mine; }
+}
+/** which tab of this browser last started receiving a room (so a tab replaced by its sibling can say so) */
+const tabId = Math.random().toString(36).slice(2);
+const ownerKey = (room: string) => 'skyline-phone-tab:' + room;
+const claim = (room: string) => { try { localStorage.setItem(ownerKey(room), tabId); } catch { /* storage off */ } };
+const ownedElsewhere = (room: string) => { try { const o = localStorage.getItem(ownerKey(room)); return !!o && o !== tabId; } catch { return false; } };
+const release = (room: string) => { try { if (localStorage.getItem(ownerKey(room)) === tabId) localStorage.removeItem(ownerKey(room)); } catch { /* storage off */ } };
+
 export interface ReceiveDeps {
   /** open the received map (and save) the way a recent city opens */
   open: (map: Blob, file: string, save?: { file: string; blob: Blob }) => Promise<void>;
@@ -208,7 +246,7 @@ export function receiveFromHash(hash: string, deps: ReceiveDeps): boolean {
     control: (c) => {
       if (c.t === 'joined') { peer = c.peer; if (peer) greet(); }
       else if (c.t === 'peer') { peer = c.on; if (c.on) greet(); else if (!receiver?.done) say(t('Waiting for your computer…')); }
-      else if (c.t === 'error') end(c.code === 'busy' ? t('Send to phone has reached its limit for today. Please try again tomorrow.') : c.code === 'replaced' ? t('This link was opened on another device.') : t('This link has expired or was already used. On your computer, choose Send to phone again.'));
+      else if (c.t === 'error') end(c.code === 'busy' ? t('Send to phone has reached its limit for today. Please try again tomorrow.') : c.code === 'replaced' ? (ownedElsewhere(pair.room) ? t('This city is being received in another tab. You can close this one.') : t('This link was opened on another device.')) : t('This link has expired or was already used. On your computer, choose Send to phone again.'));
     },
     lost: () => { if (!receiver?.done) say(t('Connection lost. Reconnecting…')); },
     unreachable: () => end(t('Couldn\'t reach the transfer service. Check your connection and try again.')),
@@ -216,7 +254,8 @@ export function receiveFromHash(hash: string, deps: ReceiveDeps): boolean {
   void (async () => {
     let key: CryptoKey;
     try { key = await importKey(pair.key); } catch { end(t('This link has expired or was already used. On your computer, choose Send to phone again.')); return; }
-    const keys = await newDeviceKeys();
+    claim(pair.room);
+    const keys = await roomKeys(pair.room, Number(pair.ticket.split('.')[0]) * 1000);
     box.querySelector('.rp-code')!.textContent = t('Your computer will ask you to confirm this code: {code}', { code: await pairingCode(keys.pub) });
     receiver = new Receiver(key, keys, {
       manifest: (m) => {
@@ -236,6 +275,7 @@ export function receiveFromHash(hash: string, deps: ReceiveDeps): boolean {
   const onVisible = () => { if (document.visibilityState === 'visible') { link.nudge(); if (!wake && receiver && !receiver.done) void keepAwake(); } };
   document.addEventListener('visibilitychange', onVisible);
   const finished = async (files: { file: { kind: string; name: string }; blob: Blob }[], m: Manifest) => {
+    release(pair.room);
     // the desktop has its Done: hang up and let the screen sleep again
     document.removeEventListener('visibilitychange', onVisible); link.close(); letSleep();
     const map = files.find((f) => f.file.kind === 'map')!, save = files.find((f) => f.file.kind === 'save');
