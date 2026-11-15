@@ -1024,4 +1024,13 @@ export const KO: Record<string, string> = {
   "Not sent. Choose Send to phone again for a new code.": "보내지 않았어요. 새 코드가 필요하면 휴대폰으로 보내기를 다시 선택하세요.",
   "Another device opened this link, so the transfer was stopped. Choose Send to phone again.": "다른 기기에서 이 링크를 열어서 전송을 멈췄어요. 휴대폰으로 보내기를 다시 선택하세요.",
   "This city is being received in another tab. You can close this one.": "이 도시는 다른 탭에서 받고 있어요. 이 탭은 닫아도 돼요.",
+  "This .skysave belongs to another export": "이 .skysave는 다른 내보내기용이에요",
+  "It was made for a different export of this map. Open the export it was made from, or load the save (.crp) instead.": "이 지도의 다른 내보내기 파일로 만들어졌어요. 만들 때 쓴 내보내기 파일을 열거나, 세이브 파일(.crp)을 대신 불러오세요.",
+  "This .skysave couldn't be read": "이 .skysave를 읽을 수 없어요",
+  "It may be damaged or incomplete. Make it again from the save (.crp).": "손상됐거나 일부만 받은 파일일 수 있어요. 세이브 파일(.crp)로 다시 만드세요.",
+  "This .skysave is from a newer version of Skyline Map": "이 .skysave는 더 새로운 버전의 Skyline Map에서 만들어졌어요",
+  "Reload the page to update Skyline Map, then open it again.": "페이지를 새로고침해 Skyline Map을 업데이트한 뒤 다시 여세요.",
+  "Export .skysave": ".skysave 내보내기",
+  "Exported {file}": "{file} 내보냄",
+  "A .skysave keeps what Skyline Map uses from this save (and your fares and toll prices) in a small file that opens with this map export.": ".skysave는 Skyline Map이 이 세이브에서 쓰는 정보(요금과 통행료 포함)를 작은 파일 하나에 담아요. 이 지도 내보내기 파일과 함께 열 수 있어요.",
 };

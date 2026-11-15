@@ -39,6 +39,8 @@ jobs:
         run: npm run check:cmm
       - name: Send to Phone (protocol, encryption, relay rules)
         run: npm run check:phone
+      - name: .skysave (format, refusals, checks)
+        run: npm run check:skysave
       - name: Relay worker type check
         run: npx tsc -p worker
       - name: Build with Send to Phone switched on (not deployed)

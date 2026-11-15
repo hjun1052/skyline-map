@@ -12,7 +12,8 @@ import { createClosures, segInfoFrom } from './closure';
 import { cityKeys, scanExport, scanIdentities, bornById, exportTime, type HistoryKeys } from './history';
 import type { CityData } from './parse';
 import type { LaneCatalog } from './lane-infer';
-import { loadSim, transferables } from './sim';
+import { loadSim, transferables, type SimData } from './sim';
+import { isSkysave, loadSkysave, makeSkysave } from './skysave';
 import { readVellummap, vellumToCity, vellumIdentities, isZip, FormatError } from './vellummap';
 import { isCmm, cmmIdentities, readCmm } from './cmm';
 
@@ -31,6 +32,8 @@ const schemCache = new Map<string, unknown>();
 
 let lastHeight: { h: Float32Array; size: number } | null = null;
 let lastCity: CityData | null = null;
+/** the loaded save's full result (with its routing rules and prefabs), for exporting a .skysave of it, and the map it is for */
+let lastSim: { sim: SimData; city: CityData } | null = null;
 let history: HistoryKeys | null = null;
 /** bumped by every sim load and clear: an older load that finishes late must not apply its rules */
 let simToken = 0;
@@ -66,7 +69,7 @@ self.onmessage = async (e: MessageEvent) => {
       const p = (s: string) => progress(s, 8 + (steps.indexOf(s) + 1) * 8.5);
       const city = await readCity(msg.buffer, p);
       lastHeight = { h: city.height, size: city.terrainSize };
-      lastCity = city; history = null; vellumCtx = null;
+      lastCity = city; history = null; vellumCtx = null; lastSim = null;
       // a .cmm states each one-way direction exactly; other formats infer them (oneway.ts)
       const oneway = city.extras?.oneway ?? inferOneWay(city);
       const tolls = detectTolls(city);
@@ -145,8 +148,13 @@ self.onmessage = async (e: MessageEvent) => {
       // parsing can await (gzip): remember what this load was for, so a stale one never applies its rules
       const token = ++simToken, forRouter = router, forCity = lastCity;
       const vc = vellumCtx;
-      const result = await loadSim(msg.buffer, forCity, (step) => self.postMessage({ type: 'simProgress', id: msg.id, step }),
-        vc ? (saved) => vc.routingCopy(forCity, vc.cat, saved) : undefined);
+      lastSim = null;
+      const step = (step: string) => self.postMessage({ type: 'simProgress', id: msg.id, step });
+      const vellum = vc ? (saved: Parameters<typeof vc.routingCopy>[2]) => vc.routingCopy(forCity, vc.cat, saved) : undefined;
+      // a .skysave (what the app reads from a save, already matched to this export) or the game's own .crp
+      const result = isSkysave(new Uint8Array(msg.buffer, 0, Math.min(8, msg.buffer.byteLength)))
+        ? await loadSkysave(new Uint8Array(msg.buffer), forCity, step, vellum)
+        : await loadSim(msg.buffer, forCity, step, vellum);
       // a matched save's traffic rules drive routing from now on (directions, reach, closures, transit times)
       if (result.ok) {
         const current = router && router === forRouter && lastCity === forCity && token === simToken;
@@ -158,11 +166,18 @@ self.onmessage = async (e: MessageEvent) => {
         if (current && result.controls) router!.applyControls(result.controls);
         // densities of matched segments, for traffic-aware routing (used only once the page switches it on)
         if (current && result.traffic) router!.applyTraffic(result.traffic.ids, result.traffic.pct, result.trafficDir ?? undefined);
-        delete result.rules;
+        // kept whole (the typed arrays below go to the page) so a .skysave can be made of it
+        if (current) { const { routing: _r, context: _c, ...keep } = result; lastSim = { sim: structuredClone(keep) as SimData, city: forCity }; }
+        delete result.rules; delete result.prefabs;
       }
       self.postMessage({ type: 'sim', id: msg.id, result }, { transfer: transferables(result) });
+    } else if (msg.type === 'skysaveExport') {
+      // the loaded save as a .skysave (with the city's fares and toll prices when the page passes them)
+      if (!lastSim || lastSim.city !== lastCity) { self.postMessage({ type: 'skysave', id: msg.id, buffer: null }); return; }
+      const bytes = await makeSkysave(lastSim.sim, lastSim.city, msg.context ?? undefined);
+      self.postMessage({ type: 'skysave', id: msg.id, buffer: bytes.buffer }, { transfer: [bytes.buffer as ArrayBuffer] });
     } else if (msg.type === 'simClear') {
-      simToken++;
+      simToken++; lastSim = null;
       router?.clearRules(); router?.clearTraffic(); router?.clearControls();
       // .vellummap: back to the estimated lanes
       if (vellumCtx?.savedRouter) { routeOn(vellumCtx.est, vellumCtx.stopNames, vellumCtx.closable); vellumCtx.savedRouter = false; }

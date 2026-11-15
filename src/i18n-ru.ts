@@ -1024,4 +1024,13 @@ export const RU: Record<string, string> = {
   "Not sent. Choose Send to phone again for a new code.": "Не отправлено. Выберите «Отправить на телефон» ещё раз, чтобы получить новый код.",
   "Another device opened this link, so the transfer was stopped. Choose Send to phone again.": "Эту ссылку открыли на другом устройстве, поэтому передача остановлена. Выберите «Отправить на телефон» ещё раз.",
   "This city is being received in another tab. You can close this one.": "Этот город принимается в другой вкладке. Эту вкладку можно закрыть.",
+  "This .skysave belongs to another export": "Этот .skysave относится к другой выгрузке",
+  "It was made for a different export of this map. Open the export it was made from, or load the save (.crp) instead.": "Он сделан для другой выгрузки этой карты. Откройте выгрузку, из которой он сделан, или загрузите сохранение (.crp).",
+  "This .skysave couldn't be read": "Не удалось прочитать этот .skysave",
+  "It may be damaged or incomplete. Make it again from the save (.crp).": "Возможно, файл повреждён или неполный. Сделайте его заново из сохранения (.crp).",
+  "This .skysave is from a newer version of Skyline Map": "Этот .skysave сделан более новой версией Skyline Map",
+  "Reload the page to update Skyline Map, then open it again.": "Перезагрузите страницу, чтобы обновить Skyline Map, и откройте файл снова.",
+  "Export .skysave": "Экспорт .skysave",
+  "Exported {file}": "Экспортирован {file}",
+  "A .skysave keeps what Skyline Map uses from this save (and your fares and toll prices) in a small file that opens with this map export.": ".skysave хранит то, что Skyline Map берёт из этого сохранения (и ваши тарифы и плату за проезд), в небольшом файле, который открывается с этой выгрузкой карты.",
 };

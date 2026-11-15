@@ -27,6 +27,14 @@ import { showDistrictGlow, clearDistrictGlow } from './district-glow';
 import { t, tn, initLang, setLang, onLang, applyStatic, getLang, LANGS, locale, fmtFixed, type Lang } from './i18n';
 import { getUnits, setUnits, onUnits, imperial, fmtLength, fmtHeight, fmtWidth, fmtAreaSmall, fmtAreaLarge, fmtSpeed, type Units } from './units';
 
+/** fares and toll prices that came with a city (Send to Phone, a .skysave): checked like an imported context file, and
+ *  kept only if this browser has none for that city or older ones */
+async function adoptContext(raw: unknown): Promise<void> {
+  const r = raw as Partial<CityContext> | null;
+  if (!r || typeof r.city !== 'string' || !r.city || r.city.length > 200 || typeof r.updated !== 'string') return;
+  const ctx = sanitizeContext(r, r.city), mine = await loadContext(ctx.city);
+  if (!mine || mine.updated < r.updated) await saveContext(ctx);
+}
 // Send to Phone is built in only when VITE_SEND_TO_PHONE=1 (it needs the relay of wrangler.relay.jsonc); otherwise the
 // menu item stays hidden and pairing links are ignored
 const SEND_TO_PHONE = import.meta.env.VITE_SEND_TO_PHONE === '1';
@@ -139,7 +147,7 @@ worker.onmessage = (e) => {
   else if (m.type === 'schematic') schem.onMessage(m);
   else if (m.type === 'reach') reach.onResult(m);
   else if (m.type === 'closure' || m.type === 'closureReach') closure.onMessage(m);
-  else if (m.type === 'sim' || m.type === 'simProgress') sim.onMessage(m);
+  else if (m.type === 'sim' || m.type === 'simProgress' || m.type === 'skysave') sim.onMessage(m);
   else if (m.type === 'contours') { (map.getSource('contours') as GeoJSONSource).setData(m.fc); state.contoursLoaded = true; }
 };
 function requestContours() { state.contoursLoaded = true; worker.postMessage({ type: 'contours', interval: 10, major: 50 }); }
@@ -341,12 +349,7 @@ $('sampleBtn').onclick = () => { const u = new URL(location.href); u.searchParam
 // Send to Phone: a page opened from the desktop's QR code receives the city and opens it like a recent one
 const receiveDeps = {
   open: async (map: Blob, file: string, save?: Recent['save']) => { dropSample(); state.currentFile = ''; pending = { blob: map, file, save }; await openBuffer(await map.arrayBuffer(), file); },
-  // what arrives is checked like an imported context file before it is stored
-  settings: async (raw: CityContext) => {
-    if (typeof raw?.city !== 'string' || !raw.city || raw.city.length > 200 || typeof raw.updated !== 'string') return;
-    const ctx = sanitizeContext(raw, raw.city), mine = await loadContext(ctx.city);
-    if (!mine || mine.updated < raw.updated) await saveContext(ctx);
-  },
+  settings: (raw: CityContext) => adoptContext(raw),
 };
 // loaded only when used, so the app without Send to Phone (or before anyone uses it) carries none of its code
 const phoneUi = () => (SEND_TO_PHONE ? import('./phone/ui') : Promise.reject(new Error('Send to Phone is not built in')));
@@ -370,7 +373,9 @@ window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => {
   e.preventDefault(); dragDepth = 0; $('dropOverlay').hidden = true;
   const f = e.dataTransfer?.files?.[0];
-  if (f) openFile(f);
+  // a save (or .skysave) dropped on an open map loads over it; anything else opens as a map
+  if (f && state.city && /\.(crp|skysave)$/i.test(f.name)) { sim.open(); void sim.load(f); }
+  else if (f) openFile(f);
 });
 
 // ------------------------------------------------------------------ drawer
@@ -409,6 +414,8 @@ $('sendPhone').onclick = () => {
   void phoneUi().then((m) => m.openSendDialog({
     current: async () => (state.recentId ? (await listRecent()).find((r) => r.id === state.recentId) ?? null : null),
     settings: async () => (state.city ? loadContext(state.city.meta.name) : null),
+    // the loaded save as a .skysave (a fraction of the .crp; fares and tolls go separately, as ticked)
+    skysave: () => sim.skysave(false),
   }));
 };
 $('openOther').onclick = () => { closeDrawer(); void renderRecent(); $('startBack').hidden = !state.city; $('welcome').hidden = false; $('welcome').scrollTop = 0; if (state.city) $('startBack').focus(); };
@@ -756,6 +763,8 @@ const sim = createSim(map, {
   // a save was loaded, replaced or cleared: panels, the cycling chip and layer follow it
   onData: () => { syncUi(); if (state.city) renderDrawer(state.city); if (!$('panel').hidden) panelRefresh?.(); },
   onLoaded: (f) => { if (state.recentId) void rememberSave(state.recentId, f.name, f); }, // the entry of the map it was loaded on
+  context: async () => (state.city ? loadContext(state.city.meta.name) : null),
+  adoptContext,
   selectLine: (id) => selectLine(id, true),
   onOpen: () => { closeDrawer(); closePanel(); hideCtx(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); closure.close(); },
 });
