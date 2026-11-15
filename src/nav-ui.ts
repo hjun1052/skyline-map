@@ -542,7 +542,10 @@ function controlIcon(k: 'signal' | 'stop' | 'yield'): ImageData {
   g.shadowColor = 'rgba(0,0,0,.35)'; g.shadowBlur = 4; g.shadowOffsetY = 1;
   if (k === 'signal') {
     g.fillStyle = '#202124'; g.strokeStyle = '#ffffff'; g.lineWidth = 3;
-    g.beginPath(); g.roundRect(4, 3, W - 8, H - 8, 9); g.fill(); g.shadowColor = 'transparent'; g.stroke();
+    // a rounded rectangle by hand (CanvasRenderingContext2D.roundRect is missing in Safari < 16, Firefox < 112)
+    const x = 4, y = 3, w = W - 8, h = H - 8, r = 9;
+    g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+    g.fill(); g.shadowColor = 'transparent'; g.stroke();
     ['#ea4335', '#fbbc04', '#34a853'].forEach((col, i) => { g.fillStyle = col; g.beginPath(); g.arc(W / 2, 17 + i * 24, 8, 0, Math.PI * 2); g.fill(); });
   } else if (k === 'stop') {
     const r = W / 2 - 4, cx = W / 2, cy = H / 2, pts = Array.from({ length: 8 }, (_, i) => { const a = Math.PI / 8 + (i * Math.PI) / 4; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; });
