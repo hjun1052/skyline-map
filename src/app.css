@@ -1124,6 +1124,13 @@ body.nav-on .dir-pin-b { pointer-events: none; }
 .nav-puck { width: 58px; height: 58px; filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); }
 .nav-puck svg { width: 100%; height: 100%; display: block; }
 .nav-puck.tunnel { opacity: .55; }
+/* traffic callout on sustained traffic ahead (Google's "+N min" pill): white, the slowdown's colour on the icon and text */
+.nav-jam { display: flex; align-items: center; gap: 5px; padding: 3px 9px 3px 3px; background: #fff; color: #a50e0e; border-radius: 999px; box-shadow: 0 1px 4px rgba(0,0,0,.3); font-weight: 600; font-size: 13px; line-height: 1.2; white-space: nowrap; pointer-events: none; }
+.nav-jam .nj-icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: #d93025; }
+.nav-jam .nj-icon svg { width: 14px; height: 14px; fill: #fff; }
+.nav-jam.slow { color: #8a4b00; }
+.nav-jam.slow .nj-icon { background: #e37400; }
+.nav-jam[hidden] { display: none; }
 .dc-actions { display: flex; align-items: center; gap: 18px; }
 .dc-sim { margin-top: 10px; padding: 6px 0; color: var(--accent); font-weight: 600; font-size: 13.5px; display: inline-flex; align-items: center; gap: 5px; }
 .dc-sim svg { width: 16px; height: 16px; }

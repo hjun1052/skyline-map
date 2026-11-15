@@ -9,6 +9,7 @@ import { laneAccess, hasVehicle, type Access } from './access';
 import { hopTime, legRideTime, modeParams, type Piece } from './transit-time';
 import { t } from './i18n';
 import type { SimRules } from './sim/rules';
+import type { ControlKind } from './sim/controls';
 import { trafficFactor } from './sim/traffic';
 
 export type Mode = 'drive' | 'transit' | 'walk' | 'bike';
@@ -79,9 +80,12 @@ export interface Leg {
   spans?: Span[];
   /** driving legs with traffic-aware routing on: the save's traffic on each stretch from coords[i], in the direction driven */
   traffic?: TrafficPiece[];
+  /** driving legs with a matched save: traffic control facing the car at each junction it drives through, at coords[i] (the junction) */
+  controls?: { i: number; kind: ControlKind }[];
 }
-/** Traffic on a stretch of a driving leg from coords[i]: density 0-100 (-1: no data), and whether it is split by direction */
-export interface TrafficPiece { i: number; pct: number; split: boolean; seg: number }
+/** Traffic on a stretch of a driving leg from coords[i]: density 0-100 (-1: no data), and whether it is split by direction;
+ *  `delay`: seconds the traffic adds to driving this stretch (its time with traffic less its time without, as routing counts it) */
+export interface TrafficPiece { i: number; pct: number; split: boolean; seg: number; delay: number }
 /** One road of a driving leg: from coords[i] on, driven at `v` m/s (as driving time counts it, traffic included when on). */
 export interface Span {
   i: number; v: number; name: string; cls: string; brunnel: string;
@@ -133,6 +137,10 @@ class Heap {
 
 export class Router {
   private nodeIdx = new Map<number, number>();
+  /** the game's node id of each graph node */
+  private nodeIds: number[] = [];
+  /** traffic control a car meets entering a junction from a segment, by "segment:node" (a matched save; see sim/controls.ts) */
+  private controls = new Map<string, ControlKind>();
   private pos: XY[] = [];
   private edges: Edge[] = [];
   private adj: number[][] = []; // node index → edge indices
@@ -156,7 +164,7 @@ export class Router {
     for (const b of tolls?.booths ?? []) this.booths.set(b.id, { name: b.name, unconfirmed: !!b.unconfirmed, road: b.roads[0] ?? '' });
     const node = (id: number): number => {
       let i = this.nodeIdx.get(id);
-      if (i === undefined) { const n = city.nodes.get(id); i = this.pos.length; this.nodeIdx.set(id, i); this.pos.push(n ? [n.x, n.z] : [0, 0]); this.adj.push([]); }
+      if (i === undefined) { const n = city.nodes.get(id); i = this.pos.length; this.nodeIdx.set(id, i); this.nodeIds.push(id); this.pos.push(n ? [n.x, n.z] : [0, 0]); this.adj.push([]); }
       return i;
     };
     const segById = new Map<number, CSeg>();
@@ -938,16 +946,25 @@ export class Router {
     if (!parts.length && meet) coords.push(meet);
     let dist = 0, time = 0;
     for (const p of parts) { dist += p.ed.len; time += this.cost(p.ed, mode); }
-    const spans: Span[] = [], traffic: TrafficPiece[] = [];
+    const spans: Span[] = [], traffic: TrafficPiece[] = [], controls: { i: number; kind: ControlKind }[] = [];
     for (const p of parts) {
       if (mode === 'drive') {
         const e = p.ed, fwd = this.drivesForward(p);
         // a TM:PE limit on guessed lanes is shown only when both directions agree (which lanes run which way is a guess)
         const lim = e.spd && (!e.guessed || e.spd[0] === e.spd[1]) ? e.spd[fwd ? 0 : 1] * 3.6 : e.limKnown ? e.speed * 3.6 : 0;
         spans.push({ i: coords.length, v: this.driveSpeed(e, fwd), name: e.name, cls: e.cls, brunnel: e.brunnel, ...(lim ? { limit: Math.round(lim) } : {}) });
-        if (this.trafficOn) { const split = this.trafficDir && !!e.tpd; traffic.push({ i: coords.length, pct: split ? e.tpd![fwd ? 0 : 1] : e.tp ?? -1, split, seg: e.id }); }
+        if (this.trafficOn) {
+          const split = this.trafficDir && !!e.tpd, tf = this.tfOf(e, fwd) ?? 1, c = this.cost(e, 'drive', fwd);
+          traffic.push({ i: coords.length, pct: split ? e.tpd![fwd ? 0 : 1] : e.tp ?? -1, split, seg: e.id, delay: tf > 1 ? c - c / tf : 0 });
+        }
       }
       coords.push(...p.pts);
+      // the junction at the end of this piece, when the route drives on through it: what control faces the car there
+      if (mode === 'drive' && this.controls.size && p !== parts[parts.length - 1]) {
+        const e = p.ed, end = p.pts[p.pts.length - 1], d = (n: number) => Math.hypot(this.pos[n][0] - end[0], this.pos[n][1] - end[1]);
+        const kind = this.controls.get(e.id + ':' + this.nodeIds[d(e.a) <= d(e.b) ? e.a : e.b]);
+        if (kind) controls.push({ i: coords.length - 1, kind });
+      }
     }
     coords.push(this.endPoint(to, coords[coords.length - 1]));
     const kind = mode === 'drive' ? 'drive' : mode === 'bike' ? 'bike' : 'walk';
@@ -976,7 +993,7 @@ export class Router {
     const named = new Map<string, number>();
     for (const p of parts) if (p.ed.name) named.set(p.ed.name, (named.get(p.ed.name) ?? 0) + p.ed.len);
     const via = [...named].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
-    return { mode, dist, time, via, legs: [{ kind, dist, time, coords: coords.map((p) => toLngLat(p[0], p[1])), steps, ...(spans.length ? { spans } : {}), ...(traffic.length ? { traffic } : {}) }], ...(tolls.length ? { tolls } : {}), ...(tolls.length && this.avoidTolls ? { tollsUnavoidable: true } : {}) };
+    return { mode, dist, time, via, legs: [{ kind, dist, time, coords: coords.map((p) => toLngLat(p[0], p[1])), steps, ...(spans.length ? { spans } : {}), ...(traffic.length ? { traffic } : {}), ...(controls.length ? { controls } : {}) }], ...(tolls.length ? { tolls } : {}), ...(tolls.length && this.avoidTolls ? { tollsUnavoidable: true } : {}) };
   }
 
   // ------------------------------------------------------------ transit
@@ -1209,6 +1226,9 @@ export class Router {
   setTraffic(on: boolean) { this.trafficOn = on && this.trafficEdges.length > 0; }
   /** use the per-direction estimates while traffic-aware routing is on (otherwise each road's own value both ways) */
   setTrafficDir(on: boolean) { this.trafficDir = on; }
+  /** traffic lights and stop/yield signs from a matched save, by the segment a car arrives on and the node it enters */
+  applyControls(list: { seg: number; node: number; kind: ControlKind }[]) { this.controls = new Map(list.map((c) => [c.seg + ':' + c.node, c.kind])); }
+  clearControls() { this.controls = new Map(); }
   clearRules() {
     this.setRules(false);
     this.ruleEdits = []; this.hopEdits = []; this.uturnRule = new Set(); this.turnRule = new Map(); this.restrictRule = null;

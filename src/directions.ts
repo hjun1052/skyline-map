@@ -7,7 +7,7 @@ import { iconDataUrl } from './icons';
 import { bottomSheet, isPhone } from './sheet';
 import { t, tn, applyStatic, fmtFixed } from './i18n';
 import { fmtDist, onUnits } from './units';
-import { trafficFactor } from './sim/traffic';
+import { trafficColor } from './sim/traffic';
 import type { ContextStore, TollCost, FareCost } from './context-ui';
 
 type LL = [number, number];
@@ -67,12 +67,6 @@ export interface DirectionsDeps {
   savedLanes: () => number | null;
 }
 
-/** a route stretch's colour by how much traffic slows it (sim/traffic.ts), or '' when it barely does */
-function trafficColor(pct: number): string {
-  if (pct < 0) return '';
-  const f = trafficFactor(pct);
-  return f >= 3 ? '#a50e0e' : f >= 2 ? '#d93025' : f >= 1.3 ? '#f29900' : '';
-}
 
 export function createDirections(d: DirectionsDeps) {
   const { map, worker } = d;

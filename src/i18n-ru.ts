@@ -887,6 +887,7 @@ export const RU: Record<string, string> = {
   "In {n} feet, {instruction}": "Через {n} футов {instruction}",
   "In {n} miles, {instruction}": "Через {n} мили {instruction}",
   "Speed limit {n} mph": "Ограничение скорости {n} миль/ч",
+  "Traffic ahead: about {time} slower": "Впереди затор: примерно на {time} дольше",
   "mi of road": "mi дороги",
   "mi of rail": "mi рельс",
   "{v} acres": "{v} акр(ов)",
