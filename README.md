@@ -19,7 +19,7 @@
 - **How far can I get?** Areas reachable in 15, 30, 45 or 60 minutes.
 - **What if it closes?** Close a road, bridge or station and see which trips and lines break.
 - **City time-lapse:** watch the city grow across older exports.
-- **Save file (optional):** load your `.crp` save for traffic, line ridership, land value, noise, crime and pollution. Directions then follow your TM:PE one-ways, speed limits, U-turn bans and lane arrows, with an optional traffic-aware mode.
+- **Save file (optional):** load your `.crp` save for traffic, line ridership, land value, noise, crime and pollution. Directions then follow your TM:PE one-ways, speed limits, U-turn bans and lane arrows, with an optional traffic-aware mode. Export it as a small `.skysave` (about 1% of the save's size, with your fares and tolls) to reopen or share it with the same map export.
 - **CSLModernMap exports (experimental):** `.cmm` and `.cmm.gz` files open with the full map, lanes, exact one-way streets and speed limits (including TM:PE limits), the game's district boundaries and directions. Transit paths the file leaves out are rebuilt for ferries and walking tours and marked as estimated; ship and airplane lines aren't drawn. See `docs/research/cmm-format.md`.
 - **Vellum Bridge exports:** `.vellummap` files open as a map, with approximate directions. These files have no lane data, so speeds and one-way streets are estimated from each road's type and every route is labelled approximate. Adding the save (`.crp`) the export was made from brings traffic, ridership, the overlays and city statistics, and routes on the save's real lanes and one-way streets.
 - **English, Korean and Russian** interface, desktop and phone layouts, with metric or imperial units.

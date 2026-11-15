@@ -56,6 +56,8 @@ export interface SendDeps {
   current: () => Promise<Recent | null>;
   /** fares and toll prices of the open city, if the user set any */
   settings: () => Promise<CityContext | null>;
+  /** the loaded save as a .skysave (a fraction of the size of the .crp), or null when no save is loaded */
+  skysave?: () => Promise<{ file: string; blob: Blob } | null>;
 }
 
 /** the desktop dialog */
@@ -91,15 +93,18 @@ export function openSendDialog(deps: SendDeps) {
     } catch { shell(`<p>${esc(t('Couldn\'t reach the transfer service. Check your connection and try again.'))}</p>`); return; }
     if (!dlg.open) return; // closed while waiting
     const ctx = await deps.settings();
+    // the save goes as a .skysave when one can be made (about 1% of the .crp), else as the .crp itself
+    const sky = rec.save ? await deps.skysave?.().catch(() => null) ?? null : null;
+    const save = sky ?? rec.save;
     const keyText = newKeyText();
     const key = await importKey(keyText);
     const url = pairingUrl(location.origin, room, keyText, phoneTicket);
-    const mapSize = rec.map.size, saveSize = rec.save?.blob.size ?? 0;
-    const saveFits = !!rec.save && mapSize + saveSize <= LIMITS.maxTotal;
+    const mapSize = rec.map.size, saveSize = save?.blob.size ?? 0;
+    const saveFits = !!save && mapSize + saveSize <= LIMITS.maxTotal;
     shell(`<p>${esc(t('Scan this code with your phone\'s camera to open this city there.'))}</p>
       <div class="sp-qr" data-link="${esc(url)}">${renderSVG(url, { ecc: 'M', border: 2, pixelSize: 6, whiteColor: '#ffffff', blackColor: '#000000' })}</div>
       <div class="sp-opts">
-        ${rec.save ? `<label><input type="checkbox" id="spSave" ${saveFits ? '' : 'disabled'}> ${esc(t('Include the save file ({size})', { size: fmtMB(saveSize) }))}</label>` : ''}
+        ${save ? `<label><input type="checkbox" id="spSave" ${saveFits ? '' : 'disabled'}> ${esc(t('Include the save file ({size})', { size: fmtMB(saveSize) }))}</label>` : ''}
         ${ctx ? `<label><input type="checkbox" id="spCtx" checked> ${esc(t('Include fares and toll prices'))}</label>` : ''}
       </div>
       <p class="sp-status" role="status" aria-live="polite"></p>
@@ -148,10 +153,10 @@ export function openSendDialog(deps: SendDeps) {
       if (!sender) {
         // the options are read now and locked: the phone gets what was ticked when it joined
         lock();
-        const withSave = !!dlg.querySelector<HTMLInputElement>('#spSave')?.checked && !!rec.save;
+        const withSave = !!dlg.querySelector<HTMLInputElement>('#spSave')?.checked && !!save;
         const withCtx = !!dlg.querySelector<HTMLInputElement>('#spCtx')?.checked && !!ctx;
-        const manifest: Manifest = { v: 1, city: rec.name, files: [{ kind: 'map', name: rec.file, size: mapSize }, ...(withSave ? [{ kind: 'save' as const, name: rec.save!.file, size: saveSize }] : [])], ...(withCtx ? { settings: ctx } : {}) };
-        sender = new Sender(key, manifest, [rec.map, ...(withSave ? [rec.save!.blob] : [])], {
+        const manifest: Manifest = { v: 1, city: rec.name, files: [{ kind: 'map', name: rec.file, size: mapSize }, ...(withSave ? [{ kind: 'save' as const, name: save!.file, size: saveSize }] : [])], ...(withCtx ? { settings: ctx } : {}) };
+        sender = new Sender(key, manifest, [rec.map, ...(withSave ? [save!.blob] : [])], {
           progress: (sent, total) => { bar.hidden = false; (bar.firstElementChild as HTMLElement).style.width = `${(100 * sent) / total}%`; say(t('Sending… {pct}%', { pct: Math.floor((100 * sent) / total) })); },
           done: () => finish(t('Sent. The map is opening on your phone.')),
           abort: (r) => finish(abortText(r)),

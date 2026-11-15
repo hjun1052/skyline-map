@@ -45,6 +45,9 @@ void ['Simulation data', 'Close', 'Enhance your map with real traffic, populatio
   'This save file is incomplete', 'It may not have finished copying or downloading. Try the original file.',
   'This save file is damaged', 'Its contents don\'t match the checksum the game wrote into it. Try the original file, or save again in the game.',
   'This save couldn\'t be read', 'It may be damaged, or a mod changed how the game stores this data.',
+  'This .skysave belongs to another export', 'It was made for a different export of this map. Open the export it was made from, or load the save (.crp) instead.',
+  'This .skysave couldn\'t be read', 'It may be damaged or incomplete. Make it again from the save (.crp).', 'This .skysave is from a newer version of Skyline Map', 'Reload the page to update Skyline Map, then open it again.',
+  'Export .skysave', 'Exported {file}', 'A .skysave keeps what Skyline Map uses from this save (and your fares and toll prices) in a small file that opens with this map export.',
   'Choose another save', 'Remove simulation data', 'Save: {city}', 'In game {date}', 'Saved {date}',
   'Map layer', 'Off', 'Traffic', 'Land value', 'Noise', 'Ground pollution', 'Crime',
   'Free-flowing', 'Jammed', 'Low', 'High', 'None', 'Matched roads only. The game\'s traffic view shows the same value.',
@@ -66,7 +69,13 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 const num = (v: number) => v.toLocaleString(locale());
 const pct = (v: number) => `${v.toLocaleString(locale(), { maximumFractionDigits: 1 })}%`;
 
-export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltCity | null; onOpen: () => void; selectLine: (id: number) => void; toast: (m: string) => void; onRules: () => void; onLoaded?: (f: File) => void; onData?: () => void }) {
+export function createSim(map: MLMap, deps: {
+  worker: Worker; city: () => BuiltCity | null; onOpen: () => void; selectLine: (id: number) => void; toast: (m: string) => void; onRules: () => void; onLoaded?: (f: File) => void; onData?: () => void;
+  /** the open city's fares and toll prices, put into an exported .skysave */
+  context?: () => Promise<unknown>;
+  /** a .skysave brought fares and toll prices: keep them (checked, and not over newer ones) */
+  adoptContext?: (c: unknown) => Promise<void>;
+}) {
   const st = {
     open: false, busy: false, step: '', file: '', id: 0, src: null as File | null,
     data: null as SimData | null, fail: null as SimFailure | null,
@@ -88,7 +97,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
   document.body.appendChild(legendChip);
   legendChip.onclick = () => open();
   const input = document.createElement('input');
-  input.type = 'file'; input.accept = '.crp,.gz'; input.hidden = true;
+  input.type = 'file'; input.accept = '.crp,.gz,.skysave'; input.hidden = true;
   document.body.appendChild(input);
   input.onchange = () => { const f = input.files?.[0]; input.value = ''; if (f) void load(f); };
 
@@ -101,11 +110,25 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     const buf = await f.arrayBuffer();
     deps.worker.postMessage({ type: 'sim', id: ++st.id, buffer: buf }, [buf]);
   }
-  function onMessage(m: { type: string; id: number; step?: string; result?: SimResult }) {
+  /** .skysave exports waiting for the worker */
+  const exports = new Map<number, (b: ArrayBuffer | null) => void>();
+  let exportId = 0;
+  /** the loaded save as a .skysave (null when none is loaded); `withContext`: include the city's fares and toll prices */
+  async function skysave(withContext: boolean): Promise<Blob | null> {
+    if (!st.data) return null;
+    const context = withContext ? await deps.context?.().catch(() => null) : null;
+    const id = ++exportId;
+    const buf = await new Promise<ArrayBuffer | null>((res) => { exports.set(id, res); deps.worker.postMessage({ type: 'skysaveExport', id, context: context ?? null }); });
+    return buf ? new Blob([buf], { type: 'application/octet-stream' }) : null;
+  }
+  const skysaveName = () => `${(deps.city()?.meta.name ?? 'city').replace(/[\\/:*?"<>|]+/g, '_')}.skysave`;
+  function onMessage(m: { type: string; id: number; step?: string; result?: SimResult & { context?: unknown }; buffer?: ArrayBuffer | null }) {
+    if (m.type === 'skysave') { exports.get(m.id)?.(m.buffer ?? null); exports.delete(m.id); return; }
     if (m.id !== st.id) return;
     if (m.type === 'simProgress') { st.step = m.step ?? ''; render(); return; }
     st.busy = false;
     const r = m.result!;
+    if (r.ok && r.context !== undefined) { void deps.adoptContext?.(r.context).catch(() => {}); delete r.context; }
     if (r.ok) { apply(r); deps.toast(t('Simulation data loaded')); if (st.src) deps.onLoaded?.(st.src); if (r.rulesSummary || r.traffic?.ids.length || r.savedLanes) deps.onRules(); }
     else { st.fail = r; }
     render();
@@ -291,7 +314,10 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
   function failure(f: SimFailure) {
     const v = f.v;
     const [title, body] =
-      f.code === 'incompatible' ? (v?.reason === 'different-city' ? [t('This save is from a different city'), t('None of this map\'s roads or junctions appear in it. Open this save\'s own map export, or choose the save that belongs to this map.')]
+      f.code === 'skysave-mismatch' ? [t('This .skysave belongs to another export'), t('It was made for a different export of this map. Open the export it was made from, or load the save (.crp) instead.')]
+      : f.code === 'skysave-bad' ? [t('This .skysave couldn\'t be read'), t('It may be damaged or incomplete. Make it again from the save (.crp).')]
+      : f.code === 'skysave-newer' ? [t('This .skysave is from a newer version of Skyline Map'), t('Reload the page to update Skyline Map, then open it again.')]
+      : f.code === 'incompatible' ? (v?.reason === 'different-city' ? [t('This save is from a different city'), t('None of this map\'s roads or junctions appear in it. Open this save\'s own map export, or choose the save that belongs to this map.')]
         : v?.reason === 'empty' ? [t('This save couldn\'t be read'), t('This map has nothing to compare against.')]
         : [t('This save is too far apart in time'), t('It is the same city, but only {pct}% of the map\'s roads and buildings are unchanged in the save. Choose the save made at the same time as this export.', { pct: Math.floor(100 * Math.min(v?.share.segments ?? 0, v?.share.buildings ?? 0)) })])
       : f.code === 'not-crp' ? [t('This isn\'t a Cities: Skylines save'), t('Choose a .crp file from the game\'s Saves folder.')]
@@ -368,7 +394,8 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
       const un = d.unavailable.map((k) => t(k === 'buildings' ? 'building occupancy' : k === 'transit' ? 'transit ridership' : k === 'tmpe' ? 'traffic rules' : k === 'city' ? 'city statistics' : k === 'vehicles' ? 'traffic by direction' : 'map layers'));
       body = status(d) + rulesInfo(d) + layerPicker(d) + cityStats(d) + ridership(d) +
         (un.length ? `<p class="sim-note">${esc(t('Some data couldn\'t be read from this save: {list}.', { list: un.join(', ') }))}</p>` : '') +
-        `<div class="tl-actions sim-foot"><button class="pill" data-a="pick">${t('Choose another save')}</button><button class="pill" data-a="remove">${t('Remove simulation data')}</button></div>`;
+        `<div class="tl-actions sim-foot"><button class="pill" data-a="pick">${t('Choose another save')}</button><button class="pill" data-a="export">${t('Export .skysave')}</button><button class="pill" data-a="remove">${t('Remove simulation data')}</button></div>
+        <p class="sim-note">${esc(t('A .skysave keeps what Skyline Map uses from this save (and your fares and toll prices) in a small file that opens with this map export.'))}</p>`;
     }
     el.innerHTML = `${head}<div class="sim-scroll">${body}</div>`;
     sheet.refresh();
@@ -378,6 +405,15 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     const a = (tg.closest('[data-a]') as HTMLElement | null)?.dataset.a;
     if (a === 'close') return close();
     if (a === 'pick') return input.click();
+    if (a === 'export') {
+      void skysave(true).then((b) => {
+        if (!b) return;
+        const name = skysaveName(), url = URL.createObjectURL(b), link = document.createElement('a');
+        link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        deps.toast(t('Exported {file}', { file: name }));
+      });
+      return;
+    }
     if (a === 'remove') { clear(); st.fail = null; st.layer = 'none'; render(); deps.toast(t('Simulation data removed')); return; }
     const l = (tg.closest('[data-layer]') as HTMLElement | null)?.dataset.layer as Layer | undefined;
     if (l) { st.layer = l; draw(); render(); return; }
@@ -482,7 +518,9 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     /** re-draw overlays after the style changed */
     refresh() { if (st.data && st.layer !== 'none' && !map.getLayer(st.layer === 'traffic' ? TRAFFIC : RASTER)) draw(); },
     pick: () => { open(); input.click(); },
-    /** load a save kept from an earlier visit */
+    /** load a save kept from an earlier visit (a .crp or a .skysave) */
     load: (f: File) => load(f),
+    /** the loaded save as a .skysave, and a file name for it (null when none is loaded) */
+    skysave: async (withContext: boolean) => { const b = await skysave(withContext); return b ? { file: skysaveName(), blob: b } : null; },
   };
 }

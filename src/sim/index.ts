@@ -23,7 +23,7 @@ import { junctionControls, type Control } from './controls';
 /** for a map without lanes (.vellummap): the worker's routing copy rebuilt with the real prefabs a matched save names */
 export type VellumRouting = (saved: SavePrefabs) => ReturnType<typeof import('../lane-infer')['routingCopy']>;
 
-export type SimErrorCode = 'not-crp' | 'not-save' | 'unsupported-version' | 'truncated' | 'damaged' | 'corrupt' | 'incompatible';
+export type SimErrorCode = 'not-crp' | 'not-save' | 'unsupported-version' | 'truncated' | 'damaged' | 'corrupt' | 'incompatible' | 'skysave-bad' | 'skysave-newer' | 'skysave-mismatch';
 
 export interface SimSave {
   city: string | null;
@@ -81,6 +81,11 @@ export interface SimData {
   roadFacts: Map<number, RoadFact> | null;
   /** .vellummap only: the rebuilt routing copy for the worker's router (stripped before the result goes to the page) */
   routing?: ReturnType<VellumRouting>;
+  /** .vellummap only: the save's prefab and lane count per matched road, what `routing` is rebuilt from when a .skysave
+   *  opens (kept in the worker; stripped before the result goes to the page) */
+  prefabs?: SavePrefabs;
+  /** a .skysave's fares and toll prices (unchecked: the page runs them through sanitizeContext) */
+  context?: unknown;
   ms: number;
 }
 
@@ -123,11 +128,11 @@ export async function loadSim(buf: ArrayBuffer, city: CityData, step: (s: string
     step('Reading simulation data');
     // a .vellummap names no prefabs: the save does, for every matched segment. Lanes, TM:PE rules and routing then use
     // those real prefabs wherever the lane catalogue knows them and their lane count lines up with the save's lane chain
-    let simCity = city, routing: ReturnType<VellumRouting> | undefined, savedLanes: SimData['savedLanes'] = null, roadFacts: SimData['roadFacts'] = null;
+    let simCity = city, routing: ReturnType<VellumRouting> | undefined, prefabs: SavePrefabs | undefined, savedLanes: SimData['savedLanes'] = null, roadFacts: SimData['roadFacts'] = null;
     if (vellum) {
       const saved: SavePrefabs = new Map();
       for (const s of city.segs) if (!s.path && m.seg[s.id] === M.Verified) saved.set(s.id, { name: net.prefabNames[net.segPrefab[s.id]] ?? '', lanes: segmentLanes(net, s.id).length });
-      routing = vellum(saved);
+      routing = vellum(saved); prefabs = saved;
       simCity = routing.city;
       const known = routing.city.extras?.exactLanes ?? new Set<number>(), rSeg = new Map(routing.city.segs.map((x) => [x.id, x]));
       let exact = 0, len = 0, lenExact = 0;
@@ -163,7 +168,7 @@ export async function loadSim(buf: ArrayBuffer, city: CityData, step: (s: string
     const cityStats = tryRead('city', () => readCityStats(sd));
     const g = tryRead('grids', () => readGrids(sd));
     const grids = g ? { landValue: g.landValue, noise: g.noise, crime: g.crime, pollution: g.groundPollution } : null;
-    return { ok: true, save, v, traffic, buildings, tmpe, lines, city: cityStats, grids, unavailable, rules, rulesSummary: rules?.summary ?? null, trafficDir, controls, savedLanes, roadFacts, routing, ms: Math.round(performance.now() - t0) };
+    return { ok: true, save, v, traffic, buildings, tmpe, lines, city: cityStats, grids, unavailable, rules, rulesSummary: rules?.summary ?? null, trafficDir, controls, savedLanes, roadFacts, routing, prefabs, ms: Math.round(performance.now() - t0) };
   } catch (err) {
     if (err instanceof SaveError) return { ok: false, code: err.code, detail: err.message, save };
     if (err instanceof RangeError) return { ok: false, code: 'truncated', detail: err.message, save };
