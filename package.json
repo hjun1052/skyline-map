@@ -29,7 +29,8 @@
     "check:vellum-routes": "tsx tools/vellum-route-check.ts",
     "check:vellum-sim": "tsx tools/vellum-sim-check.ts",
     "check:traffic-dir": "tsx tools/traffic-dir-check.ts",
-    "lane-catalog": "tsx tools/lane-catalog.ts"
+    "lane-catalog": "tsx tools/lane-catalog.ts",
+    "check:cmm": "tsx tools/cmm-check.ts"
   },
   "author": "",
   "license": "AGPL-3.0-only",

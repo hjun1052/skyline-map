@@ -276,8 +276,9 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
   }
   /** how to get a save and a map export of the same moment, for the format this map came from */
   function tip() {
-    return deps.city()?.meta.source
-      ? t('Tip: export the city with Vellum Bridge right after you save the game (or save right after exporting), so the save and the export show the same moment.')
+    const format = deps.city()?.meta.source?.format;
+    return format === 'cmm' ? t('Tip: export the city with CSLModernMap right after you save the game (or save right after exporting), so the save and the export show the same moment.')
+      : format ? t('Tip: export the city with Vellum Bridge right after you save the game (or save right after exporting), so the save and the export show the same moment.')
       : t('Tip: in the CSLMapView mod options, turn on “Auto export on saving game”. Every time you save, the mod writes a map export of the same moment, so the save and the export always match.');
   }
   function intro() {

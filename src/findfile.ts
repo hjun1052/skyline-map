@@ -33,6 +33,9 @@ function steps(os: OS): string[] {
   ];
 }
 
+/** CSLModernMap writes to "CSLModernMap" relative to the game's working folder (the install folder, beside CSLMapView's;
+ *  its config's GetOutputDirPath), unless a folder is set in its options */
+const cmmDir = (os: OS) => EXPORT_DIRS[os].replace(/CSLMapView([\\/]?)$/, 'CSLModernMap$1');
 /** Renders the helper into `el` and keeps it in the current language. */
 export function mountFindFile(el: HTMLElement) {
   const detected = detectOS();
@@ -56,7 +59,9 @@ export function mountFindFile(el: HTMLElement) {
       <p class="ff-alt">${esc(t('Steam library somewhere else? In Steam, right-click Cities: Skylines, choose Manage, then Browse local files, and open the CSLMapView folder.'))}</p>
       <p class="ff-lede ff-bridge">${esc(t('Vellum Bridge saves .vellummap exports here, in a folder for each city:'))}</p>
       ${pathBox('ffBridgePath', 'bridge', BRIDGE_DIRS[os])}
-      ${os === 'windows' ? `<p class="ff-alt">${esc(t('If OneDrive backs up your Documents folder, look in OneDrive, Documents, Vellum Bridge instead.'))}</p>` : ''}`;
+      ${os === 'windows' ? `<p class="ff-alt">${esc(t('If OneDrive backs up your Documents folder, look in OneDrive, Documents, Vellum Bridge instead.'))}</p>` : ''}
+      <p class="ff-lede ff-bridge">${esc(t('CSLModernMap saves .cmm.gz exports next to it, unless you chose another folder in its options:'))}</p>
+      ${pathBox('ffCmmPath', 'cmm', cmmDir(os))}`;
   };
 
   el.addEventListener('click', async (e) => {
@@ -65,12 +70,12 @@ export function mountFindFile(el: HTMLElement) {
     if (tab) { os = tab.dataset.os as OS; copied = ''; render(); el.querySelector<HTMLElement>(`[data-os="${os}"]`)?.focus(); return; }
     const btn = tg.closest<HTMLElement>('.ff-copy');
     if (btn) {
-      const which = btn.dataset.copy === 'bridge' ? 'bridge' : 'cslmap';
-      const path = which === 'bridge' ? BRIDGE_DIRS[os] : EXPORT_DIRS[os];
+      const which = btn.dataset.copy === 'bridge' || btn.dataset.copy === 'cmm' ? btn.dataset.copy : 'cslmap';
+      const path = which === 'bridge' ? BRIDGE_DIRS[os] : which === 'cmm' ? cmmDir(os) : EXPORT_DIRS[os];
       try { await navigator.clipboard.writeText(path); }
       catch {
         // clipboard blocked (non-secure context, permissions): select the text so the user can copy it
-        const code = el.querySelector(which === 'bridge' ? '#ffBridgePath' : '#ffPath')!; const r = document.createRange(); r.selectNodeContents(code);
+        const code = el.querySelector(which === 'bridge' ? '#ffBridgePath' : which === 'cmm' ? '#ffCmmPath' : '#ffPath')!; const r = document.createRange(); r.selectNodeContents(code);
         const sel = getSelection(); sel?.removeAllRanges(); sel?.addRange(r);
         try { document.execCommand('copy'); } catch { /* the selection is there to copy by hand */ }
       }

@@ -14,6 +14,7 @@ import type { CityData } from './parse';
 import type { LaneCatalog } from './lane-infer';
 import { loadSim, transferables } from './sim';
 import { readVellummap, vellumToCity, vellumIdentities, isZip, FormatError } from './vellummap';
+import { isCmm, cmmIdentities, readCmm } from './cmm';
 
 let router: Router | null = null;
 let closures: ReturnType<typeof createClosures> | null = null;
@@ -43,10 +44,12 @@ async function gunzip(buf: ArrayBuffer): Promise<Uint8Array> {
   }
   return new Uint8Array(buf);
 }
-/** open either format: a zip is a .vellummap, anything else is read as .cslmap XML */
+const laneCatalog = async () => { const m = await import('./lane-catalog.json'); return (m.default ?? m) as unknown as LaneCatalog; };
+/** open any format: a zip is a .vellummap, cmm JSON a .cmm (CSLModernMap), anything else is read as .cslmap XML */
 async function readCity(buf: ArrayBuffer, p: (s: string) => void): Promise<CityData> {
   const bytes = await gunzip(buf);
   if (isZip(bytes)) { p('Reading nodes'); return vellumToCity(await readVellummap(bytes)); }
+  if (isCmm(bytes)) { p('Reading nodes'); return readCmm(bytes, await laneCatalog()); }
   return parseCity(new TextDecoder('utf-8').decode(bytes), p);
 }
 
@@ -64,7 +67,8 @@ self.onmessage = async (e: MessageEvent) => {
       const city = await readCity(msg.buffer, p);
       lastHeight = { h: city.height, size: city.terrainSize };
       lastCity = city; history = null; vellumCtx = null;
-      const oneway = inferOneWay(city);
+      // a .cmm states each one-way direction exactly; other formats infer them (oneway.ts)
+      const oneway = city.extras?.oneway ?? inferOneWay(city);
       const tolls = detectTolls(city);
       // a file without lanes (.vellummap) gets lanes estimated from each road's class and width (lane-infer.ts): the router
       // runs on that separate copy, and the map takes only each road's drawn class and width from it, so the map, records
@@ -73,8 +77,7 @@ self.onmessage = async (e: MessageEvent) => {
       let est: Awaited<ReturnType<typeof import('./lane-infer')['routingCopy']>> | null = null;
       if (city.extras && !city.extras.caps.lanes) {
         try {
-          const [{ routingCopy }, catMod] = await Promise.all([import('./lane-infer'), import('./lane-catalog.json')]);
-          const cat = (catMod.default ?? catMod) as unknown as LaneCatalog;
+          const [{ routingCopy }, cat] = await Promise.all([import('./lane-infer'), laneCatalog()]);
           const e = routingCopy(city, cat);
           if (e.stats.known + e.stats.family > 0) { est = e; vellumCtx = { cat, routingCopy, est: e, stopNames: new Map(), closable: { sources: {} }, savedRouter: false }; }
         } catch (err) { console.warn('[atlas] estimated lanes failed; directions stay off', err); }
@@ -117,7 +120,7 @@ self.onmessage = async (e: MessageEvent) => {
       self.postMessage({ type: 'historyStart', name: lastCity.name, time: exportTime(lastCity.generated) });
     } else if (msg.type === 'historyFile' && history) {
       const bytes = await gunzip(msg.buffer);
-      const r = isZip(bytes) ? scanIdentities(await vellumIdentities(bytes), history) : scanExport(new TextDecoder('utf-8').decode(bytes), history);
+      const r = isZip(bytes) ? scanIdentities(await vellumIdentities(bytes), history) : isCmm(bytes) ? scanIdentities(cmmIdentities(bytes), history) : scanExport(new TextDecoder('utf-8').decode(bytes), history);
       self.postMessage({ type: 'historyFile', id: msg.id, ...r });
     } else if (msg.type === 'historyDone' && history && lastCity) {
       const born = bornById(lastCity, history);

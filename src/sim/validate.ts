@@ -66,6 +66,9 @@ function offCurve(net: SaveNet, id: number, pts: { x: number; z: number }[]) {
 export function validate(city: CityData, net: SaveNet, bld: SaveBuildings, lines: { id: number; created: boolean; firstStop: number }[] | null): { v: Validation; m: Matches } {
   // a .vellummap has no prefab names and its own curve sampling: matched by connections and geometry within tolerance
   const vellum = city.extras?.source === 'vellummap';
+  // a .cmm has the prefab names but its own curve sampling (and node heights the game may have settled again): prefabs
+  // and connections exact, geometry within the same tolerance as a .vellummap
+  const tolerant = vellum || city.extras?.source === 'cmm';
   // ---- nodes: the export writes every created node, so this comparison is complete in both directions
   const nodes = { ...tally(), extraInSave: 0 };
   const nodeOk = new Uint8Array(net.nodeCount);
@@ -73,7 +76,7 @@ export function validate(city: CityData, net: SaveNet, bld: SaveBuildings, lines
     let m: M;
     if (n.id >= net.nodeCount || !(net.nodeFlags[n.id] & CREATED)) m = M.Missing;
     else if (f(n.x) === net.nodeX[n.id] && f(n.y) === net.nodeY[n.id] && f(n.z) === net.nodeZ[n.id]) m = M.Verified;
-    else if (vellum && Math.hypot(n.x - net.nodeX[n.id], n.y - net.nodeY[n.id], n.z - net.nodeZ[n.id]) <= VELLUM.node) m = M.Verified;
+    else if (tolerant && Math.hypot(n.x - net.nodeX[n.id], n.y - net.nodeY[n.id], n.z - net.nodeZ[n.id]) <= VELLUM.node) m = M.Verified;
     else m = M.Changed;
     count(nodes, m);
     if (m === M.Verified) nodeOk[n.id] = 1;
@@ -92,7 +95,7 @@ export function validate(city: CityData, net: SaveNet, bld: SaveBuildings, lines
       const sameEnds = net.segStart[s.id] === s.sn && net.segEnd[s.id] === s.en && nodeOk[s.sn] === 1 && nodeOk[s.en] === 1;
       if (!sameType && !sameEnds) m = M.Replaced;
       else if (!sameType || !sameEnds) m = M.Changed;
-      else if (vellum) m = offCurve(net, s.id, s.pts) <= VELLUM.curve ? M.Verified : M.Changed;
+      else if (tolerant) m = offCurve(net, s.id, s.pts) <= VELLUM.curve ? M.Verified : M.Changed;
       else {
         const p = segmentPoints(net, s.id);
         let same = p.length === s.pts.length * 3;

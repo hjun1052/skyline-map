@@ -690,7 +690,7 @@ body.closure-open .maplibregl-canvas { cursor: crosshair; }
 /* an experimental refinement of the option before it: on its own line, indented under it */
 .dir-options .dir-sub { flex-basis: 100%; padding-left: 24px; }
 .dir-options .dir-sub[hidden] { display: none; }
-.dir-options .exp-tag, .switch-row .exp-tag { font-size: 11px; color: var(--muted); }
+.dir-options .exp-tag, .switch-row .exp-tag, .city-source .exp-tag { font-size: 11px; color: var(--muted); }
 .toll-note { margin-top: 4px; font-size: 12.5px; color: #a5581a; }
 .toll-note::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: #d9822b; margin-right: 6px; vertical-align: 0; }
 .toll-note.warn { color: #c5221f; }

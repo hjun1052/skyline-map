@@ -227,7 +227,8 @@ export function buildStyle(o: StyleOptions, fontBase: string): StyleSpecificatio
         'line-color': ['get', 'color'],
         'line-width': ['interpolate', ['linear'], ['zoom'], 11, ['match', ['get', 'mode'], 'bus', 1, 1.8], 15, ['match', ['get', 'mode'], 'bus', 2, 3.6], 18, ['match', ['get', 'mode'], 'bus', 3, 5]],
         'line-offset': ['interpolate', ['linear'], ['zoom'], 11, ['*', ['get', 'offset'], 1.8], 15, ['*', ['get', 'offset'], ['match', ['get', 'mode'], 'bus', 2.4, 3.6]], 18, ['*', ['get', 'offset'], ['match', ['get', 'mode'], 'bus', 3.4, 5]]],
-        'line-opacity': ['match', ['get', 'mode'], 'bus', 0.85, 1],
+        // a leg rebuilt from the network (.cmm, no path in the file) is fainter: an estimate, not the game's path
+        'line-opacity': ['case', ['==', ['get', 'est'], 1], 0.45, ['match', ['get', 'mode'], 'bus', 0.85, 1]],
       },
     } as LayerSpecification,
 

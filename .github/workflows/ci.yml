@@ -35,6 +35,8 @@ jobs:
         run: npm run check:i18n
       - name: .vellummap reader
         run: npm run check:vellummap
+      - name: .cmm reader
+        run: npm run check:cmm
 
   data:
     name: Data checks

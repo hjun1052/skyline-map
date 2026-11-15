@@ -937,7 +937,6 @@ export const KO: Record<string, string> = {
   "This .vellummap file has no lane data (one-way streets, speed limits, bike lanes, which lanes cars, buses and people may use), so routes can't be worked out reliably. Directions, travel-time areas, closure analysis and the cycling layer need a .cslmap export of the same city.": "이 .vellummap 파일에는 차로 정보(일방통행, 제한 속도, 자전거 도로, 차·버스·보행자가 쓸 수 있는 차로)가 없어서 경로를 믿을 만하게 계산할 수 없어요. 길찾기, 도달 범위, 통제 분석, 자전거 레이어에는 같은 도시의 .cslmap 파일이 필요해요.",
   "Tip: export the city with Vellum Bridge right after you save the game (or save right after exporting), so the save and the export show the same moment.": "팁: 게임을 저장한 직후에 Vellum Bridge로 도시를 내보내면(또는 내보낸 직후에 저장하면) 세이브와 지도 파일이 같은 시점을 담아요.",
   "Directions now use this save's lanes and one-way streets on {pct}% of the road network (by length). The rest are still estimated from road types.": "이제 길찾기가 도로망의 {pct}%(길이 기준)에서 이 세이브의 차로와 일방통행 정보를 써요. 나머지는 여전히 도로 종류로 추정해요.",
-  "(.cslmap, .cslmap.gz or .vellummap)": "(.cslmap, .cslmap.gz 또는 .vellummap)",
   "Lanes and one-way streets come from your save.": "차로와 일방통행 정보는 세이브 파일에서 가져와요.",
   "Lanes and one-way streets come from your save. Times may still differ a little from the game.": "차로와 일방통행 정보는 세이브 파일에서 가져와요. 시간은 게임과 조금 다를 수 있어요.",
   "Directions now use this save's lanes and one-way streets.": "이제 길찾기가 이 세이브의 차로와 일방통행 정보를 써요.",
@@ -974,4 +973,15 @@ export const KO: Record<string, string> = {
   "Not available for this road": "이 도로는 지원하지 않아요",
   "Not available for this save": "이 세이브는 지원하지 않아요",
   "Traffic, directions where estimated": "교통량 (방향별 추정 포함)",
+  // ---------------------------------------------------------------- .cmm (CSLModernMap)
+  "This .cmm is damaged: {detail}": "이 .cmm 파일이 손상됐어요: {detail}",
+  "This .cmm uses format {version}, which Skyline Map does not read yet. It reads cmm-v1.": "이 .cmm은 형식 {version}이라 Skyline Map이 아직 읽지 못해요. Skyline Map은 cmm-v1을 읽어요.",
+  "Opened from {producer} (.cmm)": "{producer}에서 내보낸 지도 (.cmm)",
+  "(.cslmap, .cslmap.gz, .vellummap or .cmm.gz)": "(.cslmap, .cslmap.gz, .vellummap 또는 .cmm.gz)",
+  "Boundaries come from the game itself (CSLModernMap export).": "경계는 게임에서 그대로 가져왔어요 (CSLModernMap 내보내기).",
+  "Rendered from a CSLModernMap export. Map data © the city's mayor. Fonts: Pretendard (OFL).": "CSLModernMap 내보내기로 그린 지도입니다. 지도 데이터 © 각 도시의 시장. 글꼴: Pretendard (OFL).",
+  "Part of this line's path is estimated from the network it runs on, because the export doesn't include it.": "내보낸 파일에 경로가 없어서 이 노선 경로의 일부는 노선이 다니는 길을 따라 추정했어요.",
+  "The export has no path for this line, so it isn't drawn on the map.": "내보낸 파일에 이 노선의 경로가 없어서 지도에 그리지 않았어요.",
+  "Tip: export the city with CSLModernMap right after you save the game (or save right after exporting), so the save and the export show the same moment.": "팁: 게임을 저장한 직후에 CSLModernMap으로 도시를 내보내면(또는 내보낸 직후에 저장하면) 세이브와 지도 파일이 같은 시점을 담아요.",
+  "CSLModernMap saves .cmm.gz exports next to it, unless you chose another folder in its options:": "CSLModernMap은 따로 폴더를 정하지 않았다면 .cmm.gz 파일을 그 옆 폴더에 저장해요:",
 };

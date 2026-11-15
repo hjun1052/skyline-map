@@ -21,7 +21,7 @@ import { createSchematic } from './schematic-view';
 import { createContextStore, createContextEditor, moneyField, parseMoney, describeRule } from './context-ui';
 import { bottomSheet, isPhone } from './sheet';
 import { mountFindFile } from './findfile';
-import { listRecent, rememberMap, rememberSave, forget, recentId, type Recent } from './recent';
+import { listRecent, rememberMap, rememberSave, forget, recentId, type Recent, type MapFormat } from './recent';
 import { showDistrictGlow, clearDistrictGlow } from './district-glow';
 import { t, tn, initLang, setLang, onLang, applyStatic, getLang, LANGS, locale, fmtFixed, type Lang } from './i18n';
 import { getUnits, setUnits, onUnits, imperial, fmtLength, fmtHeight, fmtWidth, fmtAreaSmall, fmtAreaLarge, fmtSpeed, type Units } from './units';
@@ -70,16 +70,17 @@ const scaleBar = new maplibregl.ScaleControl({ maxWidth: 110, unit: imperial() ?
 map.addControl(scaleBar, 'bottom-right');
 // i18n-keys
 void ['Road class']; // panel row label for .vellummap roads (row() translates it)
-void ["Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL)."];
+void ["Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL).", "Rendered from a CSLModernMap export. Map data © the city's mayor. Fonts: Pretendard (OFL)."];
 // end i18n-keys
 /** the map corner credits the mod that exported the open map (CSLMapView before one is open) */
 let attribution: maplibregl.AttributionControl | null = null;
-function creditExporter(exporter: 'CSLMapView' | 'Vellum Bridge') {
+function creditExporter(exporter: 'CSLMapView' | 'Vellum Bridge' | 'CSLModernMap') {
   if (attribution) map.removeControl(attribution);
   attribution = new maplibregl.AttributionControl({ compact: true, customAttribution: `Cities: Skylines · ${exporter}` });
   map.addControl(attribution, 'bottom-right');
   const about = document.querySelector<HTMLElement>('#about [data-i18n]')!;
-  about.dataset.i18n = about.dataset.i18nSrc = exporter === 'CSLMapView' ? "Rendered from CSLMapView exports. Map data © the city's mayor. Fonts: Pretendard (OFL)." : "Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL).";
+  about.dataset.i18n = about.dataset.i18nSrc = exporter === 'CSLMapView' ? "Rendered from CSLMapView exports. Map data © the city's mayor. Fonts: Pretendard (OFL)."
+    : exporter === 'CSLModernMap' ? "Rendered from a CSLModernMap export. Map data © the city's mayor. Fonts: Pretendard (OFL)." : "Rendered from a Vellum Bridge export. Map data © the city's mayor. Fonts: Pretendard (OFL).";
   about.textContent = t(about.dataset.i18n);
 }
 creditExporter('CSLMapView');
@@ -231,7 +232,7 @@ function showCity(city: BuiltCity) {
   for (const id of ['topbar', 'layerSwitch', 'controls', 'dirFab']) $(id).hidden = false;
   $('cityChip').textContent = city.meta.name;
   cityTexts(city);
-  creditExporter(city.meta.source ? 'Vellum Bridge' : 'CSLMapView');
+  creditExporter(city.meta.source?.format === 'cmm' ? 'CSLModernMap' : city.meta.source ? 'Vellum Bridge' : 'CSLMapView');
   syncUi(); applyStyle(); // bike lanes from the file or from a save (bikeFromSave)
   for (const id of ['dirFab', 'dirBtn', 'reachBtn', 'closureMenu']) { $(id).classList.toggle('off', !canRoute()); $(id).setAttribute('aria-disabled', String(!canRoute())); }
   if (!hasLanes()) toast(canRoute() ? t('Directions on this map are approximate') : t('Directions are off for this map'));
@@ -242,7 +243,7 @@ function showCity(city: BuiltCity) {
   state.recentId = null;
   if (pending) {
     const p = pending; pending = null;
-    const format = city.meta.source ? 'vellummap' : 'cslmap';
+    const format: MapFormat = city.meta.source?.format ?? 'cslmap';
     state.recentId = recentId(format, city.meta.name);
     void rememberMap(format, city.meta.name, p.file, city.meta.generated, p.blob);
     if (p.save) void sim.load(new File([p.save.blob], p.save.file));
@@ -266,7 +267,7 @@ async function loadLocalList() {
     if (!maps.length) return;
     const groups = new Map<string, typeof maps>();
     for (const m of maps) {
-      const city = m.file.normalize('NFC').replace(/\.(cslmap(\.gz)?|vellummap)$/i, '').replace(/-\d{8}-\d{6}$/, '');
+      const city = m.file.normalize('NFC').replace(/\.(cslmap(\.gz)?|vellummap|cmm(\.gz)?)$/i, '').replace(/-\d{8}-\d{6}$/, '');
       groups.set(city, [...(groups.get(city) ?? []), m]);
     }
     const fmt = (ms: number) => new Date(ms).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' });
@@ -301,9 +302,9 @@ async function renderRecent() {
   if (!list.length) { box.innerHTML = ''; return; }
   const palette = ['#188038', '#1a73e8', '#e37400', '#a142f4', '#d93025'];
   const X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
-  const meta = (r: Recent) => esc(t('Opened {date}', { date: fmtDate(r.opened) })) + (r.save ? ' · ' + esc(t('with save')) : '') + (r.format === 'vellummap' ? ' · .vellummap' : '');
-  /** the city, and the format when it is a .vellummap (a .cslmap of the same city is a separate entry) */
-  const label = (r: Recent) => (r.format === 'vellummap' ? `${r.name} (.vellummap)` : r.name);
+  const meta = (r: Recent) => esc(t('Opened {date}', { date: fmtDate(r.opened) })) + (r.save ? ' · ' + esc(t('with save')) : '') + (r.format === 'cslmap' ? '' : ` · .${r.format}`);
+  /** the city, and the format when it is not a .cslmap (a .cslmap of the same city is a separate entry) */
+  const label = (r: Recent) => (r.format === 'cslmap' ? r.name : `${r.name} (.${r.format})`);
   const initial = (r: Recent) => esc([...r.name][0] ?? '?');
   const forgetBtn = (r: Recent, small = '') => `<button type="button" class="forget${small}" data-forget="${esc(r.id)}" title="${esc(t('Forget'))}" aria-label="${esc(t('Forget {city}', { city: label(r) }))}">${X}</button>`;
   const [latest, ...rest] = list;
@@ -351,7 +352,7 @@ function renderDrawer(city: BuiltCity) {
   $('cityInfo').innerHTML = `
     <div class="city-title">${esc(city.meta.name)}</div>
     <div class="city-meta">${t('Saved {date}', { date: esc(fmtGenerated(city.meta.generated)) })}${state.currentFile ? ' · ' + esc(state.currentFile) : ''}</div>
-    ${city.meta.source ? `<div class="city-source">${esc(t('Opened from {producer} (.vellummap)', { producer: city.meta.source.producer || 'Vellum' }))}${city.meta.source.lanes ? '' : ` <button class="link-btn" data-why-no-route>${esc(!city.meta.source.approxRoutes ? t('Directions are off for this map') : sim.savedLanes() !== null ? t('Directions use lanes from your save') : t('Directions on this map are approximate'))}</button>`}</div>` : ''}
+    ${city.meta.source ? `<div class="city-source">${esc(city.meta.source.format === 'cmm' ? t('Opened from {producer} (.cmm)', { producer: city.meta.source.producer }) : t('Opened from {producer} (.vellummap)', { producer: city.meta.source.producer || 'Vellum' }))}${city.meta.source.format === 'cmm' ? ` <span class="exp-tag">${esc(t('Experimental'))}</span>` : ''}${city.meta.source.lanes ? '' : ` <button class="link-btn" data-why-no-route>${esc(!city.meta.source.approxRoutes ? t('Directions are off for this map') : sim.savedLanes() !== null ? t('Directions use lanes from your save') : t('Directions on this map are approximate'))}</button>`}</div>` : ''}
     <div class="stats">
       <div class="stat"><b>${n(s.buildings)}</b><span>${t('Buildings')}</span></div>
       <div class="stat"><b>${n(s.roads)}</b><span>${t('Road segments')}</span></div>
@@ -455,6 +456,12 @@ function fareRow(line: BuiltCity['meta']['lines'][number]) {
   const r = pricing.lineRule(line.id);
   return `<div class="p-row"><span>${t('Fare')}</span><span>${r.rule ? esc(describeRule(r.rule, pricing.currency())) + (r.source === 'default' ? ` <small class="muted">${t('(default)')}</small>` : '') : `<span class="muted">${t('Not set')}</span>`} <button class="link-btn" data-edit-fare="${line.id}">${r.rule ? t('Edit') : t('Set fare')}</button></span></div>`;
 }
+/** when the drawn path is not (all) the game's own: part rebuilt from the network (.cmm), or none in the file */
+function pathNote(line: BuiltCity['meta']['lines'][number]) {
+  const note = line.estimated ? t("Part of this line's path is estimated from the network it runs on, because the export doesn't include it.")
+    : !line.bbox && line.type !== 'tour' ? t("The export has no path for this line, so it isn't drawn on the map.") : '';
+  return note ? `<p class="p-note">${esc(note)}</p>` : '';
+}
 function selectLine(id: number, fit: boolean) {
   panelPlace = null;
   const c = state.city!;
@@ -467,7 +474,7 @@ function selectLine(id: number, fit: boolean) {
   if (fit && line.bbox) map.fitBounds([[line.bbox[0], line.bbox[1]], [line.bbox[2], line.bbox[3]]], { padding: { top: 90, bottom: 60, left: innerWidth > 700 ? 420 : 40, right: 60 }, maxZoom: 15.5 });
   const stations = c.sources.places.features.filter((f) => (f.properties.kind === 'station' || f.properties.kind === 'busstop') && String(f.properties.lines).split(' · ').includes(line.name)).length;
   panelRefresh = () => selectLine(id, false);
-  panel(head(line.name, t('{mode} line', { mode: modeName(line.type) }), iconDataUrl(line.type, line.color)) + `<div class="p-rows">${row('Mode', modeName(line.type))}${row('Stops', line.stops)}${row('Stations on map', stations || null)}${fareRow(line)}<div class="p-row"><span>${t('Colour')}</span><span><i class="swatch" style="background:${line.color}"></i>${line.color}</span></div></div>${sim.lineHtml(id)}${stopList(line)}`, line.color);
+  panel(head(line.name, t('{mode} line', { mode: modeName(line.type) }), iconDataUrl(line.type, line.color)) + `<div class="p-rows">${row('Mode', modeName(line.type))}${row('Stops', line.stops)}${row('Stations on map', stations || null)}${fareRow(line)}<div class="p-row"><span>${t('Colour')}</span><span><i class="swatch" style="background:${line.color}"></i>${line.color}</span></div></div>${pathNote(line)}${sim.lineHtml(id)}${stopList(line)}`, line.color);
 }
 
 function describe(f: MapGeoJSONFeature, lng: number, lat: number) {
@@ -553,7 +560,7 @@ function showDistrict(name: string) {
   const about = (v: number | null) => (v ? (exact ? String(v) : '≈ ' + v) : null);
   const num = (v: unknown) => (typeof v === 'number' ? v.toLocaleString(locale()) : null);
   panel(head(name, exact ? t('District, from the game\'s district map') : t('District, estimated area')) + `<div class="p-rows">${row('Area', area ? (exact ? '' : '≈ ') + fmtAreaLarge(area) : null)}${row('Population', num(dp.pop))}${row('Homes', num(dp.homes))}${row('Jobs', num(dp.jobs))}${row('Specializations', dp.spec ? String(dp.spec) : null)}${row('Buildings', about(blds.length))}${row('Residential', about(by('residential')))}${row('Commercial / office', about(by('commercial') + by('office')))}${row('Industrial', about(by('industrial')))}${row('Stations', stations.join(', ') || null)}</div>
-    <p class="p-note">${exact ? t('Boundaries and figures come from the game itself (Vellum Bridge export).') : t('The export has no district boundaries. This area is estimated from the district label and the transit stops that record it, so its edges and counts are approximate.')}</p>`, '#7d5fc4');
+    <p class="p-note">${exact ? (c.meta.source?.format === 'cmm' ? t('Boundaries come from the game itself (CSLModernMap export).') : t('Boundaries and figures come from the game itself (Vellum Bridge export).')) : t('The export has no district boundaries. This area is estimated from the district label and the transit stops that record it, so its edges and counts are approximate.')}</p>`, '#7d5fc4');
 }
 function ringAreaLL(r: [number, number][]) { let a = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const p = fromLngLat(r[i][0], r[i][1]), q = fromLngLat(r[j][0], r[j][1]); a += (q[0] - p[0]) * (q[1] + p[1]); } return a / 2; }
 function inPoly(pt: [number, number], rings: [number, number][][]) {

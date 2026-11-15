@@ -20,7 +20,7 @@ export function createTimelapse(map: MLMap, deps: { worker: Worker; city: () => 
   el.id = 'timelapse'; el.className = 'card'; el.hidden = true;
   document.body.appendChild(el);
   const input = document.createElement('input');
-  input.type = 'file'; input.multiple = true; input.accept = '.cslmap,.gz,.vellummap'; input.hidden = true;
+  input.type = 'file'; input.multiple = true; input.accept = '.cslmap,.gz,.vellummap,.cmm'; input.hidden = true;
   document.body.appendChild(input);
   input.onchange = () => { const fs = [...(input.files ?? [])]; input.value = ''; if (fs.length) void load(fs.map((f) => ({ name: f.name, get: () => f.arrayBuffer() }))); };
 
