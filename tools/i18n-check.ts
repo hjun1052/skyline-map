@@ -10,7 +10,9 @@ const keys = new Map<string, string>();
 const add = (k: string, where: string) => { if (k && !keys.has(k)) keys.set(k, where); };
 const unq = (s: string) => s.slice(1, -1).replace(/\\'/g, "'").replace(/\\"/g, '"');
 const STR = String.raw`'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|\`(?:[^\`\\$]|\\.)*\``;
-for (const f of readdirSync('src').filter((f) => f.endsWith('.ts') && !f.startsWith('i18n'))) {
+// every .ts under src (subfolders too: src/phone, src/sim), except the dictionaries themselves
+const sources = (readdirSync('src', { recursive: true }) as string[]).map((f) => f.replace(/\\/g, '/')).filter((f) => f.endsWith('.ts') && !/(^|\/)i18n/.test(f));
+for (const f of sources) {
   const src = readFileSync('src/' + f, 'utf8');
   for (const m of src.matchAll(new RegExp(String.raw`\bt\(\s*(${STR})`, 'g'))) add(unq(m[1]), f);
   for (const m of src.matchAll(new RegExp(String.raw`\brow\(\s*(${STR})`, 'g'))) add(unq(m[1]), f);

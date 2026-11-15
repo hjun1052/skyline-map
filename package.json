@@ -31,6 +31,7 @@
     "check:traffic-dir": "tsx tools/traffic-dir-check.ts",
     "lane-catalog": "tsx tools/lane-catalog.ts",
     "check:cmm": "tsx tools/cmm-check.ts",
+    "check:phone": "tsx tools/phone-check.ts",
     "check:route-ends": "tsx tools/route-ends-check.ts",
     "check:nav-traffic": "tsx tools/nav-traffic-check.ts"
   },
@@ -38,7 +39,8 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "dependencies": {
-    "maplibre-gl": "^6.17.0"
+    "maplibre-gl": "^6.17.0",
+    "uqr": "0.1.3"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
