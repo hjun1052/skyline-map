@@ -13,6 +13,14 @@ export const TRAFFIC_CURVE: readonly [number, number][] = [
   [5, 1], [15, 1.06], [25, 1.1], [35, 1.11], [45, 1.16], [55, 1.56], [65, 1.85], [75, 2.09], [85, 2.29], [95, 3.57],
 ];
 
+/** a route stretch's colour by how much traffic slows it, or '' when it barely does (the route's traffic in the 2D
+ *  route view and in the navigation simulation) */
+export function trafficColor(pct: number): string {
+  if (pct < 0) return '';
+  const f = trafficFactor(pct);
+  return f >= 3 ? '#a50e0e' : f >= 2 ? '#d93025' : f >= 1.3 ? '#f29900' : '';
+}
+
 /** travel-time multiplier (≥ 1) for a segment at `pct` density */
 export function trafficFactor(pct: number): number {
   const c = TRAFFIC_CURVE;

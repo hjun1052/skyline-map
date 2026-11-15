@@ -139,7 +139,7 @@ self.onmessage = async (e: MessageEvent) => {
       void ['Reading save file', 'Checking it matches this map', 'Reading simulation data'];
       // end i18n-keys
       if (!lastCity) { self.postMessage({ type: 'sim', id: msg.id, result: { ok: false, code: 'corrupt', detail: 'no map open' } }); return; }
-      router?.clearRules(); router?.clearTraffic();
+      router?.clearRules(); router?.clearTraffic(); router?.clearControls();
       // a new save starts from the estimated lanes again (.vellummap), whatever an earlier save did
       if (vellumCtx?.savedRouter) { routeOn(vellumCtx.est, vellumCtx.stopNames, vellumCtx.closable); vellumCtx.savedRouter = false; }
       // parsing can await (gzip): remember what this load was for, so a stale one never applies its rules
@@ -154,6 +154,8 @@ self.onmessage = async (e: MessageEvent) => {
         if (current && vc && result.routing) { routeOn(result.routing, vc.stopNames, vc.closable); vc.savedRouter = true; }
         delete result.routing;
         if (current && result.rules) router!.applyRules(result.rules);
+        // traffic lights and signs along driving routes (navigation simulation)
+        if (current && result.controls) router!.applyControls(result.controls);
         // densities of matched segments, for traffic-aware routing (used only once the page switches it on)
         if (current && result.traffic) router!.applyTraffic(result.traffic.ids, result.traffic.pct, result.trafficDir ?? undefined);
         delete result.rules;
@@ -161,7 +163,7 @@ self.onmessage = async (e: MessageEvent) => {
       self.postMessage({ type: 'sim', id: msg.id, result }, { transfer: transferables(result) });
     } else if (msg.type === 'simClear') {
       simToken++;
-      router?.clearRules(); router?.clearTraffic();
+      router?.clearRules(); router?.clearTraffic(); router?.clearControls();
       // .vellummap: back to the estimated lanes
       if (vellumCtx?.savedRouter) { routeOn(vellumCtx.est, vellumCtx.stopNames, vellumCtx.closable); vellumCtx.savedRouter = false; }
     } else if (msg.type === 'traffic') {

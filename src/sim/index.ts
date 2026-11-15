@@ -18,6 +18,7 @@ import type { SavePrefabs } from '../lane-infer';
 import { laneInfo } from '../build';
 import { readVehicles, readPaths } from './vehicles';
 import { directionalTraffic, type DirTraffic } from './directional';
+import { junctionControls, type Control } from './controls';
 
 /** for a map without lanes (.vellummap): the worker's routing copy rebuilt with the real prefabs a matched save names */
 export type VellumRouting = (saved: SavePrefabs) => ReturnType<typeof import('../lane-infer')['routingCopy']>;
@@ -59,6 +60,8 @@ export interface SimData {
   tmpe: { segs: { id: number; kmh: number[]; typeDefault: number | null; parking: [boolean, boolean] | null }[]; modVersion: string | null } | null;
   /** ridership for matched lines only */
   lines: SimLine[] | null;
+  /** traffic lights and stop/yield signs per junction approach, on matched segments (sim/controls.ts); null if unreadable */
+  controls: Control[] | null;
   /** save-wide figures for the whole city (not limited to matched objects) */
   city: CityStats | null;
   /** simulation grids (see grids.ts for extents) */
@@ -153,11 +156,14 @@ export async function loadSim(buf: ArrayBuffer, city: CityData, step: (s: string
     const tmpeData = tryRead('tmpe', () => readTmpe(sd.modData));
     const tmpe = tmpeData ? tmpeOf(simCity, tmpeData, net, m.seg) : null;
     const rules = tryRead('rules', () => buildRules(simCity, net, m.seg, tmpeData, sd.leftHandTraffic)) ?? undefined;
+    // traffic lights and stop/yield signs at junction approaches, on segments the save matched (navigation simulation)
+    const tmpeOpt = sd.modData.get('TMPE_Options');
+    const controls = tryRead('controls', () => junctionControls(simCity, net, tmpeData, tmpeOpt && tmpeOpt.length > 18 ? tmpeOpt[18] !== 0 : null).filter((c) => m.seg[c.seg] === M.Verified)) ?? null;
     const lines = transport ? linesOf(transport.lines, m.line) : null;
     const cityStats = tryRead('city', () => readCityStats(sd));
     const g = tryRead('grids', () => readGrids(sd));
     const grids = g ? { landValue: g.landValue, noise: g.noise, crime: g.crime, pollution: g.groundPollution } : null;
-    return { ok: true, save, v, traffic, buildings, tmpe, lines, city: cityStats, grids, unavailable, rules, rulesSummary: rules?.summary ?? null, trafficDir, savedLanes, roadFacts, routing, ms: Math.round(performance.now() - t0) };
+    return { ok: true, save, v, traffic, buildings, tmpe, lines, city: cityStats, grids, unavailable, rules, rulesSummary: rules?.summary ?? null, trafficDir, controls, savedLanes, roadFacts, routing, ms: Math.round(performance.now() - t0) };
   } catch (err) {
     if (err instanceof SaveError) return { ok: false, code: err.code, detail: err.message, save };
     if (err instanceof RangeError) return { ok: false, code: 'truncated', detail: err.message, save };

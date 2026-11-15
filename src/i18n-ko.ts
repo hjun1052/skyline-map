@@ -887,6 +887,7 @@ export const KO: Record<string, string> = {
   "In {n} feet, {instruction}": "{n}피트 앞에서 {instruction}",
   "In {n} miles, {instruction}": "{n}마일 앞에서 {instruction}",
   "Speed limit {n} mph": "제한 속도 {n}mph",
+  "Traffic ahead: about {time} slower": "앞쪽 교통 정체: 약 {time} 더 걸림",
   "mi of road": "mi 도로",
   "mi of rail": "mi 철도",
   "{v} acres": "{v}에이커",

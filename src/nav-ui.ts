@@ -28,11 +28,12 @@ const I = {
   voiceOn: svg('<path d="M4 9v6h4l5 4.5v-15L8 9H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/>'),
   voiceOff: svg('<path d="M16.5 12a4.5 4.5 0 0 0-2.5-4v2.2l2.5 2.5V12zm2.5 0c0 .9-.2 1.8-.5 2.6l1.5 1.5A9 9 0 0 0 14 3.2v2.1a7 7 0 0 1 5 6.7zM4.3 3 3 4.3 7.7 9H3v6h4l5 5v-6.7l4.3 4.3a7 7 0 0 1-2.3 1.2v2.1a9 9 0 0 0 3.7-1.8L19.7 21l1.3-1.3-9-9L4.3 3zM12 4 9.9 6.1 12 8.2V4z"/>'),
   close: svg('<path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6z"/>'),
+  car: svg('<path d="M18.9 6a1.5 1.5 0 0 0-1.4-1h-11a1.5 1.5 0 0 0-1.4 1L3 12v8a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-1h12v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-8l-2.1-6zM6.5 16a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm11 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM5 11l1.5-4.5h11L19 11H5z"/>'),
   center: svg('<path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-2.1A7 7 0 0 0 13 5.1V3h-2v2.1A7 7 0 0 0 5.1 11H3v2h2.1a7 7 0 0 0 5.9 5.9V21h2v-2.1a7 7 0 0 0 5.9-5.9H21v-2zm-9 6a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/>'),
 };
 const PUCK = `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20" fill="#fff"/><circle cx="24" cy="24" r="20" fill="none" stroke="rgba(0,0,0,.12)" stroke-width="1"/><path d="M24 9 35 35l-11-6-11 6z" fill="#1a73e8"/></svg>`;
 // i18n-keys
-void ['Tunnel', 'Bridge / elevated', 'In {n} kilometers, {instruction}', 'In {n} meters, {instruction}', 'Speed limit {n} mph'];
+void ['Tunnel', 'Bridge / elevated', 'In {n} kilometers, {instruction}', 'In {n} meters, {instruction}', 'Speed limit {n} mph', 'Traffic ahead: about {time} slower'];
 // end i18n-keys
 
 export function createNav(d: NavDeps) {
@@ -95,16 +96,22 @@ export function createNav(d: NavDeps) {
   const set = (k: string, e: HTMLElement, v: string, html = false) => { if (shown[k] === v) return; shown[k] = v; if (html) e.innerHTML = v; else e.textContent = v; };
 
   // ---------------------------------------------------------------- map layers
-  const LAYERS = ['nav-route-casing', 'nav-route-line', 'nav-turn-casing', 'nav-turn-line', 'nav-turn-head'];
+  const LAYERS = ['nav-route-casing', 'nav-route-line', 'nav-ctl', 'nav-turn-casing', 'nav-turn-line', 'nav-turn-head'];
   function addLayers(p: NavPlan) {
     const line = { type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates: p.pts.map((q) => toLngLat(q[0], q[1])) } };
     map.addSource('nav-route', { type: 'geojson', data: line, lineMetrics: true });
     map.addSource('nav-turn', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    // traffic lights and signs: on the road the car arrives on, a few metres before the junction (where it would stop)
+    map.addSource('nav-ctl', { type: 'geojson', data: { type: 'FeatureCollection', features: p.controls.map((c) => { const at = pointAt(p, Math.max(0, c.s - 8)).xy; return { type: 'Feature' as const, properties: { s: c.s, k: c.kind }, geometry: { type: 'Point' as const, coordinates: toLngLat(at[0], at[1]) } }; }) } });
     if (!map.hasImage('nav-head')) map.addImage('nav-head', arrowHead(), { pixelRatio: 2 });
+    for (const k of ['signal', 'stop', 'yield'] as const) if (!map.hasImage('nav-' + k)) map.addImage('nav-' + k, controlIcon(k), { pixelRatio: 2 });
     const w = (a: number, b: number) => ['interpolate', ['exponential', 1.5], ['zoom'], 13, a, 19, b];
     const layers = [
       { id: 'nav-route-casing', type: 'line', source: 'nav-route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#174ea6', 'line-width': w(7, 26) } },
       { id: 'nav-route-line', type: 'line', source: 'nav-route', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#4285f4', 'line-width': w(4.5, 19), 'line-gradient': gradient(0) } },
+      // upright on screen like the car (a sign laid flat on a 60° tilt would be a sliver), nearest first when they collide;
+      // only those just ahead (see drawControls)
+      { id: 'nav-ctl', type: 'symbol', source: 'nav-ctl', filter: ['==', ['get', 's'], -1], layout: { 'icon-image': ['concat', 'nav-', ['get', 'k']], 'icon-anchor': 'bottom', 'icon-offset': [0, -2], 'icon-pitch-alignment': 'viewport', 'icon-rotation-alignment': 'viewport', 'icon-padding': 3, 'symbol-sort-key': ['get', 's'], 'icon-size': ['interpolate', ['linear'], ['zoom'], 14, 0.5, 17, 0.8, 19, 1] } },
       { id: 'nav-turn-casing', type: 'line', source: 'nav-turn', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-join': 'round', 'line-cap': 'butt' }, paint: { 'line-color': '#0b3d91', 'line-width': w(5, 17) } },
       { id: 'nav-turn-line', type: 'line', source: 'nav-turn', filter: ['==', ['geometry-type'], 'LineString'], layout: { 'line-join': 'round', 'line-cap': 'butt' }, paint: { 'line-color': '#ffffff', 'line-width': w(3, 11) } },
       { id: 'nav-turn-head', type: 'symbol', source: 'nav-turn', filter: ['==', ['geometry-type'], 'Point'], layout: { 'icon-image': 'nav-head', 'icon-rotate': ['get', 'b'], 'icon-rotation-alignment': 'map', 'icon-pitch-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-size': ['interpolate', ['exponential', 1.5], ['zoom'], 13, 0.35, 19, 1.4] } },
@@ -116,12 +123,60 @@ export function createNav(d: NavDeps) {
   }
   function removeLayers() {
     for (const id of LAYERS) if (map.getLayer(id)) map.removeLayer(id);
-    for (const s of ['nav-route', 'nav-turn']) if (map.getSource(s)) map.removeSource(s);
+    for (const s of ['nav-route', 'nav-turn', 'nav-ctl']) if (map.getSource(s)) map.removeSource(s);
+    for (const j of jamMarks) j.m.remove();
+    jamMarks = [];
     for (const id of hidRoute) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'visible');
     hidRoute = [];
   }
-  /** driven part grey, the rest blue */
-  const gradient = (f: number): any => ['step', ['line-progress'], '#9aa0a6', Math.min(1, Math.max(1e-6, f)), '#4285f4'];
+  /** driven part grey, the rest blue, and ahead of the car each slowed stretch in its traffic colour (the route view's
+   *  colours, from the same traffic data); without traffic-aware routing, just grey and blue */
+  const gradient = (f: number): any => {
+    const T = plan?.total || 1, slow = (plan?.traffic ?? []).filter((x) => x.color);
+    if (!slow.length) return ['step', ['line-progress'], '#9aa0a6', Math.min(1, Math.max(1e-6, f)), '#4285f4'];
+    const at = (b: number) => (b < f ? '#9aa0a6' : slow.find((x) => b >= x.s0 / T && b < x.s1 / T)?.color ?? '#4285f4');
+    const cuts = [f, ...slow.flatMap((x) => [x.s0 / T, x.s1 / T])].filter((b) => b > 1e-6 && b < 1).sort((a, b) => a - b);
+    const out: any[] = ['step', ['line-progress'], at(0)];
+    let prev = at(0), last = 0;
+    for (const b of cuts) { const c = at(b); if (c !== prev && b - last > 1e-7) { out.push(b, c); prev = c; last = b; } }
+    return out.length > 3 ? out : ['step', ['line-progress'], prev, 0.5, prev];
+  };
+  /** traffic lights and signs within the next 1.5 km ahead (passed ones go, far ones would crowd the horizon) */
+  let ctlKey = '';
+  function drawControls(s: number) {
+    const key = `${Math.floor(s / 10)}`;
+    if (key === ctlKey || !map.getLayer('nav-ctl')) return;
+    ctlKey = key;
+    map.setFilter('nav-ctl', ['all', ['>', ['get', 's'], s + 4], ['<', ['get', 's'], s + 1500]]);
+  }
+  /** "+N min" callouts on sustained traffic ahead (simulation only): the next two jams, anchored inside each where it
+   *  begins, hidden while under the turn banner or the bottom bar */
+  let jamMarks: { m: maplibregl.Marker; el: HTMLElement; at: number }[] = [], jamCheck = 0;
+  function addJams(p: NavPlan) {
+    jamMarks = p.jams.map((j) => {
+      const at = j.s0 + Math.min(80, (j.s1 - j.s0) / 2), xy = pointAt(p, at).xy, time = fmtTime(Math.max(60, Math.round(j.delay / 60) * 60));
+      const el = document.createElement('div');
+      el.className = 'nav-jam' + (j.color === '#f29900' ? ' slow' : '');
+      el.setAttribute('role', 'img'); el.setAttribute('aria-label', t('Traffic ahead: about {time} slower', { time }));
+      el.innerHTML = `<span class="nj-icon">${I.car}</span><b>+${time}</b>`;
+      el.hidden = true;
+      return { m: new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -8], pitchAlignment: 'viewport', rotationAlignment: 'viewport' }).setLngLat(toLngLat(xy[0], xy[1])).addTo(map), el, at };
+    });
+  }
+  function drawJams(s: number) {
+    const now = performance.now();
+    if (now - jamCheck < 150 || !jamMarks.length) return;
+    jamCheck = now;
+    const keep = new Set(jamMarks.filter((j) => j.at > s + 10).slice(0, 2));
+    const ui = [nb.banner, H.then, bar].filter((e) => !e.hidden).map((e) => e.getBoundingClientRect());
+    for (const j of jamMarks) {
+      if (!keep.has(j)) { j.el.hidden = true; continue; }
+      j.el.hidden = false;
+      const r = j.el.getBoundingClientRect();
+      const under = ui.some((u) => r.left < u.right && r.right > u.left && r.top < u.bottom + 6 && r.bottom > u.top - 6);
+      j.el.style.visibility = under ? 'hidden' : '';
+    }
+  }
   let gradF = -1;
   function drawProgress(s: number) {
     // follow the car within a metre or so, whatever the route's length
@@ -308,6 +363,8 @@ export function createNav(d: NavDeps) {
     lastIdle = idle;
     hud(s, v);
     drawProgress(s);
+    drawControls(s);
+    drawJams(s);
     drawTurn(nextManeuver(p, s), p.maneuvers[nextManeuver(p, s)].at - s);
     if (playing || s >= p.total - 0.5) speak(s, v);
   }
@@ -332,8 +389,8 @@ export function createNav(d: NavDeps) {
     saved = { center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch() };
     d.onOpen();
     el.hidden = false; document.body.classList.add('nav-on');
-    addLayers(p);
-    tp = 0; follow = true; turnFor = -2; gradF = -1; playing = true;
+    addLayers(p); addJams(p);
+    tp = 0; follow = true; turnFor = -2; gradF = -1; ctlKey = ''; jamCheck = 0; playing = true;
     $('.nav-recenter').hidden = true;
     voice.said.clear();
     // face along the first stretch, then fly in before driving off
@@ -425,6 +482,30 @@ export function createNav(d: NavDeps) {
     start, stop: () => stop(), isActive: () => !!plan,
     relang() { applyStatic(el); for (const k of Object.keys(shown)) delete shown[k]; clockAt = 0; if (plan) controls(); },
   };
+}
+
+/** Traffic light, stop sign or yield sign as drawn in the route simulation, at 2× (the icons the issue's map apps use:
+ *  a three-lamp signal head, a red octagon, a red-edged triangle pointing down), standing on its bottom edge */
+function controlIcon(k: 'signal' | 'stop' | 'yield'): ImageData {
+  const W = k === 'signal' ? 40 : 56, H = k === 'signal' ? 84 : 56, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d')!;
+  g.shadowColor = 'rgba(0,0,0,.35)'; g.shadowBlur = 4; g.shadowOffsetY = 1;
+  if (k === 'signal') {
+    g.fillStyle = '#202124'; g.strokeStyle = '#ffffff'; g.lineWidth = 3;
+    g.beginPath(); g.roundRect(4, 3, W - 8, H - 8, 9); g.fill(); g.shadowColor = 'transparent'; g.stroke();
+    ['#ea4335', '#fbbc04', '#34a853'].forEach((col, i) => { g.fillStyle = col; g.beginPath(); g.arc(W / 2, 17 + i * 24, 8, 0, Math.PI * 2); g.fill(); });
+  } else if (k === 'stop') {
+    const r = W / 2 - 4, cx = W / 2, cy = H / 2, pts = Array.from({ length: 8 }, (_, i) => { const a = Math.PI / 8 + (i * Math.PI) / 4; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; });
+    g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath();
+    g.fillStyle = '#d93025'; g.fill(); g.shadowColor = 'transparent'; g.strokeStyle = '#ffffff'; g.lineWidth = 3.5; g.stroke();
+    g.fillStyle = '#ffffff'; g.font = '700 15px system-ui, -apple-system, "Segoe UI", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('STOP', cx, cy + 1);
+  } else {
+    g.beginPath(); g.moveTo(5, 8); g.lineTo(W - 5, 8); g.lineTo(W / 2, H - 4); g.closePath();
+    g.fillStyle = '#ffffff'; g.fill(); g.shadowColor = 'transparent';
+    g.lineJoin = 'round'; g.strokeStyle = '#d93025'; g.lineWidth = 7; g.stroke();
+  }
+  return g.getImageData(0, 0, W, H);
 }
 
 /** White arrowhead with a dark edge, pointing north (rotated to the road by the layer). */

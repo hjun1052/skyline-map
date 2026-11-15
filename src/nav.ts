@@ -5,10 +5,19 @@
 // doesn't hold: no lanes, no extra names, no extra turns.
 import type { Route, Span } from './router';
 import { fromLngLat, type XY } from './geo';
+import { trafficColor } from './sim/traffic';
+import type { ControlKind } from './sim/controls';
 
 export interface Maneuver { at: number; man: string; text: string; road: string }
 /** a road of the route along the line, with the speed the route's driving time counts on it (m/s) */
 export interface NavSpan { s0: number; s1: number; name: string; cls: string; brunnel: string; limit?: number; v: number }
+/** traffic on a stretch of the line (traffic-aware routing): its colour in the route view ('' = barely slowed) and the
+ *  seconds traffic adds to it, as routing counts them */
+export interface NavTraffic { s0: number; s1: number; color: string; delay: number }
+/** a stretch of sustained traffic worth a callout: neighbouring slowed stretches joined, with the delay they add */
+export interface Jam { s0: number; s1: number; delay: number; color: string }
+/** a traffic light or stop/yield sign facing the car where it enters a junction, at distance `s` (the junction) */
+export interface NavControl { s: number; kind: ControlKind }
 export interface NavPlan {
   /** route line in game metres (x east, z north) and the distance along it at each point */
   pts: XY[]; cum: Float64Array; total: number;
@@ -20,7 +29,15 @@ export interface NavPlan {
   dist: number;
   maneuvers: Maneuver[];
   spans: NavSpan[];
+  traffic: NavTraffic[];
+  jams: Jam[];
+  controls: NavControl[];
 }
+
+/** callouts: slowed stretches less than this apart are one jam, and a jam needs at least this much delay */
+export const JAM = { gap: 120, minDelay: 60 };
+/** controls closer than this after the one before (the second node of a wide junction) aren't drawn again */
+const CONTROL_GAP = 30;
 
 const A_LAT = 2.5, ACCEL = 1.6, BRAKE = 2.0, V_MIN = 2.5, V_LINK = 6;
 const wrap = (d: number) => ((d + 540) % 360) - 180;
@@ -42,11 +59,51 @@ export function buildPlan(r: Route): NavPlan | null {
   if (total < 1) return null;
 
   // spans index the raw coords (with repeats): place each by its first point instead
-  const spans = placeSpans(leg.spans ?? [], leg.coords.map((c) => fromLngLat(c[0], c[1])), pts, cum);
-  const plan: NavPlan = { pts, cum, total, ds: 0, v: new Float32Array(0), tau: new Float64Array(0), physTime: 0, time: r.time, k: 1, dist: r.dist, maneuvers: [], spans };
+  const raw = leg.coords.map((c) => fromLngLat(c[0], c[1]));
+  const spans = placeSpans(leg.spans ?? [], raw, pts, cum);
+  const lineEnd = cum[Math.max(0, pts.length - 2)];
+  const tp = leg.traffic ?? [], ts = placeAt(tp.map((x) => x.i), raw, pts, cum);
+  const traffic: NavTraffic[] = tp.map((x, k) => ({ s0: ts[k], s1: k + 1 < tp.length ? ts[k + 1] : lineEnd, color: trafficColor(x.pct), delay: x.delay ?? 0 }));
+  const cs = leg.controls ?? [], cAt = placeAt(cs.map((x) => x.i), raw, pts, cum);
+  const controls: NavControl[] = [];
+  cs.forEach((c, k) => { const prev = controls[controls.length - 1]; if (!prev || cAt[k] - prev.s >= CONTROL_GAP) controls.push({ s: cAt[k], kind: c.kind }); });
+  const plan: NavPlan = { pts, cum, total, ds: 0, v: new Float32Array(0), tau: new Float64Array(0), physTime: 0, time: r.time, k: 1, dist: r.dist, maneuvers: [], spans, traffic, jams: jamsOf(traffic), controls };
   profile(plan);
   plan.maneuvers = placeManeuvers(plan, leg.steps);
   return plan;
+}
+
+/** distance along the line of raw coords indices (in order): each by its first matching point, as spans are placed */
+function placeAt(idx: number[], coords: XY[], pts: XY[], cum: Float64Array): number[] {
+  const out: number[] = [];
+  let j = 0;
+  for (const i of idx) {
+    const c = coords[Math.min(i, coords.length - 1)];
+    while (j < pts.length - 1 && Math.hypot(pts[j][0] - c[0], pts[j][1] - c[1]) > 0.05) j++;
+    out.push(cum[j]);
+  }
+  return out;
+}
+
+const SEVERITY = ['', '#f29900', '#d93025', '#a50e0e'];
+/** Sustained traffic: slowed stretches (a colour in the route view) joined across gaps under JAM.gap, adding up the
+ *  delay routing counts on every stretch inside; only jams adding at least JAM.minDelay */
+export function jamsOf(traffic: NavTraffic[]): Jam[] {
+  const out: Jam[] = [];
+  let cur: Jam | null = null, gap = 0; // gap: delay on unslowed stretches since the jam's last slowed one
+  for (const x of traffic) {
+    if (!x.color) { gap += x.delay; continue; }
+    if (cur && x.s0 - cur.s1 < JAM.gap) {
+      cur.delay += gap + x.delay; cur.s1 = x.s1;
+      if (SEVERITY.indexOf(x.color) > SEVERITY.indexOf(cur.color)) cur.color = x.color;
+    } else {
+      if (cur) out.push(cur);
+      cur = { s0: x.s0, s1: x.s1, delay: x.delay, color: x.color };
+    }
+    gap = 0;
+  }
+  if (cur) out.push(cur);
+  return out.filter((jam) => jam.delay >= JAM.minDelay);
 }
 
 function placeSpans(raw: Span[], coords: XY[], pts: XY[], cum: Float64Array): NavSpan[] {
