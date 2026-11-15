@@ -336,7 +336,10 @@ export class Receiver {
     // the desktop's key and an abort come under the QR key; the map only counts under the session key
     let m, bySession = false;
     if (this.session) { try { m = readMsg(await open(this.session, Dir.ToPhone, sealed)); bySession = true; } catch { /* try the QR key */ } }
-    if (!m) { try { m = readMsg(await open(this.key, Dir.ToPhone, sealed)); } catch { return this.fail('decrypt'); } }
+    // Before our own handshake, what we can't read may be the session traffic of another tab of this phone that we just
+    // replaced (same keys, see roomKeys in ui.ts): skip it. Our hello makes the desktop send its key and start again
+    // from where we are. After the handshake, anything unreadable is an attack or corruption.
+    if (!m) { try { m = readMsg(await open(this.key, Dir.ToPhone, sealed)); } catch { return this.session ? this.fail('decrypt') : undefined; } }
     if (m.t === T.Key && !bySession) {
       if (this.session) return; // a repeat after a reconnect
       try { this.session = await sessionKey(this.keys.pair, m.json?.pub, this.keys.pub, m.json?.pub); } catch { return this.fail('decrypt'); }
