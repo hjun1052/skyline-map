@@ -250,6 +250,24 @@ async function unit() {
     await r.attach({ send: (m) => void s.receive(m) }); // a reconnect of the same phone
     for (let i = 0; i < 300 && !got; i++) await tick();
     ok(!why && !!got && (await same(got, data)) && asked.length === 1 && asked[0] === id, 'a confirmed phone receives the city, and is asked about once');
+    // the same phone opening the link in a second tab (same keys, see roomKeys in ui.ts) mid-transfer: it takes over
+    // from the start without being asked about again, and the transfer completes there
+    {
+      answer = true; asked.length = 0;
+      const big = rand(12 * LIMITS.chunk + 3), same2 = await newDeviceKeys();
+      let got2: Blob | null = null, why2: AbortReason | null = null, another2: boolean | null = null;
+      const s2 = new Sender(key, { v: 1, city: 'x', files: [{ kind: 'map', name: 'a', size: big.length }] }, [new Blob([big as BlobPart])], { confirm: async (pid) => { asked.push(pid); return answer; }, declined: (a) => (another2 = a) });
+      const tab1 = new Receiver(key, same2, {});
+      let toTab1 = true, n1 = 0;
+      s2.attach({ send: (m) => { if (toTab1) { if (++n1 < 5) void tab1.receive(m); } else void tab2.receive(m); } });
+      await tab1.attach({ send: (m) => void s2.receive(m) });
+      for (let i = 0; i < 50; i++) await tick();
+      toTab1 = false; s2.pause(); // the relay replaced tab 1's socket with tab 2's
+      const tab2: Receiver = new Receiver(key, same2, { done: (f) => (got2 = f[0].blob), abort: (w) => (why2 = w) });
+      await tab2.attach({ send: (m) => void s2.receive(m) });
+      for (let i = 0; i < 600 && !got2 && !why2; i++) await tick();
+      ok(!why2 && another2 === null && asked.length === 1 && !!got2 && (await same(got2, big)), `a second tab of the same phone takes over and receives the city (${why2 ?? 'ok'}, asked ${asked.length}x)`);
+    }
     // another device with the same link (a photographed QR code) after the user confirmed their phone: transfer over
     answer = false; asked.length = 0;
     let another: boolean | null = null;

@@ -1023,4 +1023,5 @@ export const KO: Record<string, string> = {
   "This link was opened on another device.": "이 링크가 다른 기기에서 열렸어요.",
   "Not sent. Choose Send to phone again for a new code.": "보내지 않았어요. 새 코드가 필요하면 휴대폰으로 보내기를 다시 선택하세요.",
   "Another device opened this link, so the transfer was stopped. Choose Send to phone again.": "다른 기기에서 이 링크를 열어서 전송을 멈췄어요. 휴대폰으로 보내기를 다시 선택하세요.",
+  "This city is being received in another tab. You can close this one.": "이 도시는 다른 탭에서 받고 있어요. 이 탭은 닫아도 돼요.",
 };

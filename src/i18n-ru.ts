@@ -1023,4 +1023,5 @@ export const RU: Record<string, string> = {
   "This link was opened on another device.": "Эта ссылка открыта на другом устройстве.",
   "Not sent. Choose Send to phone again for a new code.": "Не отправлено. Выберите «Отправить на телефон» ещё раз, чтобы получить новый код.",
   "Another device opened this link, so the transfer was stopped. Choose Send to phone again.": "Эту ссылку открыли на другом устройстве, поэтому передача остановлена. Выберите «Отправить на телефон» ещё раз.",
+  "This city is being received in another tab. You can close this one.": "Этот город принимается в другой вкладке. Эту вкладку можно закрыть.",
 };
