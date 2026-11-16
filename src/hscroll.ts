@@ -1,12 +1,13 @@
-// Rows of chips and tabs that scroll sideways with their scrollbar hidden (issue #34). Touchpads and touchscreens
-// scroll them natively; a mouse can't (its wheel only turns up/down, and browsers don't drag-scroll), so here a
-// mouse drag pulls them along, and on rows that sit outside any scrolling panel the wheel scrolls them sideways.
+// Rows of chips and tabs that scroll sideways, most with their scrollbar hidden (issue #34). Touchpads and
+// touchscreens scroll them natively; a mouse can't (its wheel only turns up/down, and browsers don't drag-scroll), so
+// here a mouse drag pulls them along, and on rows outside any scrolling panel the wheel scrolls them sideways.
 // Touch and pen keep the browser's own scrolling.
 
-/** the rows a mouse drag scrolls (some are re-rendered, so listeners sit on the document) */
+/** the rows a mouse drag scrolls (some are re-rendered, so the drag listeners sit on the document) */
 export const SCROLL_ROWS = '#chips, .dc-tabs, .ctx-tabs, .sm-modes, .p-quick';
 /** the rows the wheel scrolls sideways: only those over the map or in a fixed header, since in a scrolling panel
- *  (Discover, context tabs, the phone sheet) the wheel passing over a row should keep scrolling the panel */
+ *  (Discover, context tabs, the phone sheet) the wheel passing over a row should keep scrolling the panel. Both
+ *  elements persist, so the wheel listener goes on them alone and the rest of the page keeps passive scrolling. */
 export const WHEEL_ROWS = '#chips, .sm-modes';
 /** how far a mouse moves before a press becomes a drag (below it, it is still a click) */
 export const DRAG_FROM = 5;
@@ -23,17 +24,23 @@ export function wheelShift(row: Row, e: { deltaX: number; deltaY: number; deltaM
   return Math.min(max, Math.max(0, row.scrollLeft + by)) - row.scrollLeft;
 }
 
-const rowOf = (e: Event, rows = SCROLL_ROWS) => ((e.target as Element | null)?.closest?.(rows) ?? null) as (HTMLElement & Row) | null;
+const rowOf = (e: Event) => ((e.target as Element | null)?.closest?.(SCROLL_ROWS) ?? null) as (HTMLElement & Row) | null;
 
-export function mouseScrollRows(root: Document | EventTarget = document) {
-  root.addEventListener('wheel', (ev) => {
-    const e = ev as WheelEvent, row = rowOf(e, WHEEL_ROWS);
-    if (!row || e.ctrlKey) return; // ctrl-wheel is the browser's zoom
+/** the wheel scrolls this row sideways while it overflows */
+export function wheelScroll(row: EventTarget & Row) {
+  row.addEventListener('wheel', (ev) => {
+    const e = ev as WheelEvent;
+    if (e.ctrlKey) return; // ctrl-wheel is the browser's zoom
     const by = wheelShift(row, e);
     if (!by) return;
     row.scrollLeft += by;
     e.preventDefault();
   }, { passive: false });
+}
+
+/** mouse drag on every row in SCROLL_ROWS, and the wheel on the WHEEL_ROWS found in `root` */
+export function mouseScrollRows(root: Document | EventTarget = document) {
+  if ('querySelectorAll' in root) root.querySelectorAll<HTMLElement>(WHEEL_ROWS).forEach(wheelScroll);
 
   let drag: { row: HTMLElement & Row; id: number; x: number; left: number; moved: boolean } | null = null;
   root.addEventListener('pointerdown', (ev) => {
@@ -44,6 +51,8 @@ export function mouseScrollRows(root: Document | EventTarget = document) {
   root.addEventListener('pointermove', (ev) => {
     const e = ev as PointerEvent;
     if (!drag || e.pointerId !== drag.id) return;
+    // the button was let go of where no pointerup reached us (outside the window, before the drag took capture)
+    if (!(e.buttons & 1)) { if (drag.moved) drag.row.classList.remove('row-dragging'); drag = null; return; }
     const dx = e.clientX - drag.x;
     if (!drag.moved) {
       if (Math.abs(dx) < DRAG_FROM) return;
