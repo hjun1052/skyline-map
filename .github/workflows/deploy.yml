@@ -37,7 +37,12 @@ jobs:
       - run: npm ci
       # the repo's star count, baked into the landing page (shown from 50 stars up); 0 if GitHub doesn't answer
       - name: GitHub stars
-        run: echo "GH_STARS=$(curl -fsS -H 'Authorization: Bearer ${{ github.token }}' https://api.github.com/repos/${{ github.repository }} | jq -r '.stargazers_count // 0' || echo 0)" >> "$GITHUB_ENV"
+        run: |
+          stars=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$GITHUB_REPOSITORY" | jq -r '.stargazers_count // 0') || stars=0
+          echo "GH_STARS=${stars:-0}" >> "$GITHUB_ENV"
+          echo "stars: ${stars:-0}"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Type check and build
         run: npm run build
         env:
