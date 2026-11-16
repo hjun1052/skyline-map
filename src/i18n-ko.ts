@@ -1033,4 +1033,7 @@ export const KO: Record<string, string> = {
   "Export .skysave": ".skysave 내보내기",
   "Exported {file}": "{file} 내보냄",
   "A .skysave keeps what Skyline Map uses from this save (and your fares and toll prices) in a small file that opens with this map export.": ".skysave는 Skyline Map이 이 세이브에서 쓰는 정보(요금과 통행료 포함)를 작은 파일 하나에 담아요. 이 지도 내보내기 파일과 함께 열 수 있어요.",
+  "Simple view": "단순 보기",
+  "Only slow and jammed roads are coloured.": "느리거나 막히는 도로만 색으로 표시해요.",
+  "Roads without slowdowns keep their usual colour.": "막힘이 없는 도로는 원래 색 그대로예요.",
 };

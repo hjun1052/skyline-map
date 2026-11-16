@@ -2,6 +2,7 @@
 // and checks it shows the same city state (sim/validate.ts); this module shows the outcome, the map overlays
 // (traffic, land value, noise, pollution, crime) and the extra rows in the info panels. Values appear only
 // on objects the check matched; city-wide figures are labelled as covering the whole save.
+import { trafficColor, drawnFrom, legendBackground, type TrafficStyle } from './traffic-style';
 import { fmtSpeed } from './units';
 import type { Map as MLMap, ExpressionSpecification } from 'maplibre-gl';
 import type { BuiltCity } from './build';
@@ -20,7 +21,6 @@ const TRAFFIC = 'sim-traffic', RASTER = 'sim-grid', COVER = 'sim-cover';
 const DIR_ZOOM = 14;
 const IMM_HALF = 128 * 38.4; // immaterial grid: 256 cells of 38.4 m, central 25 tiles only
 const NAT_HALF = 256 * 33.75; // natural grid: 512 cells of 33.75 m, the whole map
-const TRAFFIC_COLORS: [number, string][] = [[0, '#34a853'], [40, '#a8c530'], [60, '#f6bf26'], [80, '#f2853d'], [100, '#d93025']];
 // sequential ramps (low → high); index 0 is the colour at the bottom of the scale
 const RAMPS: Record<Exclude<Layer, 'none' | 'traffic'>, string[]> = {
   landValue: ['#f7fcb9', '#c2e699', '#78c679', '#31a354', '#006837'],
@@ -65,6 +65,7 @@ void ['Simulation data', 'Close', 'Enhance your map with real traffic, populatio
 
 /** compass octants from east, counter-clockwise (same keys as the closure tool) */
 export type TrafficMode = 'combined' | 'directional';
+export type { TrafficStyle };
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const num = (v: number) => v.toLocaleString(locale());
 const pct = (v: number) => `${v.toLocaleString(locale(), { maximumFractionDigits: 1 })}%`;
@@ -73,6 +74,8 @@ export function createSim(map: MLMap, deps: {
   worker: Worker; city: () => BuiltCity | null; onOpen: () => void; selectLine: (id: number) => void; toast: (m: string) => void; onRules: () => void; onLoaded?: (f: File) => void; onData?: () => void;
   /** the open city's fares and toll prices, put into an exported .skysave */
   context?: () => Promise<unknown>;
+  /** the viewer switched the traffic layer between the gradient and the simple view (the page keeps the choice) */
+  onTrafficStyle?: (s: TrafficStyle) => void;
   /** a .skysave brought fares and toll prices: keep them (checked, and not over newer ones) */
   adoptContext?: (c: unknown) => Promise<void>;
 }) {
@@ -80,7 +83,7 @@ export function createSim(map: MLMap, deps: {
     open: false, busy: false, step: '', file: '', id: 0, src: null as File | null,
     data: null as SimData | null, fail: null as SimFailure | null,
     layer: 'none' as Layer,
-    bikes: [] as number[], traffic: new Map<number, number>(), dir: new Map<number, { f: number; b: number; ok: boolean; q: number; h: number }>(), mode: 'combined' as TrafficMode, drawn: [] as number[], bld: new Map<number, number>(), tm: new Map<number, TmSeg>(), lines: new Map<number, SimLine>(),
+    bikes: [] as number[], traffic: new Map<number, number>(), dir: new Map<number, { f: number; b: number; ok: boolean; q: number; h: number }>(), mode: 'combined' as TrafficMode, style: 'gradient' as TrafficStyle, drawn: [] as number[], bld: new Map<number, number>(), tm: new Map<number, TmSeg>(), lines: new Map<number, SimLine>(),
   };
 
   const el = document.createElement('div');
@@ -194,17 +197,19 @@ export function createSim(map: MLMap, deps: {
         st.drawn.push(id);
       }
       const tv = ['coalesce', ['feature-state', 't'], -1] as ExpressionSpecification;
+      // the simple view leaves free-flowing roads uncoloured (traffic-style.ts)
+      const floor = drawnFrom(st.style);
       map.addLayer({
         id: TRAFFIC, type: 'line', source: 'roads',
         // roads with car lanes; a .vellummap has no lane counts, so there only roads the save gave a density show (opacity below)
         ...(deps.city()?.meta.source?.lanes === false ? {} : { filter: ['>', ['coalesce', ['get', 'lanes'], 0], 0] as ExpressionSpecification }),
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
-          'line-color': ['interpolate', ['linear'], tv, ...TRAFFIC_COLORS.flat()] as ExpressionSpecification,
+          'line-color': trafficColor(st.style, tv),
           'line-width': roadWidth([0.5, 0.8, 1.2, 1.6]),
           // zoomed in, split roads hand over to the two direction lines below
-          'line-opacity': ['step', ['zoom'], ['case', ['<', tv, 0], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95], DIR_ZOOM,
-            ['case', ['<', tv, 0], 0, ['boolean', ['feature-state', 'td'], false], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95]] as ExpressionSpecification,
+          'line-opacity': ['step', ['zoom'], ['case', ['<', tv, floor], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95], DIR_ZOOM,
+            ['case', ['<', tv, floor], 0, ['boolean', ['feature-state', 'td'], false], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95]] as ExpressionSpecification,
         },
       }, before());
       const splitIds = st.mode === 'directional' ? [...st.dir].filter(([id, x]) => x.ok && st.traffic.has(id)).map(([id]) => id) : [];
@@ -219,10 +224,10 @@ export function createSim(map: MLMap, deps: {
             filter: ['in', ['id'], ['literal', splitIds]] as ExpressionSpecification,
             layout: { 'line-join': 'round', 'line-cap': 'butt' },
             paint: {
-              'line-color': ['interpolate', ['linear'], v, ...TRAFFIC_COLORS.flat()] as ExpressionSpecification,
+              'line-color': trafficColor(st.style, v),
               'line-width': ['interpolate', ['linear'], ['zoom'], DIR_ZOOM, 1.6, 16, 2.6, 18, 4.5],
               'line-offset': ['interpolate', ['linear'], ['zoom'], DIR_ZOOM, 1.3 * sign * side, 16, 2.4 * sign * side, 18, 4.6 * sign * side],
-              'line-opacity': ['case', ['!', ['boolean', ['feature-state', 'td'], false]], 0, ['<', v, 0], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95] as ExpressionSpecification,
+              'line-opacity': ['case', ['!', ['boolean', ['feature-state', 'td'], false]], 0, ['<', v, floor], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95] as ExpressionSpecification,
             },
           }, before());
         }
@@ -274,14 +279,15 @@ export function createSim(map: MLMap, deps: {
   }
   function legendBar(l: Layer, mini = false) {
     if (l === 'none') return '';
-    const cols = l === 'traffic' ? TRAFFIC_COLORS.map(([, c]) => c) : RAMPS[l];
-    return `<i class="sim-ramp${mini ? ' mini' : ''}" style="background:linear-gradient(90deg,${cols.join(',')})"></i>`;
+    const bg = l === 'traffic' ? legendBackground(st.style) : `linear-gradient(90deg,${RAMPS[l].join(',')})`;
+    return `<i class="sim-ramp${mini ? ' mini' : ''}" style="background:${bg}"></i>`;
   }
   function legend(l: Layer) {
     if (l === 'none') return '';
     const [lo, hi] = l === 'traffic' ? [t('Free-flowing'), t('Jammed')] : [l === 'landValue' ? t('Low') : t('None'), t('High')];
-    const note = l === 'traffic' ? t('Matched roads only. The game\'s traffic view shows the same value.') + (st.dir.size && st.mode === 'directional' ? ' ' + t('Zoomed in, two-way roads with enough vehicles show one estimated line per direction; other roads keep the game\'s combined value.') : '') : l === 'pollution' ? t('Whole map.') : t('The game records this only for the central 25 tiles.');
-    return `<div class="sim-legend">${legendBar(l)}<div class="sim-legend-ends"><span>${esc(lo)}</span><span>${esc(hi)}</span></div><p class="sim-note">${esc(note)}</p></div>`;
+    const note = l === 'traffic' ? (st.style === 'simple' ? t('Roads without slowdowns keep their usual colour.') + ' ' : '') + t('Matched roads only. The game\'s traffic view shows the same value.') + (st.dir.size && st.mode === 'directional' ? ' ' + t('Zoomed in, two-way roads with enough vehicles show one estimated line per direction; other roads keep the game\'s combined value.') : '') : l === 'pollution' ? t('Whole map.') : t('The game records this only for the central 25 tiles.');
+    const simple = l === 'traffic' ? `<label class="switch-row sim-simple"><input type="checkbox" data-tstyle ${st.style === 'simple' ? 'checked' : ''}> <span><span>${esc(t('Simple view'))}</span><span class="switch-hint">${esc(t('Only slow and jammed roads are coloured.'))}</span></span></label>` : '';
+    return `<div class="sim-legend">${legendBar(l)}<div class="sim-legend-ends"><span>${esc(lo)}</span><span>${esc(hi)}</span></div>${simple}<p class="sim-note">${esc(note)}</p></div>`;
   }
 
   // ---------------------------------------------------------------- panel
@@ -417,6 +423,7 @@ export function createSim(map: MLMap, deps: {
     if (a === 'remove') { clear(); st.fail = null; st.layer = 'none'; render(); deps.toast(t('Simulation data removed')); return; }
     const l = (tg.closest('[data-layer]') as HTMLElement | null)?.dataset.layer as Layer | undefined;
     if (l) { st.layer = l; draw(); render(); return; }
+    if (tg.matches('[data-tstyle]')) { deps.onTrafficStyle?.((tg as HTMLInputElement).checked ? 'simple' : 'gradient'); return; }
     const line = (tg.closest('[data-line]') as HTMLElement | null)?.dataset.line;
     if (line) deps.selectLine(+line);
   });
@@ -501,6 +508,8 @@ export function createSim(map: MLMap, deps: {
     /** the save's vehicles gave traffic by direction (format 121034, right-hand traffic, directions confirmed) */
     hasTrafficDir: () => !!st.data?.trafficDir?.ids.length,
     /** how the traffic layer and road panels show traffic: the game's value per road (default) or the estimate per direction */
+    /** gradient (every matched road, green to red) or simple (only slowdowns: yellow, red, dark red) */
+    setTrafficStyle(s: TrafficStyle) { if (s === st.style) return; st.style = s; if (st.data?.traffic && st.layer === 'traffic') draw(); syncChip(); if (st.open) render(); },
     setTrafficMode(m: TrafficMode) { if (m === st.mode) return; st.mode = m; if (st.data?.traffic && st.layer === 'traffic') draw(); syncChip(); if (st.open) render(); },
     /** show or hide the traffic map layer (Layers menu); does nothing without a save's traffic */
     showTraffic(on: boolean) { if (!st.data?.traffic) return; st.layer = on ? 'traffic' : 'none'; draw(); syncChip(); if (st.open) render(); },
