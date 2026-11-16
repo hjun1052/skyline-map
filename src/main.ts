@@ -832,7 +832,7 @@ map.on('contextmenu', (e) => {
   ctxPlace = { label: placeLabelAt(e.point), ll: [e.lngLat.lng, e.lngLat.lat], ...roadAt(e.point) };
   const [x, z] = fromLngLat(e.lngLat.lng, e.lngLat.lat);
   ctx.innerHTML = `<div class="ctx-title">${esc(ctxPlace.label === t('Dropped pin') ? `x ${Math.round(x)}, z ${Math.round(z)}` : ctxPlace.label)}</div>
-    ${canRoute() ? `<button data-c="from">${t('Directions from here')}</button><button data-c="to">${t('Directions to here')}</button>` : ''}<button data-c="measure">${t('Measure distance')}</button>${canRoute() ? `<button data-c="reach">${t('How far can I get from here?')}</button>` : ''}`;
+    ${canRoute() ? `<button data-c="from">${t('Directions from here')}</button>${dir.canAddStop() ? `<button data-c="stop">${t('Add stop here')}</button>` : ''}<button data-c="to">${t('Directions to here')}</button>` : ''}<button data-c="measure">${t('Measure distance')}</button>${canRoute() ? `<button data-c="reach">${t('How far can I get from here?')}</button>` : ''}`;
   const r = map.getContainer().getBoundingClientRect();
   ctx.style.left = Math.min(e.point.x + r.left, innerWidth - 230) + 'px';
   ctx.style.top = Math.min(e.point.y + r.top, innerHeight - 170) + 'px';
@@ -844,6 +844,7 @@ ctx.addEventListener('click', (e) => {
   hideCtx();
   if (c === 'measure') return measure.open(ctxPlace.ll);
   if (c === 'reach') return reach.open(ctxPlace.ll);
+  if (c === 'stop') { dir.addStop(ctxPlace); return; }
   c === 'from' ? dir.setFrom(ctxPlace) : dir.setTo(ctxPlace);
 });
 map.on('movestart', hideCtx);
