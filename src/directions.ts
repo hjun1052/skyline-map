@@ -81,11 +81,11 @@ export function createDirections(d: DirectionsDeps) {
       <button class="icon-btn dir-close" aria-label="Close directions" data-i18n-aria="Close directions">${svg('<path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6z"/>')}</button>
     </div>
     <div class="dir-inputs">
-      <div class="dir-fields" role="list"></div>
-      <button class="icon-btn dir-swap" title="Reverse starting point and destination" aria-label="Swap" data-i18n-title="Reverse starting point and destination" data-i18n-aria="Swap">${svg('<path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3 5 6.99h3V14h2V6.99h3L9 3z"/>')}</button>
+      <div class="dir-trip"><div class="dir-fields" role="list"></div>
+      <button class="icon-btn dir-swap" title="Reverse starting point and destination" aria-label="Swap" data-i18n-title="Reverse starting point and destination" data-i18n-aria="Swap">${svg('<path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3 5 6.99h3V14h2V6.99h3L9 3z"/>')}</button></div>
+      <button type="button" class="dir-add">${svg('<path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/>')}<span data-i18n="Add stop">Add stop</span></button>
       <div class="dir-suggest" hidden></div>
     </div>
-    <button type="button" class="dir-add">${svg('<path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/>')}<span data-i18n="Add stop">Add stop</span></button>
     <div class="dir-options"><label><input type="checkbox" id="dirAvoidTolls" /> <span data-i18n="Avoid tolls">Avoid tolls</span></label><label id="dirRulesRow" hidden title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save" data-i18n-title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save"><input type="checkbox" id="dirRules" checked /> <span data-i18n="Traffic rules from my save">Traffic rules from my save</span></label><label id="dirTrafficRow" hidden title="Slows each road by how busy it was in your saved city" data-i18n-title="Slows each road by how busy it was in your saved city"><input type="checkbox" id="dirTraffic" /> <span data-i18n="Traffic-aware routing">Traffic-aware routing</span></label><label id="dirTrafficDirRow" class="dir-sub" hidden title="Uses each direction's estimated traffic where the save's vehicles show it, instead of each road's own value both ways" data-i18n-title="Uses each direction's estimated traffic where the save's vehicles show it, instead of each road's own value both ways"><input type="checkbox" id="dirTrafficDir" /> <span><span data-i18n="Traffic by direction">Traffic by direction</span> <span class="exp-tag" data-i18n="Experimental">Experimental</span></span></label><p class="dir-traffic-note" hidden data-i18n="Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.">Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.</p></div>
     </div>
     <div class="dir-sheet"><div class="dir-body"></div></div>`;
@@ -185,14 +185,17 @@ export function createDirections(d: DirectionsDeps) {
   const MAX_POINTS = 10;
   const inputAt = (k: number) => fields.querySelector<HTMLInputElement>(`input[data-k="${k}"]`);
   const placeholder = (k: number) => (k === 0 ? t('Choose starting point, or click the map') : k === st.pts.length - 1 ? t('Choose destination…') : t('Choose stop…'));
-  function renderFields() {
+  /** what is typed in each field now (a field still being typed in has no place yet, but its text must survive the rows
+   *  being made again when a stop is added, removed or moved) */
+  const typed = () => st.pts.map((_, k) => inputAt(k)?.value ?? '');
+  function renderFields(drafts: string[] = []) {
     const n = st.pts.length, many = n > 2;
     fields.innerHTML = st.pts.map((p, k) => {
       const dot = k === 0 ? 'o' : k === n - 1 ? 'd' : 's';
       return `<div class="dir-row" role="listitem" data-k="${k}">
         <span class="dir-handle" data-handle="${k}" title="${esc(t('Drag to reorder (or Alt+↑/↓)'))}" aria-hidden="true">${svg('<path d="M9 5h2v2H9zm4 0h2v2h-2zM9 11h2v2H9zm4 0h2v2h-2zM9 17h2v2H9zm4 0h2v2h-2z"/>')}</span>
         <i class="dir-dot ${dot}">${dot === 's' ? k : ''}</i>
-        <input data-k="${k}" value="${esc(p?.label ?? '')}" placeholder="${esc(placeholder(k))}" aria-label="${esc(placeholder(k))}" autocomplete="off" spellcheck="false" />
+        <input data-k="${k}" value="${esc(p?.label ?? drafts[k] ?? '')}" placeholder="${esc(placeholder(k))}" aria-label="${esc(placeholder(k))}" autocomplete="off" spellcheck="false" />
         ${many ? `<button type="button" class="icon-btn dir-rm" data-rm="${k}" title="${esc(t('Remove'))}" aria-label="${esc(t('Remove'))}">${svg('<path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6z"/>')}</button>` : ''}
       </div>`;
     }).join('');
@@ -202,8 +205,9 @@ export function createDirections(d: DirectionsDeps) {
   /** the trip's points in a new order (`order[i]`: which old point goes to place i) */
   function reorder(order: number[]) {
     if (order.every((o, i) => o === i)) return;
+    const was = typed();
     st.pts = order.map((o) => st.pts[o]);
-    renderFields(); syncMarkers(); compute();
+    renderFields(order.map((o) => was[o])); syncMarkers(); compute();
   }
   function move(k: number, by: number) {
     const j = k + by;
@@ -213,9 +217,11 @@ export function createDirections(d: DirectionsDeps) {
   }
   addBtn.addEventListener('click', () => {
     if (st.pts.length >= MAX_POINTS) return;
+    const was = typed();
     st.pts.splice(st.pts.length - 1, 0, null); // a new stop before the destination
+    was.splice(was.length - 1, 0, '');
     st.active = st.pts.length - 2;
-    renderFields(); inputAt(st.active)?.focus(); syncMarkers(); compute();
+    renderFields(was); inputAt(st.active)?.focus(); syncMarkers(); compute();
   });
   // reordering by dragging a row's handle: pointer events, so a finger works as well as a mouse
   fields.addEventListener('pointerdown', (e) => {
@@ -420,7 +426,7 @@ export function createDirections(d: DirectionsDeps) {
     if (mode) { st.mode = mode; st.sel = 0; st.expanded = false; drawRoutes(true); render(); return; }
     if (t.closest('.dir-swap')) { reorder(st.pts.map((_, i) => st.pts.length - 1 - i)); return; } // the whole trip, reversed
     const rm = (t.closest('[data-rm]') as HTMLElement | null)?.dataset.rm;
-    if (rm !== undefined && st.pts.length > 2) { st.pts.splice(+rm, 1); st.active = Math.min(st.active, st.pts.length - 1); renderFields(); syncMarkers(); compute(); return; }
+    if (rm !== undefined && st.pts.length > 2) { const was = typed(); st.pts.splice(+rm, 1); was.splice(+rm, 1); st.active = Math.min(st.active, st.pts.length - 1); renderFields(was); syncMarkers(); compute(); return; }
     const pricing = (t.closest('[data-pricing]') as HTMLElement | null)?.dataset.pricing as 'tolls' | 'fares' | undefined;
     if (pricing) { const r = st.results[st.mode]?.[st.sel]; d.editPricing(pricing, pricing === 'tolls' && r?.tolls?.[0] ? { booth: r.tolls.find((x) => P.tollFee(x.booth).fee === null)?.booth ?? r.tolls[0].booth } : undefined); return; }
     if (t.closest('[data-schem]')) { const r = st.results[st.mode]?.[st.sel]; if (r) d.showOnSchematic(r); return; }
@@ -512,7 +518,7 @@ export function createDirections(d: DirectionsDeps) {
     /** add a stop before the destination (map menu); false when the trip is full or directions aren't set up */
     addStop(p: Place): boolean {
       if (!isOpen() || !complete() || st.pts.length >= MAX_POINTS) return false;
-      st.pts.splice(st.pts.length - 1, 0, p); renderFields(); syncMarkers(); compute(); return true;
+      const was = typed(); st.pts.splice(st.pts.length - 1, 0, p); was.splice(was.length - 1, 0, ''); renderFields(was); syncMarkers(); compute(); return true;
     },
     /** directions are open with a start and destination, and room for another stop (the map menu offers "Add stop") */
     canAddStop: () => isOpen() && complete() && st.pts.length < MAX_POINTS,
