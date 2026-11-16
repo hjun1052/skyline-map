@@ -175,6 +175,10 @@ h1.brand { margin: 0; }
 .start .lang-switch button { color: var(--s-muted); }
 .start .lang-switch button + button { border-color: var(--s-line); }
 .start .lang-switch button.on { background: var(--s-accent-soft); color: var(--s-accent); font-weight: 600; }
+.start-gh { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 36px; height: 36px; padding: 0 9px; box-sizing: border-box; border-radius: 999px; border: 1px solid var(--s-line); background: rgba(255,255,255,.7); color: var(--s-ink); font-size: 13.5px; font-weight: 600; text-decoration: none; }
+.start-gh svg { width: 18px; height: 18px; fill: currentColor; flex: none; }
+.start-gh:hover { background: #fff; }
+.start-gh:focus-visible { outline: 2px solid var(--s-accent); outline-offset: 2px; }
 .start-back { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--s-line); background: rgba(255,255,255,.7); font-size: 13.5px; font-weight: 600; color: var(--s-ink); }
 .start-back svg { width: 16px; height: 16px; }
 .start-back:hover { background: #fff; }
@@ -290,6 +294,8 @@ h1.brand { margin: 0; }
   .start-foot { padding: 24px 20px 40px; }
   .start-private { margin-left: 0; }
 }
+/* the header has no room for it beside the language buttons on a phone; the footer links to GitHub too */
+@media (max-width: 520px) { .start-gh { display: none; } }
 @media (max-width: 420px) {
   .start-top { gap: 10px; }
   .start-top .brand { font-size: 17px; }

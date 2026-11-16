@@ -45,6 +45,14 @@ if (pairingHash) history.replaceState(null, '', location.pathname + location.sea
 initLang();
 applyStatic();
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+// the repo's GitHub stars, baked in by the deploy (vite.config.ts); shown beside the landing page's GitHub icon only once
+// there are enough of them to mean something
+declare const __GH_STARS__: number;
+if (__GH_STARS__ >= 50) {
+  const n = $('startGithub').querySelector<HTMLElement>('.start-gh-n')!;
+  n.textContent = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(__GH_STARS__).toLowerCase();
+  n.hidden = false;
+}
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 // ------------------------------------------------------------------ state
