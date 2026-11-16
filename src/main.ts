@@ -17,7 +17,7 @@ import { createReach } from './reach-ui';
 import { createTimelapse } from './timelapse';
 import { createDiscoveries } from './discover-ui';
 import { createClosure, CLOSURE_ICON } from './closure-ui';
-import { createSim, type TrafficMode } from './sim-ui';
+import { createSim, type TrafficMode, type TrafficStyle } from './sim-ui';
 import { createSchematic } from './schematic-view';
 import { createContextStore, createContextEditor, moneyField, parseMoney, describeRule } from './context-ui';
 import { bottomSheet, isPhone } from './sheet';
@@ -71,6 +71,9 @@ const state = {
 };
 /** traffic display mode (Layers menu), kept per browser: the game's value per road unless the viewer picks directions */
 const TRAFFIC_MODE = 'atlas:trafficMode';
+/** traffic colours (Layers menu, simulation panel), kept per browser: the gradient unless the viewer picks the simple view */
+const TRAFFIC_STYLE = 'atlas:trafficStyle';
+let trafficStyle: TrafficStyle = (() => { try { return localStorage.getItem(TRAFFIC_STYLE) === 'simple' ? 'simple' : 'gradient'; } catch { return 'gradient'; } })();
 let trafficMode: TrafficMode = (() => { try { return localStorage.getItem(TRAFFIC_MODE) === 'directional' ? 'directional' : 'combined'; } catch { return 'combined'; } })();
 const persist = () => { try { localStorage.setItem('atlas:opts', JSON.stringify({ mode: state.mode, opts: state.opts })); } catch { /* private mode */ } };
 const styleOpts = (): StyleOptions => ({ ...state.opts, ...(hasLanes() ? {} : { bikeFromSave: true }), theme: state.mode === 'night' ? 'dark' : 'light', terrain: state.mode === 'terrain', contours: state.opts.contours || state.mode === 'terrain' });
@@ -780,6 +783,7 @@ const sim = createSim(map, {
   onData: () => { syncUi(); if (state.city) renderDrawer(state.city); if (!$('panel').hidden) panelRefresh?.(); },
   onLoaded: (f) => { if (state.recentId) void rememberSave(state.recentId, f.name, f); }, // the entry of the map it was loaded on
   context: async () => (state.city ? loadContext(state.city.meta.name) : null),
+  onTrafficStyle: (s) => setTrafficStyle(s),
   adoptContext,
   selectLine: (id) => selectLine(id, true),
   onOpen: () => { closeDrawer(); closePanel(); hideCtx(); if (dir.isOpen()) dir.close(); if (reach.isActive()) reach.close(); if (measure.isActive()) measure.close(); if (timelapse.isActive()) timelapse.close(); discoveries.close(); closure.close(); },
@@ -952,6 +956,7 @@ function syncUi() {
   // display mode, under the switch while traffic is shown; a save without directions says it shows the combined value
   $('optTrafficMode').hidden = !box.checked;
   document.querySelectorAll<HTMLElement>('#optTrafficMode [data-tmode]').forEach((b) => { const on = b.dataset.tmode === trafficMode; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
+  ($('optTrafficSimple') as HTMLInputElement).checked = trafficStyle === 'simple';
   $('optTrafficModeCombined').hidden = trafficMode !== 'combined';
   const dirHint = $('optTrafficModeDirectional');
   dirHint.hidden = trafficMode !== 'directional';
@@ -978,6 +983,14 @@ $('opt3dTerrain').onchange = (e) => { state.terrain3d = (e.target as HTMLInputEl
 $('optNeutral').onchange = (e) => { state.opts.neutralRoads = (e.target as HTMLInputElement).checked; applyStyle(); };
 // traffic display mode (Layers): the game's value per road by default; per direction is an opt-in estimate
 sim.setTrafficMode(trafficMode);
+sim.setTrafficStyle(trafficStyle);
+$('optTrafficSimple').onchange = (e) => setTrafficStyle((e.target as HTMLInputElement).checked ? 'simple' : 'gradient');
+/** the traffic layer's colours: from the Layers menu or the simulation panel, remembered for next time */
+function setTrafficStyle(s: TrafficStyle) {
+  trafficStyle = s;
+  try { localStorage.setItem(TRAFFIC_STYLE, s); } catch { /* storage blocked: this visit only */ }
+  sim.setTrafficStyle(s); syncUi();
+}
 $('optTrafficMode').addEventListener('click', (e) => {
   const m = ((e.target as HTMLElement).closest('[data-tmode]') as HTMLElement | null)?.dataset.tmode as TrafficMode | undefined;
   if (!m || m === trafficMode) return;

@@ -43,6 +43,8 @@ jobs:
         run: npm run check:skysave
       - name: Route shield recognition
         run: npm run check:shields
+      - name: Traffic layer colours
+        run: npm run check:traffic-style
       - name: Relay worker type check
         run: npx tsc -p worker
       - name: Build with Send to Phone switched on (not deployed)
