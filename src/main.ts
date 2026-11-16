@@ -21,6 +21,7 @@ import { createSim, type TrafficMode, type TrafficStyle } from './sim-ui';
 import { createSchematic } from './schematic-view';
 import { createContextStore, createContextEditor, moneyField, parseMoney, describeRule } from './context-ui';
 import { bottomSheet, isPhone } from './sheet';
+import { mouseScrollRows } from './hscroll';
 import { mountFindFile } from './findfile';
 import { listRecent, rememberMap, rememberSave, forget, recentId, type Recent, type MapFormat } from './recent';
 import { loadContext, saveContext, sanitizeContext, type CityContext } from './context';
@@ -964,6 +965,7 @@ function syncUi() {
   dirHint.textContent = sim.hasTrafficDir() ? t("Estimated per direction where your save's vehicles show it; other roads keep the combined value.") : t("This save can't tell the directions apart, so each road shows the combined value.");
   $('tilt').classList.toggle('on', map.getPitch() > 5);
 }
+mouseScrollRows(); // chip and tab rows: mouse drag (and the wheel over the top chips and transit modes) scroll them sideways (#34)
 $('chips').addEventListener('click', (e) => {
   const c = (e.target as HTMLElement).closest('.chip[data-opt]') as HTMLElement | null;
   if (!c) return;

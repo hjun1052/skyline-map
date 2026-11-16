@@ -47,6 +47,8 @@ jobs:
         run: npm run check:shields
       - name: Traffic layer colours
         run: npm run check:traffic-style
+      - name: Chip rows scroll with a mouse
+        run: npm run check:hscroll
       - name: Relay worker type check
         run: npx tsc -p worker
       - name: Build with Send to Phone switched on (not deployed)
