@@ -66,6 +66,24 @@ function unit() {
     ok(/1/.test(stopStep.text) && /Shop/.test(stopStep.text), `the stop step names it ("${stopStep.text}")`);
     ok(via.legs[0].spans!.every((s, i, a) => s.i >= 0 && s.i < via.legs[0].coords.length && (i === 0 || s.i >= a[i - 1].i)), 'road spans point into the joined line, in order');
   }
+  // a stop set off the road (a building 25 m north of it): the car still arrives eastbound and drives on east; the short
+  // link from the road to the stop says nothing about which way the car was going
+  // (a long block, so no junction is near the stop to stand in for it)
+  const Long = toy([[1, 0, 0], [2, 1000, 0], [3, 1000, 200], [4, 0, 200]],
+    [[1, 1, 2, 'Basic Road'], [2, 2, 3, 'Basic Road'], [3, 3, 4, 'Basic Road'], [4, 4, 1, 'Basic Road']]);
+  const off = Long.routeVia([[100, 0], [500, 25], [450, 0]], 'drive')[0];
+  // where the car goes once it is back on the road after the stop (past the link up to the stop and back)
+  const leaving = (r: Route, pin: XY): XY => {
+    const L = line(r);
+    let k = 0, bd = Infinity;
+    L.forEach((q, i) => { const d = Math.hypot(q[0] - pin[0], q[1] - pin[1]); if (d < bd) { bd = d; k = i; } });
+    const j = L.findIndex((q, i) => i > k && Math.abs(q[1]) < 1);
+    const m = L.findIndex((q, i) => j >= 0 && i > j && Math.hypot(q[0] - L[j][0], q[1] - L[j][1]) > 3);
+    // it must rejoin the road right below the stop, not at some junction it jumps to
+    if (j < 0 || m < 0 || Math.hypot(L[j][0] - pin[0], L[j][1] - pin[1]) > 40) return [0, 0];
+    return [L[m][0] - L[j][0], L[m][1] - L[j][1]];
+  };
+  ok(!!off && leaving(off, [500, 25])[0] > 0, `a stop beside the road: the car rejoins the road below it and drives on the way it arrived (heads ${off ? leaving(off, [500, 25]).map(Math.round) : '-'})`);
   // the same trip on foot: a pedestrian may simply turn round at the stop
   const walk = R.routeVia([start, stop, behind], 'walk')[0];
   ok(!!walk && after(walk, stop)[0] < 0, 'walking: turning round at the stop is fine');

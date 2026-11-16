@@ -251,8 +251,9 @@ export function createDirections(d: DirectionsDeps) {
   function compute() {
     st.results = {}; st.sel = 0; st.expanded = false;
     drawRoutes();
-    if (!complete()) { render(); return; }
+    // a new trip makes every reply still on its way out of date, even one with a stop not chosen yet
     const id = ++st.req;
+    if (!complete()) { render(); return; }
     const pts = st.pts as Place[], from = fromLngLat(...pts[0].ll), to = fromLngLat(...pts[pts.length - 1].ll);
     // with stops the worker routes leg by leg (Router.routeVia); two points ask exactly as before
     const via = pts.length > 2 ? { points: pts.map((p) => fromLngLat(...p.ll)), segs: pts.map((p) => p.seg), labels: pts.map((p) => p.label) } : {};

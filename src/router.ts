@@ -1647,12 +1647,14 @@ const STEP_KEYS = [
 ];
 // end i18n-keys
 void STEP_KEYS;
-/** the direction a route's car is driving as it arrives (world x/z), from the end of its line */
+/** the direction a route's car is driving as it arrives (world x/z), from the last road it drives: the line's final
+ *  point is the stop itself (partsRoute's endPoint), joined to the road by a connector that says nothing about the
+ *  direction of travel (a stop north of an eastbound road would read as northbound) */
 function arrivalHeading(r: Route): XY | undefined {
   const c = r.legs[r.legs.length - 1]?.coords;
-  if (!c || c.length < 2) return undefined;
-  const b = fromLngLat(...(c[c.length - 1] as [number, number]));
-  for (let i = c.length - 2; i >= 0; i--) {
+  if (!c || c.length < 3) return undefined;
+  const b = fromLngLat(...(c[c.length - 2] as [number, number]));
+  for (let i = c.length - 3; i >= 0; i--) {
     const a = fromLngLat(...(c[i] as [number, number]));
     if (Math.hypot(b[0] - a[0], b[1] - a[1]) >= 3) return [b[0] - a[0], b[1] - a[1]];
   }
