@@ -64,13 +64,19 @@ jobs:
         run: |
           want="${{ steps.deploy.outputs.version }}"
           [ -n "$want" ] || { echo "::error::No version ID in the deploy output"; exit 1; }
-          npx --yes wrangler@4.40.3 deployments status -c wrangler.relay.jsonc --json > status.json
-          node -e '
-            const s = require("./status.json"), want = process.argv[1];
-            const v = s.versions.find((x) => x.version_id === want);
-            if (!v || v.percentage !== 100) { console.error(`::error::Version ${want} is not serving 100% of traffic`, JSON.stringify(s.versions)); process.exit(1); }
-            console.log(`Version ${want} serves 100% of traffic`);
-          ' "$want"
+          # Cloudflare can take a few seconds to list a new deployment, so ask again for up to a minute
+          for try in 1 2 3 4 5 6 7; do
+            npx --yes wrangler@4.40.3 deployments status -c wrangler.relay.jsonc --json > status.json
+            if node -e '
+              const s = require("./status.json"), want = process.argv[1];
+              const v = s.versions.find((x) => x.version_id === want);
+              if (!v || v.percentage !== 100) { console.log(`Not yet: ${JSON.stringify(s.versions)}`); process.exit(1); }
+              console.log(`Version ${want} serves 100% of traffic`);
+            ' "$want"; then exit 0; fi
+            [ "$try" = 7 ] || sleep 10
+          done
+          echo "::error::Version $want is not serving 100% of traffic"
+          exit 1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
