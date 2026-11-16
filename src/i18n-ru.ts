@@ -342,7 +342,7 @@ export const RU: Record<string, string> = {
   "Edit fares": "Редактировать тарифы",
 
   // ---------------------------------------------------------------- turn-by-turn
-  "Arrive at your destination": "Вы прибыли",
+  "Arrive at your destination": "Вы достигните точки назначения",
   "Pass through the toll at {name}": "Проедьте через пункт оплаты {name}",
   "Pass through the toll at {name} on {road}": "Проедьте через пункт оплаты {name} на {road}",
   "Stop on {road}": "Остановитесь на {road}",
