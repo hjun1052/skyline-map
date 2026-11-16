@@ -1,16 +1,20 @@
 // Rows of chips and tabs that scroll sideways with their scrollbar hidden (issue #34). Touchpads and touchscreens
-// scroll them natively; a mouse can't (its wheel only turns up/down, and browsers don't drag-scroll), so here the
-// wheel scrolls them sideways and a mouse drag pulls them along. Touch and pen keep the browser's own scrolling.
+// scroll them natively; a mouse can't (its wheel only turns up/down, and browsers don't drag-scroll), so here a
+// mouse drag pulls them along, and on rows that sit outside any scrolling panel the wheel scrolls them sideways.
+// Touch and pen keep the browser's own scrolling.
 
-/** the rows this applies to (some are re-rendered, so listeners sit on the document) */
+/** the rows a mouse drag scrolls (some are re-rendered, so listeners sit on the document) */
 export const SCROLL_ROWS = '#chips, .dc-tabs, .ctx-tabs, .sm-modes, .p-quick';
+/** the rows the wheel scrolls sideways: only those over the map or in a fixed header, since in a scrolling panel
+ *  (Discover, context tabs, the phone sheet) the wheel passing over a row should keep scrolling the panel */
+export const WHEEL_ROWS = '#chips, .sm-modes';
 /** how far a mouse moves before a press becomes a drag (below it, it is still a click) */
 export const DRAG_FROM = 5;
 
 type Row = { scrollLeft: number; scrollWidth: number; clientWidth: number };
 
 /** how far a wheel turn moves the row sideways; 0 leaves the event to the browser (sideways or shift-wheel, no
- *  overflow, or already at that end, so a row inside a panel lets the panel scroll on) */
+ *  overflow, or already at that end) */
 export function wheelShift(row: Row, e: { deltaX: number; deltaY: number; deltaMode: number; shiftKey: boolean }): number {
   if (e.shiftKey || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return 0;
   const max = row.scrollWidth - row.clientWidth;
@@ -19,11 +23,11 @@ export function wheelShift(row: Row, e: { deltaX: number; deltaY: number; deltaM
   return Math.min(max, Math.max(0, row.scrollLeft + by)) - row.scrollLeft;
 }
 
-const rowOf = (e: Event) => ((e.target as Element | null)?.closest?.(SCROLL_ROWS) ?? null) as (HTMLElement & Row) | null;
+const rowOf = (e: Event, rows = SCROLL_ROWS) => ((e.target as Element | null)?.closest?.(rows) ?? null) as (HTMLElement & Row) | null;
 
 export function mouseScrollRows(root: Document | EventTarget = document) {
   root.addEventListener('wheel', (ev) => {
-    const e = ev as WheelEvent, row = rowOf(e);
+    const e = ev as WheelEvent, row = rowOf(e, WHEEL_ROWS);
     if (!row || e.ctrlKey) return; // ctrl-wheel is the browser's zoom
     const by = wheelShift(row, e);
     if (!by) return;

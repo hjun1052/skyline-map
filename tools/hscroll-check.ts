@@ -1,7 +1,7 @@
 // Chip and tab rows with a hidden scrollbar scroll with a mouse (issue #34, src/hscroll.ts): the wheel moves them
 // sideways, a mouse drag pulls them along without toggling the chip let go of, and touch is left to the browser.
 //   npm run check:hscroll
-import { wheelShift, mouseScrollRows, DRAG_FROM } from '../src/hscroll';
+import { wheelShift, mouseScrollRows, DRAG_FROM, WHEEL_ROWS } from '../src/hscroll';
 
 let failures = 0;
 const ok = (c: boolean, m: string) => { if (!c) { failures++; console.error('  ✗ ' + m); } };
@@ -27,8 +27,13 @@ class Ev extends Event {
 }
 const root = new EventTarget();
 const classes = new Set<string>();
-const el = { scrollLeft: 0, scrollWidth: 900, clientWidth: 400, classList: { add: (c: string) => classes.add(c), remove: (c: string) => classes.delete(c) }, setPointerCapture() {}, closest: () => el };
-const chip = { closest: () => el };
+// a row of the given kind: closest() answers only for the selector lists that name it
+const rowLike = (sel: string) => {
+  const r = { scrollLeft: 0, scrollWidth: 900, clientWidth: 400, classList: { add: (c: string) => classes.add(c), remove: (c: string) => classes.delete(c) }, setPointerCapture() {}, closest: (q: string) => (q.split(', ').includes(sel) ? r : null) };
+  return r;
+};
+const el = rowLike('#chips');
+const chip = { closest: (q: string) => el.closest(q) };
 mouseScrollRows(root);
 // (a plain EventTarget has no capture phase, so a click counts when nothing cancelled it, as the chip would see it)
 let clicks = 0;
@@ -58,6 +63,16 @@ ok(el.scrollLeft === 100 && w.defaultPrevented, 'the wheel listener scrolls the 
 const z = new Ev('wheel', chip, { deltaX: 0, deltaY: 100, deltaMode: 0, shiftKey: false, ctrlKey: true });
 root.dispatchEvent(z);
 ok(el.scrollLeft === 100 && !z.defaultPrevented, 'ctrl-wheel (browser zoom) is left alone');
+
+// tabs inside a scrolling panel: the wheel keeps scrolling the panel, a drag still scrolls the tabs
+ok(WHEEL_ROWS.includes('#chips') && !WHEEL_ROWS.includes('.dc-tabs') && !WHEEL_ROWS.includes('.ctx-tabs') && !WHEEL_ROWS.includes('.p-quick'), 'the wheel takes over only rows outside scrolling panels');
+const tabs = rowLike('.dc-tabs'), tab = { closest: (q: string) => tabs.closest(q) };
+const tw = new Ev('wheel', tab, { deltaX: 0, deltaY: 100, deltaMode: 0, shiftKey: false, ctrlKey: false });
+root.dispatchEvent(tw);
+ok(tabs.scrollLeft === 0 && !tw.defaultPrevented, 'wheel over Discover tabs is left to the panel');
+const tp = (type: string, clientX: number) => root.dispatchEvent(new Ev(type, tab, { pointerId: 2, pointerType: 'mouse', button: 0, clientX }));
+tp('pointerdown', 300); tp('pointermove', 240); tp('pointerup', 240);
+ok(tabs.scrollLeft === 60, `a mouse drag still scrolls them (scrollLeft ${tabs.scrollLeft})`);
 
 if (failures) { console.error(`\n${failures} row scrolling check(s) failed`); process.exit(1); }
 console.log('\nrow scrolling checks passed');
