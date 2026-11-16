@@ -746,7 +746,7 @@ export const RU: Record<string, string> = {
   "Choose another save": "Выберите другой файл сохранения",
   "Some objects differ between the two files: they were built, removed or changed in between. Simulation values appear only where the two match exactly.": "Некоторые объекты отличаются между двумя файлами: они были построены, удалены или изменены между файлами. Значения симуляции отображаются только там, где объекты идентичны.",
   "Every road, junction and building on the map was found in the save, unchanged.": "Каждая дорога, перекресток и здание на карте были найдены в файле сохранения, без изменений.",
-  "{roads} of {nroads} roads and {blds} of {nblds} buildings match.": "{roads} из {nroads} и {blds} из {nblds} совпадают.",
+  "{roads} of {nroads} roads and {blds} of {nblds} buildings match.": "{roads} из {nroads} дорог и {blds} из {nblds} зданий совпадают.",
   "Map layer": "Слой карты",
   "Whole city, from the save": "Весь город, из сохранения",
   "as the game shows it": "как показывает игра",
