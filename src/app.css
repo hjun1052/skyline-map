@@ -404,13 +404,27 @@ body.dir-open #simLegend { left: 508px; }
 .dir-mode:hover { background: var(--hover); }
 .dir-mode.on { background: var(--accent-soft); color: var(--accent); }
 .dir-inputs { position: relative; display: flex; align-items: center; gap: 8px; padding: 10px 8px 14px 18px; border-bottom: 1px solid var(--line); }
-.dir-dots { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 14px; flex: none; }
-.dir-dots .o { width: 12px; height: 12px; border-radius: 50%; border: 2.5px solid #5f6368; box-sizing: border-box; }
-.dir-dots .dots { width: 2px; height: 20px; background: radial-gradient(circle, #9aa0a6 1px, transparent 1.5px) 0 0/2px 5px repeat-y; }
-.dir-dots .d { width: 12px; height: 15px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 30'%3E%3Cpath fill='%23ea4335' d='M12 0a10 10 0 0 0-10 10c0 7.5 10 20 10 20s10-12.5 10-20A10 10 0 0 0 12 0z'/%3E%3Ccircle cx='12' cy='10' r='4' fill='%23b31412'/%3E%3C/svg%3E") center/contain no-repeat; }
 .dir-fields { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .dir-fields input { height: 38px; border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; font: 14px Pretendard, sans-serif; background: var(--bg); color: var(--fg); outline: none; }
 .dir-fields input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* the trip's rows: drag handle, dot (start, numbered stop, destination), field, remove */
+.dir-row { display: flex; align-items: center; gap: 6px; border-radius: 8px; background: var(--bg); }
+.dir-row input { flex: 1; min-width: 0; }
+.dir-handle { display: grid; place-items: center; width: 18px; height: 38px; margin-left: -6px; color: var(--muted); cursor: grab; touch-action: none; opacity: .55; flex: none; }
+.dir-handle svg { width: 16px; height: 16px; fill: currentColor; }
+.dir-row:hover .dir-handle, .dir-row.dragging .dir-handle { opacity: 1; }
+.dir-row.dragging { position: relative; z-index: 2; box-shadow: 0 4px 14px rgba(0,0,0,.18); cursor: grabbing; }
+.dir-dot { flex: none; width: 14px; display: grid; place-items: center; font-style: normal; }
+.dir-dot.o { height: 12px; border-radius: 50%; border: 2.5px solid #5f6368; box-sizing: border-box; width: 12px; margin: 0 1px; }
+.dir-dot.s { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 2px solid #202124; box-sizing: border-box; font-size: 9.5px; font-weight: 700; color: #202124; line-height: 1; }
+.dir-dot.d { height: 15px; width: 12px; margin: 0 1px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 30'%3E%3Cpath fill='%23ea4335' d='M12 0a10 10 0 0 0-10 10c0 7.5 10 20 10 20s10-12.5 10-20A10 10 0 0 0 12 0z'/%3E%3Ccircle cx='12' cy='10' r='4' fill='%23b31412'/%3E%3C/svg%3E") center/contain no-repeat; }
+.dir-rm { width: 30px; height: 30px; color: var(--muted); flex: none; }
+.dir-rm svg { width: 18px; height: 18px; }
+.dir-add { display: inline-flex; align-items: center; gap: 8px; margin: -6px 0 8px 40px; padding: 4px 8px; border-radius: 6px; color: var(--accent); font-size: 13.5px; font-weight: 600; }
+.dir-add svg { width: 18px; height: 18px; fill: currentColor; }
+.dir-add:hover { background: var(--accent-soft); }
+.dir-add:focus-visible, .dir-rm:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dir-fields.many { max-height: min(46vh, 420px); overflow-y: auto; padding-right: 2px; }
 .dir-swap { color: var(--muted); }
 .dir-suggest { position: absolute; left: 40px; right: 56px; background: var(--bg); border-radius: 8px; box-shadow: var(--shadow-lg); z-index: 3; padding: 6px 0; max-height: 320px; overflow: auto; }
 .dir-suggest .sg { display: flex; gap: 12px; align-items: center; padding: 8px 14px; cursor: pointer; font-size: 14px; }
@@ -474,6 +488,7 @@ body.dir-open #simLegend { left: 508px; }
 
 /* map pins */
 .dir-pin-a { width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 4px solid #202124; box-shadow: 0 1px 4px rgba(0,0,0,.4); box-sizing: border-box; cursor: grab; }
+.dir-pin-s { width: 22px; height: 22px; border-radius: 50%; background: #fff; border: 2.5px solid #202124; box-shadow: 0 1px 4px rgba(0,0,0,.4); box-sizing: border-box; cursor: grab; display: grid; place-items: center; font: 700 11px/1 Pretendard, sans-serif; color: #202124; }
 .dir-pin-b { width: 28px; height: 40px; cursor: grab; filter: drop-shadow(0 2px 2px rgba(0,0,0,.35)); background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 40'%3E%3Cpath fill='%23ea4335' stroke='%23b31412' stroke-width='1.2' d='M14 1C6.8 1 1 6.6 1 13.6 1 23 14 39 14 39s13-16 13-25.4C27 6.6 21.2 1 14 1z'/%3E%3Ccircle cx='14' cy='13.5' r='5' fill='%23b31412'/%3E%3C/svg%3E") center/contain no-repeat; }
 
 
@@ -1085,6 +1100,7 @@ body:has(#layerPop:not([hidden])) #simLegend { display: none; }
 body.nav-on > :not(#map):not(#nav):not(#toast):not(#loading):not(#dropOverlay) { display: none !important; }
 body.nav-on .maplibregl-ctrl-bottom-right, body.nav-on .maplibregl-ctrl-bottom-left { display: none; }
 body.nav-on .dir-pin-a { display: none; }
+body.nav-on .dir-pin-s { pointer-events: none; }
 body.nav-on .dir-pin-b { pointer-events: none; }
 #nav { position: absolute; inset: 0; pointer-events: none; z-index: 9; --nav-green: #137333; --nav-green-2: #0d5129; }
 #nav > * , #nav .nav-bar > * { pointer-events: auto; }

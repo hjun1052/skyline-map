@@ -158,6 +158,9 @@ export class Router {
   private ends = new Map<string, XY[][]>();
   /** driving: the road the user picked an end on (the segment drawn on top where they clicked), by end point */
   private picked = new Map<string, number>();
+  /** driving on from an intermediate stop: the direction the car arrived in (a stop isn't a place to turn round in
+   *  the road), or null for an ordinary start (see departsAlong) */
+  private heading: XY | null = null;
   private edgeOfSeg = new Map<number, number>();
 
   constructor(private city: CityData, private stopNames: Map<number, string>, oneway?: OneWayResult, tolls?: TollData) {
@@ -469,7 +472,15 @@ export class Router {
 
   /** `fromSeg` / `toSeg`: the road segment drawn on top where the user set that end (a click on a road); used for
    *  driving when it is a motorway, ramp or highway (see highwayEnd), ignored otherwise */
-  route(from: XY, to: XY, mode: Mode, opts: { avoidTolls?: boolean; rules?: boolean; fromSeg?: number; toSeg?: number } = {}): Route[] {
+  route(from: XY, to: XY, mode: Mode, opts: { avoidTolls?: boolean; rules?: boolean; fromSeg?: number; toSeg?: number; heading?: XY } = {}): Route[] {
+    // driving on from a stop: leave in the direction the car arrived. Only if no route does (a dead end that can't be
+    // left that way is handled by the U-turn rules at its end, so this is rare) does the stop allow any direction
+    if (opts.heading && mode === 'drive' && !this.heading) {
+      this.heading = opts.heading;
+      let r: Route[];
+      try { r = this.route(from, to, mode, { ...opts, heading: undefined }); } finally { this.heading = null; }
+      return r.length ? r : this.route(from, to, mode, { ...opts, heading: undefined });
+    }
     // the save's traffic rules apply by default once loaded; `rules: false` compares against the export alone
     if (opts.rules === false && this.rulesOn) {
       this.setRules(false);
@@ -792,6 +803,7 @@ export class Router {
       const e = this.edges[s.e];
       for (const fwd of [true, false]) {
         if (!this.driveOk(e, fwd)) continue;
+        if (this.heading && !this.departsAlong(s, fwd)) continue; // leaving a stop: no turning round in the road
         const st = 2 * s.e + (fwd ? 0 : 1), c = s.extra + part(s.e, fwd, fwd ? 1 - s.frac : s.frac);
         if (c < dist[st]) { dist[st] = c; prev[st] = -1; seedOf[st] = si; h.push(c, st); }
         // the target further along the same road, in this direction
@@ -829,6 +841,45 @@ export class Router {
     const sHit = goal.s ?? SH[seedOf[goal.from]];
     return { path, time: this.driveTimeOn(path, sHit, goal.t), sHit, tHit: goal.t };
   }
+  /**
+   * Leaving an intermediate stop along edge `s.e` in direction `fwd` keeps to the direction the car arrived in: part-way
+   * along a road only straight on (no turning round in the road), from a junction any way but back (the turn rules
+   * there are those of an ordinary start, so a real U-turn at a junction is still judged by the router's U-turn rules
+   * on the next leg's first turn).
+   */
+  private departsAlong(s: DriveHit, fwd: boolean): boolean {
+    const h = this.heading!, e = this.edges[s.e], n = e.pts.length;
+    const i = Math.min(Math.max(0, s.node ? (s.frac ? n - 2 : 0) : s.i), n - 2);
+    const a = e.pts[i], b = e.pts[i + 1];
+    const dx = (b[0] - a[0]) * (fwd ? 1 : -1), dz = (b[1] - a[1]) * (fwd ? 1 : -1);
+    const l1 = Math.hypot(dx, dz), l2 = Math.hypot(h[0], h[1]);
+    if (!l1 || !l2) return true;
+    const cos = (dx * h[0] + dz * h[1]) / (l1 * l2);
+    return s.node ? cos > -0.7 : cos > 0;
+  }
+  /**
+   * A trip through stops (`points`: start, stops…, destination; up to 10). Each leg is the best route between two
+   * neighbouring points; driving on from a stop keeps the direction the car arrived in (see route / departsAlong). The
+   * legs are joined into one route with one leg, so everything that reads a route (directions, the navigation
+   * simulation, tolls, traffic) works unchanged; an "Arrive at stop n" step marks each stop. Alternatives are only
+   * offered without stops, and transit has no stops: both return what route() does for two points, or nothing.
+   */
+  routeVia(points: XY[], mode: Mode, opts: { avoidTolls?: boolean; rules?: boolean; segs?: (number | undefined)[]; labels?: string[] } = {}): Route[] {
+    const segs = opts.segs ?? [];
+    if (points.length < 2 || points.length > 10) return [];
+    if (points.length === 2) return this.route(points[0], points[1], mode, { avoidTolls: opts.avoidTolls, rules: opts.rules, fromSeg: segs[0], toSeg: segs[1] });
+    if (mode === 'transit') return [];
+    const parts: Route[] = [];
+    let heading: XY | undefined;
+    for (let i = 0; i + 1 < points.length; i++) {
+      const r = this.route(points[i], points[i + 1], mode, { avoidTolls: opts.avoidTolls, rules: opts.rules, fromSeg: segs[i], toSeg: segs[i + 1], heading })[0];
+      if (!r) return [];
+      parts.push(r);
+      heading = mode === 'drive' ? arrivalHeading(r) : undefined;
+    }
+    return [joinRoutes(parts, opts.labels ?? [])];
+  }
+
   /** Travel time of a path that starts and ends part-way along its first and last roads. */
   private driveTimeOn(path: { e: number; fwd: boolean }[], s: DriveHit, t: DriveHit) {
     const avoid = this.avoidTolls; this.avoidTolls = false; this.timing = true; // reported time: no search-only penalties
@@ -1596,6 +1647,53 @@ const STEP_KEYS = [
 ];
 // end i18n-keys
 void STEP_KEYS;
+/** the direction a route's car is driving as it arrives (world x/z), from the end of its line */
+function arrivalHeading(r: Route): XY | undefined {
+  const c = r.legs[r.legs.length - 1]?.coords;
+  if (!c || c.length < 2) return undefined;
+  const b = fromLngLat(...(c[c.length - 1] as [number, number]));
+  for (let i = c.length - 2; i >= 0; i--) {
+    const a = fromLngLat(...(c[i] as [number, number]));
+    if (Math.hypot(b[0] - a[0], b[1] - a[1]) >= 3) return [b[0] - a[0], b[1] - a[1]];
+  }
+  return undefined;
+}
+/** routes between neighbouring stops joined into one route with one leg (see Router.routeVia); `labels`: the points' names */
+export function joinRoutes(parts: Route[], labels: string[]): Route {
+  const coords: XY[] = [], steps: Step[] = [], spans: Span[] = [], traffic: TrafficPiece[] = [], controls: { i: number; kind: ControlKind }[] = [];
+  let legDist = 0, legTime = 0;
+  parts.forEach((r, k) => {
+    const last = k === parts.length - 1;
+    for (const l of r.legs) {
+      const off = coords.length;
+      coords.push(...l.coords);
+      legDist += l.dist; legTime += l.time;
+      if (l.spans) spans.push(...l.spans.map((x) => ({ ...x, i: x.i + off })));
+      if (l.traffic) traffic.push(...l.traffic.map((x) => ({ ...x, i: x.i + off })));
+      if (l.controls) controls.push(...l.controls.map((x) => ({ ...x, i: x.i + off })));
+      for (const st of l.steps) {
+        if (st.maneuver === 'arrive' && !last) {
+          const name = labels[k + 1];
+          steps.push({ ...st, text: t('Arrive at stop {n}', { n: k + 1 }) + (name ? ' · ' + name : ''), maneuver: 'stop' });
+        } else steps.push(st);
+      }
+    }
+  });
+  const leg: Leg = { kind: parts[0].legs[0]?.kind ?? 'drive', dist: legDist, time: legTime, coords, steps };
+  if (spans.length) leg.spans = spans;
+  if (traffic.length) leg.traffic = traffic;
+  if (controls.length) leg.controls = controls;
+  const dist = parts.reduce((a, r) => a + r.dist, 0);
+  const out: Route = { mode: parts[0].mode, dist, time: parts.reduce((a, r) => a + r.time, 0), via: parts.reduce((a, r) => (r.dist > a.dist ? r : a)).via, legs: [leg] };
+  const tolls = parts.flatMap((r) => r.tolls ?? []);
+  if (tolls.length) out.tolls = tolls;
+  const against = parts.flatMap((r) => r.againstLikelyOneWay ?? []);
+  if (against.length) out.againstLikelyOneWay = against;
+  if (parts.some((r) => r.tollsUnavoidable)) out.tollsUnavoidable = true;
+  if (parts.every((r) => r.baseTime !== undefined)) out.baseTime = parts.reduce((a, r) => a + r.baseTime!, 0);
+  if (parts.every((r) => r.trafficShare !== undefined) && dist > 0) out.trafficShare = parts.reduce((a, r) => a + r.trafficShare! * r.dist, 0) / dist;
+  return out;
+}
 const heading = (a: XY, b: XY) => Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
 const tailHeading = (pts: XY[]) => { const n = pts.length; let i = n - 2; while (i > 0 && Math.hypot(pts[n - 1][0] - pts[i][0], pts[n - 1][1] - pts[i][1]) < 8) i--; return heading(pts[Math.max(0, i)], pts[n - 1]); };
 const headHeading = (pts: XY[]) => { let i = 1; while (i < pts.length - 1 && Math.hypot(pts[i][0] - pts[0][0], pts[i][1] - pts[0][1]) < 8) i++; return heading(pts[0], pts[i]); };

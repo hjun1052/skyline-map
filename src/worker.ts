@@ -107,7 +107,10 @@ self.onmessage = async (e: MessageEvent) => {
       const df = built.districtField;
       self.postMessage({ type: 'city', city: built }, { transfer: [built.dem.surface.buffer, ...(df ? [df.l1.buffer, df.d1.buffer, df.l2.buffer, df.d2.buffer, df.land.buffer] : [])] });
     } else if (msg.type === 'route') {
-      const routes = router ? router.route(msg.from, msg.to, msg.mode, { avoidTolls: !!msg.avoidTolls, rules: msg.rules, fromSeg: msg.fromSeg, toSeg: msg.toSeg }) : [];
+      // a trip through stops (points: start, stops…, destination) or, as before, just from and to
+      const routes = !router ? [] : Array.isArray(msg.points) && msg.points.length > 2
+        ? router.routeVia(msg.points, msg.mode, { avoidTolls: !!msg.avoidTolls, rules: msg.rules, segs: msg.segs, labels: msg.labels })
+        : router.route(msg.from, msg.to, msg.mode, { avoidTolls: !!msg.avoidTolls, rules: msg.rules, fromSeg: msg.fromSeg, toSeg: msg.toSeg });
       self.postMessage({ type: 'route', id: msg.id, mode: msg.mode, routes });
     } else if (msg.type === 'reach') {
       const grid = router ? reachGrid(router.nodePositions(), router.reachTimes(msg.from, msg.mode, msg.max), msg.max) : null;

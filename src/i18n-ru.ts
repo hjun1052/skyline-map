@@ -1033,4 +1033,11 @@ export const RU: Record<string, string> = {
   "Export .skysave": "Экспорт .skysave",
   "Exported {file}": "Экспортирован {file}",
   "A .skysave keeps what Skyline Map uses from this save (and your fares and toll prices) in a small file that opens with this map export.": ".skysave хранит то, что Skyline Map берёт из этого сохранения (и ваши тарифы и плату за проезд), в небольшом файле, который открывается с этой выгрузкой карты.",
+  "Choose stop…": "Выберите остановку…",
+  "Drag to reorder (or Alt+↑/↓)": "Перетащите, чтобы изменить порядок (или Alt+↑/↓)",
+  "Remove": "Удалить",
+  "Transit directions don't take stops. Remove the stops to see transit routes.": "Маршруты на транспорте не поддерживают остановки. Удалите остановки, чтобы увидеть их.",
+  "Add stop": "Добавить остановку",
+  "Add stop here": "Добавить остановку здесь",
+  "Arrive at stop {n}": "Прибытие к остановке {n}",
 };

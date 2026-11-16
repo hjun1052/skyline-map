@@ -41,6 +41,8 @@ jobs:
         run: npm run check:phone
       - name: .skysave (format, refusals, checks)
         run: npm run check:skysave
+      - name: Trips through stops
+        run: npm run check:route-stops
       - name: Relay worker type check
         run: npx tsc -p worker
       - name: Build with Send to Phone switched on (not deployed)
