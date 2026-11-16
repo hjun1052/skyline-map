@@ -1033,4 +1033,7 @@ export const RU: Record<string, string> = {
   "Export .skysave": "Экспорт .skysave",
   "Exported {file}": "Экспортирован {file}",
   "A .skysave keeps what Skyline Map uses from this save (and your fares and toll prices) in a small file that opens with this map export.": ".skysave хранит то, что Skyline Map берёт из этого сохранения (и ваши тарифы и плату за проезд), в небольшом файле, который открывается с этой выгрузкой карты.",
+  "Simple view": "Простой вид",
+  "Only slow and jammed roads are coloured.": "Цветом показаны только медленные и забитые дороги.",
+  "Roads without slowdowns keep their usual colour.": "Дороги без заторов сохраняют обычный цвет.",
 };
