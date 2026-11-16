@@ -1,3 +1,4 @@
+import { parseShield } from './shields';
 import type { SchemInput } from './schematic';
 import type { CityData, CSeg, CSegType, CBuilding, Vec3 } from './parse';
 import type { OneWayResult } from './oneway';
@@ -444,7 +445,9 @@ export function buildCity(city: CityData, progress: (msg: string) => void = () =
     const rank = Math.max(...parts.map((p) => p.rank));
     for (const chain of mergeChains(parts)) {
       const len = polylineLength(chain);
-      roadLabels.push({ type: 'Feature', properties: { name, rank, len: Math.round(len) }, geometry: { type: 'LineString', coordinates: chain.map(llxy) } });
+      // a name that is exactly a route designation ("I-4", "US 27", "국도 제1호선") is drawn as a shield (shields.ts)
+      const sh = parseShield(name);
+      roadLabels.push({ type: 'Feature', properties: { name, rank, len: Math.round(len), ...(sh ? { shield: sh.style, ref: sh.ref } : {}) }, geometry: { type: 'LineString', coordinates: chain.map(llxy) } });
       const e = seenRoad.get(name) ?? { bbox: [Infinity, Infinity, -Infinity, -Infinity], rank, len: 0 };
       for (const [x, z] of chain) { e.bbox[0] = Math.min(e.bbox[0], x); e.bbox[1] = Math.min(e.bbox[1], z); e.bbox[2] = Math.max(e.bbox[2], x); e.bbox[3] = Math.max(e.bbox[3], z); }
       e.len += len;
