@@ -41,6 +41,8 @@ jobs:
         run: npm run check:phone
       - name: .skysave (format, refusals, checks)
         run: npm run check:skysave
+      - name: Route shield recognition
+        run: npm run check:shields
       - name: Relay worker type check
         run: npx tsc -p worker
       - name: Build with Send to Phone switched on (not deployed)

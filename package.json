@@ -32,6 +32,7 @@
     "lane-catalog": "tsx tools/lane-catalog.ts",
     "check:cmm": "tsx tools/cmm-check.ts",
     "check:phone": "tsx tools/phone-check.ts",
+    "check:shields": "tsx tools/shields-check.ts",
     "check:skysave": "tsx tools/skysave-check.ts",
     "check:route-ends": "tsx tools/route-ends-check.ts",
     "check:nav-traffic": "tsx tools/nav-traffic-check.ts"

@@ -1,3 +1,4 @@
+import { parseImageId, drawShield } from './shields';
 import * as maplibregl from 'maplibre-gl';
 import { type GeoJSONSource, type LayerSpecification, type MapGeoJSONFeature } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -87,6 +88,13 @@ const map = new maplibregl.Map({
   hash: true, attributionControl: false,
   canvasContextAttributes: { antialias: true },
   fadeDuration: 200,
+});
+// route shields are drawn the first time the map asks for one ("shield:<style>:<ref>", see shields.ts)
+map.setMissingStyleImageResolver((id) => {
+  const s = parseImageId(id);
+  if (!s || map.hasImage(id)) return;
+  const img = drawShield(s, 2);
+  if (img) map.addImage(id, img, { pixelRatio: 2 });
 });
 (window as any).__map = map;
 const styleReady = new Promise<void>((res) => (map.loaded() ? res() : map.once('load', () => res())));
