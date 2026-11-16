@@ -273,7 +273,7 @@ export function buildStyle(o: StyleOptions, fontBase: string): StyleSpecificatio
       paint: { 'text-color': p.contourText, 'text-halo-color': p.halo, 'text-halo-width': 1.4 },
     } as LayerSpecification,
     {
-      id: 'road-label-minor', type: 'symbol', source: 'roadLabels', minzoom: 13.5, filter: ['all', ['<', ['get', 'rank'], 7], ['any', ['>=', ['get', 'rank'], 5], ['>=', ['zoom'], 14.8]]],
+      id: 'road-label-minor', type: 'symbol', source: 'roadLabels', minzoom: 13.5, filter: ['all', ['!', ['has', 'shield']], ['<', ['get', 'rank'], 7], ['any', ['>=', ['get', 'rank'], 5], ['>=', ['zoom'], 14.8]]],
       layout: {
         visibility: lbl, 'symbol-placement': 'line', 'text-field': ['get', 'name'], 'text-font': font('Medium'),
         'text-size': ['interpolate', ['linear'], ['zoom'], 13.5, ['match', ['get', 'rank'], [5, 6], 11, 10.5], 18, ['match', ['get', 'rank'], [5, 6], 15, 13.5]],
@@ -282,12 +282,23 @@ export function buildStyle(o: StyleOptions, fontBase: string): StyleSpecificatio
       paint: { 'text-color': p.road, 'text-halo-color': p.halo, 'text-halo-width': 1.8, 'text-halo-blur': 0.4 },
     } as LayerSpecification,
     {
-      id: 'road-label-major', type: 'symbol', source: 'roadLabels', minzoom: 12, filter: ['>=', ['get', 'rank'], 7],
+      id: 'road-label-major', type: 'symbol', source: 'roadLabels', minzoom: 12, filter: ['all', ['!', ['has', 'shield']], ['>=', ['get', 'rank'], 7]],
       layout: {
         visibility: lbl, 'symbol-placement': 'line', 'text-field': ['get', 'name'], 'text-font': font('SemiBold'),
         'text-size': ['interpolate', ['linear'], ['zoom'], 12, 11, 17, 14.5], 'symbol-spacing': 420, 'text-max-angle': 25, 'text-padding': 6, 'text-letter-spacing': 0.03,
       },
       paint: { 'text-color': p.highwayText, 'text-halo-color': nr ? nr.highwayHalo : o.theme === 'light' ? '#fff8e1' : p.halo, 'text-halo-width': 2, 'text-halo-blur': 0.3 },
+    } as LayerSpecification,
+    {
+      // route shields (shields.ts) instead of the text label, spaced out and thinned by zoom like other map apps; major
+      // roads first, minor ones once zoomed in. Images are drawn on demand (styleimagemissing in main.ts).
+      id: 'road-shield', type: 'symbol', source: 'roadLabels', minzoom: 9,
+      filter: ['all', ['has', 'shield'], ['any', ['>=', ['get', 'rank'], 7], ['>=', ['zoom'], 13]]],
+      layout: {
+        visibility: lbl, 'symbol-placement': 'line', 'icon-image': ['concat', 'shield:', ['get', 'shield'], ':', ['get', 'ref']],
+        'icon-rotation-alignment': 'viewport', 'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.8, 13, 1],
+        'symbol-spacing': ['interpolate', ['linear'], ['zoom'], 9, 220, 14, 360, 18, 520], 'icon-padding': 6, 'symbol-sort-key': ['-', 10, ['get', 'rank']],
+      },
     } as LayerSpecification,
     {
       id: 'busstop', type: 'symbol', source: 'places', minzoom: 16, filter: ['==', ['get', 'kind'], 'busstop'],

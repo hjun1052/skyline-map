@@ -1040,4 +1040,7 @@ export const RU: Record<string, string> = {
   "Add stop": "Добавить остановку",
   "Add stop here": "Добавить остановку здесь",
   "Arrive at stop {n}": "Прибытие к остановке {n}",
+  "Simple view": "Простой вид",
+  "Only slow and jammed roads are coloured.": "Цветом показаны только медленные и забитые дороги.",
+  "Roads without slowdowns keep their usual colour.": "Дороги без заторов сохраняют обычный цвет.",
 };

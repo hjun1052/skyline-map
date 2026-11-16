@@ -1040,4 +1040,7 @@ export const KO: Record<string, string> = {
   "Add stop": "경유지 추가",
   "Add stop here": "여기를 경유지로 추가",
   "Arrive at stop {n}": "경유지 {n} 도착",
+  "Simple view": "단순 보기",
+  "Only slow and jammed roads are coloured.": "느리거나 막히는 도로만 색으로 표시해요.",
+  "Roads without slowdowns keep their usual colour.": "막힘이 없는 도로는 원래 색 그대로예요.",
 };
