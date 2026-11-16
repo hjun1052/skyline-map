@@ -45,6 +45,32 @@ export interface CityData {
   /** forest density 0-255, row-major, row = +z */
   forest: Uint8Array;
   forestSize: number;
+  /** set by readers of other formats (see vellummap.ts); absent for .cslmap, which has everything */
+  extras?: CityExtras;
+}
+
+export interface CityExtras {
+  source: 'vellummap' | 'cmm';
+  /** what the file carries: lanes (routing, one-way streets, speeds) and sub-building chains */
+  caps: { lanes: boolean; buildingParts: boolean; /** routing copy only: lanes estimated from road class and width (lane-infer.ts) */ lanesEstimated?: boolean };
+  /** routing copy only: segments whose lanes are their real prefab's, named by a matched save (the rest are estimated) */
+  exactLanes?: Set<number>;
+  producer: string;
+  /** 900² cells x (4 area ids + 4 alphas), the game's own district grid */
+  districtGrid?: Uint8Array;
+  districtStats: Map<number, import('./vellummap').DistrictStats>;
+  /** per stop node: the name the file gives it (derived from a street or landmark, or set by a mod) and its station building */
+  stopInfo: Map<number, import('./vellummap').StopInfo>;
+  /** .cmm: exact one-way directions from the file (the game's lanes with its per-segment Invert flag applied) */
+  oneway?: import('./oneway').OneWayResult;
+  /** .cmm: the effective car speed limit per direction (start→end, end→start), m/s; null where cars may not drive */
+  carSpeed?: Map<number, [number | null, number | null]>;
+  /** .cmm: transit legs whose path was rebuilt from the network (the file has none for them): an estimate */
+  inferredLegs?: Set<number>;
+  /** .cmm: road and path segments whose lanes come from the file's facts alone (prefab unknown to the lane catalogue) */
+  factsOnly?: Set<number>;
+  /** .cmm: what the reader found, for the check tool and the docs */
+  cmm?: import('./cmm').CmmInfo;
 }
 
 const ATTR = /([\w:]+)="([^"]*)"/g;

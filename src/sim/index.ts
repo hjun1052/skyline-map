@@ -14,8 +14,16 @@ import { readTmpe, TMPE_UNLIMITED_KMH, type TmpeData } from './tmpe';
 import { buildRules, type SimRules } from './rules';
 import { md5 } from './md5';
 import { validate, M, type Validation } from './validate';
+import type { SavePrefabs } from '../lane-infer';
+import { laneInfo } from '../build';
+import { readVehicles, readPaths } from './vehicles';
+import { directionalTraffic, type DirTraffic } from './directional';
+import { junctionControls, type Control } from './controls';
 
-export type SimErrorCode = 'not-crp' | 'not-save' | 'unsupported-version' | 'truncated' | 'damaged' | 'corrupt' | 'incompatible';
+/** for a map without lanes (.vellummap): the worker's routing copy rebuilt with the real prefabs a matched save names */
+export type VellumRouting = (saved: SavePrefabs) => ReturnType<typeof import('../lane-infer')['routingCopy']>;
+
+export type SimErrorCode = 'not-crp' | 'not-save' | 'unsupported-version' | 'truncated' | 'damaged' | 'corrupt' | 'incompatible' | 'skysave-bad' | 'skysave-newer' | 'skysave-mismatch';
 
 export interface SimSave {
   city: string | null;
@@ -41,6 +49,9 @@ export interface SimData {
   ok: true;
   save: SimSave;
   v: Validation;
+  /** traffic by direction on two-way roads, estimated from the save's vehicles (sim/directional.ts); null when this save's
+   *  vehicle records aren't read (older format) */
+  trafficDir: DirTraffic | null;
   /** m_trafficDensity (0-100 %) for matched segments only */
   traffic: { ids: Uint16Array; pct: Uint8Array } | null;
   /** occupancy for matched buildings only; -1 = the building has no units of that kind */
@@ -49,6 +60,8 @@ export interface SimData {
   tmpe: { segs: { id: number; kmh: number[]; typeDefault: number | null; parking: [boolean, boolean] | null }[]; modVersion: string | null } | null;
   /** ridership for matched lines only */
   lines: SimLine[] | null;
+  /** traffic lights and stop/yield signs per junction approach, on matched segments (sim/controls.ts); null if unreadable */
+  controls: Control[] | null;
   /** save-wide figures for the whole city (not limited to matched objects) */
   city: CityStats | null;
   /** simulation grids (see grids.ts for extents) */
@@ -59,14 +72,30 @@ export interface SimData {
   rules?: SimRules;
   /** what the rules contain, for the page */
   rulesSummary: SimRules['summary'] | null;
+  /** .vellummap only: drivable road segments whose lanes now come from their real prefab (named by this save), out of
+   *  all drivable ones, and the same as a share of drivable road length (what the page shows) */
+  savedLanes: { exact: number; roads: number; lenShare: number } | null;
+  /** .vellummap only: what the save says about each matched road or path. `prefab` is the save's own name for it; lanes,
+   *  speed (the road type's limit, km/h) and one-way only where the lane catalogue knows that prefab with the save's lane
+   *  count. `bike`: true / false where known, undefined where the road type is unknown (a name with Bicycle/Bike counts). */
+  roadFacts: Map<number, RoadFact> | null;
+  /** .vellummap only: the rebuilt routing copy for the worker's router (stripped before the result goes to the page) */
+  routing?: ReturnType<VellumRouting>;
+  /** .vellummap only: the save's prefab and lane count per matched road, what `routing` is rebuilt from when a .skysave
+   *  opens (kept in the worker; stripped before the result goes to the page) */
+  prefabs?: SavePrefabs;
+  /** a .skysave's fares and toll prices (unchecked: the page runs them through sanitizeContext) */
+  context?: unknown;
   ms: number;
 }
+
+export interface RoadFact { prefab: string; lanes?: number; speed?: number; oneway?: boolean; bike?: boolean }
 
 export interface SimFailure { ok: false; code: SimErrorCode; detail: string; save?: SimSave; v?: Validation }
 
 export type SimResult = SimData | SimFailure;
 
-export async function loadSim(buf: ArrayBuffer, city: CityData, step: (s: string) => void): Promise<SimResult> {
+export async function loadSim(buf: ArrayBuffer, city: CityData, step: (s: string) => void, vellum?: VellumRouting): Promise<SimResult> {
   const t0 = performance.now();
   let save: SimSave | undefined;
   try {
@@ -97,17 +126,49 @@ export async function loadSim(buf: ArrayBuffer, city: CityData, step: (s: string
     if (v.verdict === 'incompatible') return { ok: false, code: 'incompatible', detail: v.reason, save, v };
 
     step('Reading simulation data');
+    // a .vellummap names no prefabs: the save does, for every matched segment. Lanes, TM:PE rules and routing then use
+    // those real prefabs wherever the lane catalogue knows them and their lane count lines up with the save's lane chain
+    let simCity = city, routing: ReturnType<VellumRouting> | undefined, prefabs: SavePrefabs | undefined, savedLanes: SimData['savedLanes'] = null, roadFacts: SimData['roadFacts'] = null;
+    if (vellum) {
+      const saved: SavePrefabs = new Map();
+      for (const s of city.segs) if (!s.path && m.seg[s.id] === M.Verified) saved.set(s.id, { name: net.prefabNames[net.segPrefab[s.id]] ?? '', lanes: segmentLanes(net, s.id).length });
+      routing = vellum(saved); prefabs = saved;
+      simCity = routing.city;
+      const known = routing.city.extras?.exactLanes ?? new Set<number>(), rSeg = new Map(routing.city.segs.map((x) => [x.id, x]));
+      let exact = 0, len = 0, lenExact = 0;
+      for (const id of routing.roads) {
+        const x = rSeg.get(id); if (!x) continue;
+        let l = 0; for (let i = 1; i < x.pts.length; i++) l += Math.hypot(x.pts[i].x - x.pts[i - 1].x, x.pts[i].z - x.pts[i - 1].z);
+        len += l; if (known.has(id)) { exact++; lenExact += l; }
+      }
+      savedLanes = { exact, roads: routing.roads.size, lenShare: len ? lenExact / len : 0 };
+      roadFacts = new Map();
+      for (const [id, sp] of saved) {
+        const named = /Bicycle|Bike/i.test(sp.name);
+        const x = known.has(id) ? rSeg.get(id) : undefined;
+        if (!x) { roadFacts.set(id, { prefab: sp.name, ...(named ? { bike: true } : {}) }); continue; }
+        const li = laneInfo(routing.city.segTypes.get(x.name));
+        roadFacts.set(id, { prefab: sp.name, lanes: li.vehicle, ...(li.speed > 0 && li.speed < 200 ? { speed: li.speed } : {}), oneway: li.oneway, bike: li.bike || named });
+      }
+    }
     const traffic = trafficOf(city, net, m.seg);
+    // .vellummap: only roads whose real lanes the save named (a guessed lane layout can't say which way a lane runs)
+    let trafficDir: DirTraffic | null = null;
+    // left-hand traffic is skipped like the per-direction rules (no left-hand save tested: lane directions may be mirrored)
+    if (sd.version === 121034 && !sd.leftHandTraffic) trafficDir = tryRead('vehicles', () => directionalTraffic(simCity, net, (id) => m.seg[id] === M.Verified, readVehicles(sd), readPaths(sd), vellum ? routing?.city.extras?.exactLanes : undefined)) ?? null;
     const occ = tryRead('buildings', () => readOccupancy(sd, bld));
     const buildings = occ ? buildingsOf(city, m.bld, occ, bld) : null;
     const tmpeData = tryRead('tmpe', () => readTmpe(sd.modData));
-    const tmpe = tmpeData ? tmpeOf(city, tmpeData, net, m.seg) : null;
-    const rules = tryRead('rules', () => buildRules(city, net, m.seg, tmpeData, sd.leftHandTraffic)) ?? undefined;
+    const tmpe = tmpeData ? tmpeOf(simCity, tmpeData, net, m.seg) : null;
+    const rules = tryRead('rules', () => buildRules(simCity, net, m.seg, tmpeData, sd.leftHandTraffic)) ?? undefined;
+    // traffic lights and stop/yield signs at junction approaches, on segments the save matched (navigation simulation)
+    const tmpeOpt = sd.modData.get('TMPE_Options');
+    const controls = tryRead('controls', () => junctionControls(simCity, net, tmpeData, tmpeOpt && tmpeOpt.length > 18 ? tmpeOpt[18] !== 0 : null).filter((c) => m.seg[c.seg] === M.Verified)) ?? null;
     const lines = transport ? linesOf(transport.lines, m.line) : null;
     const cityStats = tryRead('city', () => readCityStats(sd));
     const g = tryRead('grids', () => readGrids(sd));
     const grids = g ? { landValue: g.landValue, noise: g.noise, crime: g.crime, pollution: g.groundPollution } : null;
-    return { ok: true, save, v, traffic, buildings, tmpe, lines, city: cityStats, grids, unavailable, rules, rulesSummary: rules?.summary ?? null, ms: Math.round(performance.now() - t0) };
+    return { ok: true, save, v, traffic, buildings, tmpe, lines, city: cityStats, grids, unavailable, rules, rulesSummary: rules?.summary ?? null, trafficDir, controls, savedLanes, roadFacts, routing, prefabs, ms: Math.round(performance.now() - t0) };
   } catch (err) {
     if (err instanceof SaveError) return { ok: false, code: err.code, detail: err.message, save };
     if (err instanceof RangeError) return { ok: false, code: 'truncated', detail: err.message, save };
@@ -147,7 +208,8 @@ function tmpeOf(city: CityData, t: TmpeData, net: SaveNet, seg: Uint8Array): Sim
   const get = (id: number) => { let e = per.get(id); if (!e) per.set(id, (e = { id, kmh: [], typeDefault: null, parking: null })); return e; };
   for (const sl of t.speedLimits) { const id = laneSeg.get(sl.lane); if (id !== undefined) { const e = get(id); if (!e.kmh.includes(sl.kmh)) e.kmh.push(sl.kmh); } }
   const defaults = new Map(t.customDefaultSpeedLimits.map((d) => [d.prefab, d.kmh]));
-  if (defaults.size) for (const s of city.segs) if (seg[s.id] === M.Verified && defaults.has(s.name)) get(s.id).typeDefault = defaults.get(s.name)!;
+  // by the save's own prefab name: on a .vellummap the city's road name can be an estimate (on a .cslmap they are the same)
+  if (defaults.size) for (const s of city.segs) { const n = net.prefabNames[net.segPrefab[s.id]] ?? ''; if (seg[s.id] === M.Verified && defaults.has(n)) get(s.id).typeDefault = defaults.get(n)!; }
   for (const p of t.parking) if (seg[p.segment] === M.Verified) get(p.segment).parking = [p.forward, p.backward];
   for (const e of per.values()) e.kmh.sort((a, b) => a - b);
   void TMPE_UNLIMITED_KMH;
@@ -169,6 +231,7 @@ export function transferables(r: SimResult): ArrayBuffer[] {
   if (!r.ok) return [];
   const out: ArrayBufferLike[] = [];
   if (r.traffic) out.push(r.traffic.ids.buffer, r.traffic.pct.buffer);
+  if (r.trafficDir) out.push(r.trafficDir.ids.buffer, r.trafficDir.f.buffer, r.trafficDir.b.buffer, r.trafficDir.evidence.buffer, r.trafficDir.queue.buffer, r.trafficDir.heading.buffer, r.trafficDir.trusted.buffer);
   if (r.buildings) for (const k of ['ids', 'residents', 'households', 'homes', 'workers', 'students', 'visitors', 'level', 'happiness'] as const) out.push(r.buildings[k].buffer);
   if (r.grids) out.push(r.grids.landValue.buffer, r.grids.noise.buffer, r.grids.crime.buffer, r.grids.pollution.buffer);
   return [...new Set(out)] as ArrayBuffer[];

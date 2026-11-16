@@ -5,10 +5,19 @@
 // doesn't hold: no lanes, no extra names, no extra turns.
 import type { Route, Span } from './router';
 import { fromLngLat, type XY } from './geo';
+import { trafficColor } from './sim/traffic';
+import type { ControlKind } from './sim/controls';
 
 export interface Maneuver { at: number; man: string; text: string; road: string }
 /** a road of the route along the line, with the speed the route's driving time counts on it (m/s) */
 export interface NavSpan { s0: number; s1: number; name: string; cls: string; brunnel: string; limit?: number; v: number }
+/** traffic on a stretch of the line (traffic-aware routing): its colour in the route view ('' = barely slowed) and the
+ *  seconds traffic adds to it, as routing counts them */
+export interface NavTraffic { s0: number; s1: number; color: string; delay: number }
+/** a stretch of sustained traffic worth a callout: neighbouring slowed stretches joined, with the delay they add */
+export interface Jam { s0: number; s1: number; delay: number; color: string }
+/** a traffic light or stop/yield sign facing the car where it enters a junction, at distance `s` (the junction) */
+export interface NavControl { s: number; kind: ControlKind }
 export interface NavPlan {
   /** route line in game metres (x east, z north) and the distance along it at each point */
   pts: XY[]; cum: Float64Array; total: number;
@@ -20,7 +29,15 @@ export interface NavPlan {
   dist: number;
   maneuvers: Maneuver[];
   spans: NavSpan[];
+  traffic: NavTraffic[];
+  jams: Jam[];
+  controls: NavControl[];
 }
+
+/** callouts: slowed stretches less than this apart are one jam, and a jam needs at least this much delay */
+export const JAM = { gap: 120, minDelay: 60 };
+/** controls closer than this after the one before (the second node of a wide junction) aren't drawn again */
+const CONTROL_GAP = 30;
 
 const A_LAT = 2.5, ACCEL = 1.6, BRAKE = 2.0, V_MIN = 2.5, V_LINK = 6;
 const wrap = (d: number) => ((d + 540) % 360) - 180;
@@ -42,14 +59,64 @@ export function buildPlan(r: Route): NavPlan | null {
   if (total < 1) return null;
 
   // spans index the raw coords (with repeats): place each by its first point instead
-  const spans = placeSpans(leg.spans ?? [], leg.coords.map((c) => fromLngLat(c[0], c[1])), pts, cum);
-  const plan: NavPlan = { pts, cum, total, ds: 0, v: new Float32Array(0), tau: new Float64Array(0), physTime: 0, time: r.time, k: 1, dist: r.dist, maneuvers: [], spans };
+  const raw = leg.coords.map((c) => fromLngLat(c[0], c[1]));
+  const lineEnd = roadEnd(raw, pts, cum);
+  const spans = placeSpans(leg.spans ?? [], raw, pts, cum, lineEnd);
+  const tp = leg.traffic ?? [], ts = placeAt(tp.map((x) => x.i), raw, pts, cum);
+  const traffic: NavTraffic[] = tp.map((x, k) => ({ s0: ts[k], s1: k + 1 < tp.length ? ts[k + 1] : lineEnd, color: trafficColor(x.pct), delay: x.delay ?? 0 }));
+  const cs = leg.controls ?? [], cAt = placeAt(cs.map((x) => x.i), raw, pts, cum);
+  const controls: NavControl[] = [];
+  cs.forEach((c, k) => { const prev = controls[controls.length - 1]; if (!prev || cAt[k] - prev.s >= CONTROL_GAP) controls.push({ s: cAt[k], kind: c.kind }); });
+  const plan: NavPlan = { pts, cum, total, ds: 0, v: new Float32Array(0), tau: new Float64Array(0), physTime: 0, time: r.time, k: 1, dist: r.dist, maneuvers: [], spans, traffic, jams: jamsOf(traffic), controls };
   profile(plan);
   plan.maneuvers = placeManeuvers(plan, leg.steps);
   return plan;
 }
 
-function placeSpans(raw: Span[], coords: XY[], pts: XY[], cum: Float64Array): NavSpan[] {
+/** distance along the line of raw coords indices (in order): each by its first matching point, as spans are placed */
+function placeAt(idx: number[], coords: XY[], pts: XY[], cum: Float64Array): number[] {
+  const out: number[] = [];
+  let j = 0;
+  for (const i of idx) {
+    const c = coords[Math.min(i, coords.length - 1)];
+    while (j < pts.length - 1 && Math.hypot(pts[j][0] - c[0], pts[j][1] - c[1]) > 0.05) j++;
+    out.push(cum[j]);
+  }
+  return out;
+}
+
+const SEVERITY = ['', '#f29900', '#d93025', '#a50e0e'];
+/** Sustained traffic: slowed stretches (a colour in the route view) joined across gaps under JAM.gap, adding up the
+ *  delay routing counts on every stretch inside; only jams adding at least JAM.minDelay */
+export function jamsOf(traffic: NavTraffic[]): Jam[] {
+  const out: Jam[] = [];
+  let cur: Jam | null = null, gap = 0; // gap: delay on unslowed stretches since the jam's last slowed one
+  for (const x of traffic) {
+    if (!x.color) { gap += x.delay; continue; }
+    if (cur && x.s0 - cur.s1 < JAM.gap) {
+      cur.delay += gap + x.delay; cur.s1 = x.s1;
+      if (SEVERITY.indexOf(x.color) > SEVERITY.indexOf(cur.color)) cur.color = x.color;
+    } else {
+      if (cur) out.push(cur);
+      cur = { s0: x.s0, s1: x.s1, delay: x.delay, color: x.color };
+    }
+    gap = 0;
+  }
+  if (cur) out.push(cur);
+  return out.filter((jam) => jam.delay >= JAM.minDelay);
+}
+
+/** distance along the line where the road ends: the last road point, before the link to the destination. The raw
+ *  coords end with the destination; when it lies on the road it repeats the road's last point and is merged away,
+ *  so the road ends at the very end of the line rather than one point before it */
+function roadEnd(coords: XY[], pts: XY[], cum: Float64Array): number {
+  const c = coords[Math.max(0, coords.length - 2)];
+  let j = pts.length - 1;
+  while (j > 0 && Math.hypot(pts[j][0] - c[0], pts[j][1] - c[1]) > 0.05) j--;
+  return cum[j];
+}
+
+function placeSpans(raw: Span[], coords: XY[], pts: XY[], cum: Float64Array, end: number): NavSpan[] {
   const out: NavSpan[] = [];
   let j = 0;
   for (let k = 0; k < raw.length; k++) {
@@ -58,8 +125,33 @@ function placeSpans(raw: Span[], coords: XY[], pts: XY[], cum: Float64Array): Na
     out.push({ s0: cum[j], s1: 0, name: sp.name, cls: sp.cls, brunnel: sp.brunnel, limit: sp.limit, v: sp.v });
   }
   // a span ends where the next starts; the last one where the line meets the destination link
-  for (let k = 0; k < out.length; k++) out[k].s1 = k + 1 < out.length ? out[k + 1].s0 : cum[Math.max(0, pts.length - 2)];
+  for (let k = 0; k < out.length; k++) out[k].s1 = k + 1 < out.length ? out[k + 1].s0 : end;
   return out;
+}
+
+/**
+ * Buildings beside the route ahead (the simulation shows them see-through, so the route behind them stays visible):
+ * a footprint corner, or the middle of a footprint edge, within `near` metres of the line between `behind` metres back
+ * and `ahead` metres on from distance `s`. Footprints in game metres.
+ */
+export function buildingsNearRoute(p: NavPlan, s: number, feats: { id: number; rings: XY[][] }[], o: { near: number; ahead: number; behind: number }): Set<number> {
+  const cell = 32, grid = new Map<string, XY[]>();
+  // the line every 8 m, bucketed by cell, so each corner only checks the samples around it
+  for (let x = Math.max(0, s - o.behind); x <= Math.min(p.total, s + o.ahead); x += 8) {
+    const q = pointAt(p, x).xy, k = Math.floor(q[0] / cell) + ',' + Math.floor(q[1] / cell);
+    (grid.get(k) ?? grid.set(k, []).get(k)!).push(q);
+  }
+  const near = (v: XY) => {
+    const cx = Math.floor(v[0] / cell), cz = Math.floor(v[1] / cell);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const q of grid.get(cx + i + ',' + (cz + j)) ?? []) if (Math.hypot(q[0] - v[0], q[1] - v[1]) < o.near) return true;
+    return false;
+  };
+  const ids = new Set<number>();
+  for (const f of feats) {
+    if (ids.has(f.id)) continue;
+    if (f.rings.some((r) => r.some((a, i) => near(a) || (i + 1 < r.length && near([(a[0] + r[i + 1][0]) / 2, (a[1] + r[i + 1][1]) / 2]))))) ids.add(f.id);
+  }
+  return ids;
 }
 
 /** Point and segment index at distance s along the line. */

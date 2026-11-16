@@ -8,6 +8,17 @@ export const EXPORT_DIRS: Record<OS, string> = {
   windows: 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Cities_Skylines\\CSLMapView',
   linux: '~/.local/share/Steam/steamapps/common/Cities_Skylines/CSLMapView',
 };
+/**
+ * Where Vellum Bridge writes .vellummap exports, as its source has it (tools/vellum-bridge/src/Export/ExportStorage.cs,
+ * ExportFolder: Environment.SpecialFolder.MyDocuments on Windows, Personal ($HOME) on macOS and Linux, plus
+ * "Vellum Bridge"; each city in its own subfolder, VellumWriter.CityFolder). %USERPROFILE% expands in Explorer's
+ * address bar and ~ in the macOS and GTK file pickers.
+ */
+export const BRIDGE_DIRS: Record<OS, string> = {
+  mac: '~/Vellum Bridge',
+  windows: '%USERPROFILE%\\Documents\\Vellum Bridge',
+  linux: '~/Vellum Bridge',
+};
 export const OS_NAMES: Record<OS, string> = { mac: 'macOS', windows: 'Windows', linux: 'Linux' };
 
 /** The desktop OS this page runs on, or null on phones and tablets (the game is not there). */

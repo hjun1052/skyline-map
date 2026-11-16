@@ -4,6 +4,9 @@ import path from 'node:path';
 import os from 'node:os';
 
 // Folder CSLMapView writes exports to. Override with CSLMAP_DIR=/path npm run dev
+// GitHub stars of the repo, fetched by the deploy workflow (GH_STARS); 0 when unknown (local builds)
+const GH_STARS = Number(process.env.GH_STARS) || 0;
+
 const MAP_DIR = process.env.CSLMAP_DIR ?? path.join(os.homedir(), 'Library/Application Support/Steam/steamapps/common/Cities_Skylines/CSLMapView');
 
 /** Serves the local CSLMapView export folder at /api/maps (dev + preview only). */
@@ -14,7 +17,7 @@ function localMaps(): Plugin {
     const list = () => {
       if (!fs.existsSync(MAP_DIR)) return [];
       return fs.readdirSync(MAP_DIR)
-        .filter((f) => /\.cslmap(\.gz)?$/i.test(f))
+        .filter((f) => /\.(cslmap(\.gz)?|vellummap)$/i.test(f))
         .map((f) => { const st = fs.statSync(path.join(MAP_DIR, f)); return { file: f, size: st.size, mtime: st.mtimeMs }; })
         .sort((a, b) => b.mtime - a.mtime);
     };
@@ -67,6 +70,7 @@ function showcaseShots(): Plugin {
 
 export default defineConfig({
   plugins: [localMaps(), showcaseShots()],
+  define: { __GH_STARS__: JSON.stringify(GH_STARS) },
   worker: { format: 'es' },
   build: {
     target: 'es2022', chunkSizeWarningLimit: 2000,

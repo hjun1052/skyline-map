@@ -7,10 +7,12 @@ import { iconDataUrl } from './icons';
 import { bottomSheet, isPhone } from './sheet';
 import { t, tn, applyStatic, fmtFixed } from './i18n';
 import { fmtDist, onUnits } from './units';
+import { trafficColor } from './sim/traffic';
 import type { ContextStore, TollCost, FareCost } from './context-ui';
 
 type LL = [number, number];
-interface Place { label: string; ll: LL }
+/** an end of the trip; `seg`: the road segment drawn on top where the user clicked to set it, if they clicked a road */
+interface Place { label: string; ll: LL; seg?: number }
 
 export const MODES: { id: Mode; label: string; icon: string }[] = [
   { id: 'drive', label: 'Driving', icon: '<path d="M18.9 6a1.5 1.5 0 0 0-1.4-1h-11a1.5 1.5 0 0 0-1.4 1L3 12v8a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-1h12v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-8l-2.1-6zM6.5 16a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm11 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM5 11l1.5-4.5h11L19 11H5z"/>' },
@@ -34,6 +36,7 @@ const ARROW = '<path d="M12 21V8"/><path d="m6.5 12.5 5.5-5.5 5.5 5.5"/>';
 export function maneuverIcon(m: string): string {
   if (m === 'depart') return svg('<circle cx="12" cy="12" r="5" fill="none" stroke-width="2.4"/>', 'man');
   if (m === 'arrive') return svg('<path d="M12 2a7 7 0 0 0-7 7c0 5.3 7 13 7 13s7-7.7 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" stroke="none" fill="#ea4335"/>', 'man');
+  if (m === 'stop') return svg('<circle cx="12" cy="12" r="6.5" fill="#fff" stroke="#202124" stroke-width="2.6"/>', 'man');
   if (m === 'uturn') return svg('<path d="M9 21V9a4 4 0 0 1 8 0v4"/><path d="m13.5 10.5 3.5 3.5 3.5-3.5"/>', 'man');
   if (m === 'warn') return svg('<path d="M12 3 2 21h20L12 3z" fill="#e37400" stroke="none"/><path d="M12 10v5M12 17.5v.5" stroke="#fff" stroke-width="2.2"/>', 'man');
   if (m === 'toll') return svg('<rect x="4" y="8" width="6" height="12" rx="1" fill="#d9822b" stroke="none"/><path d="M10 12h10" stroke="#d9822b"/>', 'man');
@@ -54,10 +57,17 @@ export interface DirectionsDeps {
   simRules: () => boolean;
   /** a matched save's traffic densities are loaded in the worker's router (see sim/traffic.ts) */
   simTraffic: () => boolean;
+  /** the save also gave traffic by direction (sim/directional.ts) */
+  simTrafficDir: () => boolean;
   /** drive a route in the navigation simulation, and whether one is running */
   simulate: (r: Route, destination: string) => void;
   simulating: () => boolean;
+  /** routes run on lanes estimated from road types (.vellummap): label every result approximate */
+  approx: () => boolean;
+  /** share of driving roads whose lanes come from a matched save (.vellummap), or null without one */
+  savedLanes: () => number | null;
 }
+
 
 export function createDirections(d: DirectionsDeps) {
   const { map, worker } = d;
@@ -71,21 +81,18 @@ export function createDirections(d: DirectionsDeps) {
       <button class="icon-btn dir-close" aria-label="Close directions" data-i18n-aria="Close directions">${svg('<path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6z"/>')}</button>
     </div>
     <div class="dir-inputs">
-      <div class="dir-dots"><i class="o"></i><i class="dots"></i><i class="d"></i></div>
-      <div class="dir-fields">
-        <input id="dirFrom" placeholder="Choose starting point, or click the map" data-i18n-placeholder="Choose starting point, or click the map" autocomplete="off" spellcheck="false" />
-        <input id="dirTo" placeholder="Choose destination…" data-i18n-placeholder="Choose destination…" autocomplete="off" spellcheck="false" />
-      </div>
-      <button class="icon-btn dir-swap" title="Reverse starting point and destination" aria-label="Swap" data-i18n-title="Reverse starting point and destination" data-i18n-aria="Swap">${svg('<path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3 5 6.99h3V14h2V6.99h3L9 3z"/>')}</button>
+      <div class="dir-trip"><div class="dir-fields" role="list"></div>
+      <button class="icon-btn dir-swap" title="Reverse starting point and destination" aria-label="Swap" data-i18n-title="Reverse starting point and destination" data-i18n-aria="Swap">${svg('<path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3 5 6.99h3V14h2V6.99h3L9 3z"/>')}</button></div>
+      <button type="button" class="dir-add">${svg('<path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/>')}<span data-i18n="Add stop">Add stop</span></button>
       <div class="dir-suggest" hidden></div>
     </div>
-    <div class="dir-options"><label><input type="checkbox" id="dirAvoidTolls" /> <span data-i18n="Avoid tolls">Avoid tolls</span></label><label id="dirRulesRow" hidden title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save" data-i18n-title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save"><input type="checkbox" id="dirRules" checked /> <span data-i18n="Traffic rules from my save">Traffic rules from my save</span></label><label id="dirTrafficRow" hidden title="Slows each road by how busy it was in your saved city" data-i18n-title="Slows each road by how busy it was in your saved city"><input type="checkbox" id="dirTraffic" /> <span data-i18n="Traffic-aware routing">Traffic-aware routing</span></label><p class="dir-traffic-note" hidden data-i18n="Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.">Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.</p></div>
+    <div class="dir-options"><label><input type="checkbox" id="dirAvoidTolls" /> <span data-i18n="Avoid tolls">Avoid tolls</span></label><label id="dirRulesRow" hidden title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save" data-i18n-title="One-way directions, TM:PE speed limits, car restrictions, U-turn bans and lane-arrow turns from your save"><input type="checkbox" id="dirRules" checked /> <span data-i18n="Traffic rules from my save">Traffic rules from my save</span></label><label id="dirTrafficRow" hidden title="Slows each road by how busy it was in your saved city" data-i18n-title="Slows each road by how busy it was in your saved city"><input type="checkbox" id="dirTraffic" /> <span data-i18n="Traffic-aware routing">Traffic-aware routing</span></label><label id="dirTrafficDirRow" class="dir-sub" hidden title="Uses each direction's estimated traffic where the save's vehicles show it, instead of each road's own value both ways" data-i18n-title="Uses each direction's estimated traffic where the save's vehicles show it, instead of each road's own value both ways"><input type="checkbox" id="dirTrafficDir" /> <span><span data-i18n="Traffic by direction">Traffic by direction</span> <span class="exp-tag" data-i18n="Experimental">Experimental</span></span></label><p class="dir-traffic-note" hidden data-i18n="Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.">Traffic as it was in your saved city, not live GPS. Times with traffic are estimates.</p></div>
     </div>
     <div class="dir-sheet"><div class="dir-body"></div></div>`;
   document.body.appendChild(el);
   applyStatic(el);
   const $ = <T extends HTMLElement>(s: string) => el.querySelector(s) as T;
-  const fromIn = $<HTMLInputElement>('#dirFrom'), toIn = $<HTMLInputElement>('#dirTo');
+  const fields = $<HTMLElement>('.dir-fields'), addBtn = $<HTMLButtonElement>('.dir-add');
   const body = $<HTMLElement>('.dir-body'), sug = $<HTMLElement>('.dir-suggest');
   // phones: inputs stay in a card at the top, results go in a draggable sheet below the map
   const sheet = bottomSheet($<HTMLElement>('.dir-sheet'), {
@@ -95,9 +102,13 @@ export function createDirections(d: DirectionsDeps) {
   });
 
   const st = {
-    from: null as Place | null, to: null as Place | null, mode: 'drive' as Mode, avoidTolls: false, rules: true, traffic: false,
-    results: {} as Partial<Record<Mode, Route[]>>, sel: 0, req: 0, active: 'to' as 'from' | 'to', expanded: false,
+    /** the trip: start, stops, destination (null: not chosen yet); at most MAX_POINTS */
+    pts: [null, null] as (Place | null)[], mode: 'drive' as Mode, avoidTolls: false, rules: true, traffic: false, trafficDir: false,
+    results: {} as Partial<Record<Mode, Route[]>>, sel: 0, req: 0, active: 1, expanded: false,
   };
+  const first = () => st.pts[0], last = () => st.pts[st.pts.length - 1];
+  /** every point of the trip is chosen */
+  const complete = () => st.pts.every(Boolean);
 
   // ---------------------------------------------------------- prices (user-supplied: the export has none)
   const P = d.pricing, money = (v: number) => esc(P.money(v));
@@ -124,50 +135,139 @@ export function createDirections(d: DirectionsDeps) {
   const mk = (cls: string) => { const e = document.createElement('div'); e.className = cls; return e; };
   const startM = new maplibregl.Marker({ element: mk('dir-pin-a'), draggable: true });
   const endM = new maplibregl.Marker({ element: mk('dir-pin-b'), draggable: true, anchor: 'bottom' });
-  startM.on('dragend', () => { const p = startM.getLngLat(); setPoint('from', { label: t('Dropped pin'), ll: [p.lng, p.lat] }); });
-  endM.on('dragend', () => { const p = endM.getLngLat(); setPoint('to', { label: t('Dropped pin'), ll: [p.lng, p.lat] }); });
+  startM.on('dragend', () => { const p = startM.getLngLat(); setPoint(0, { label: t('Dropped pin'), ll: [p.lng, p.lat] }); });
+  endM.on('dragend', () => { const p = endM.getLngLat(); setPoint(st.pts.length - 1, { label: t('Dropped pin'), ll: [p.lng, p.lat] }); });
+  /** numbered markers for the stops in between, made again whenever the trip changes */
+  let stopMs: maplibregl.Marker[] = [];
 
   function open(opts: { to?: Place; from?: Place; mode?: Mode } = {}) {
     if (opts.mode) st.mode = opts.mode;
-    if (opts.to) st.to = opts.to;
-    if (opts.from) st.from = opts.from;
+    if (opts.to) st.pts[st.pts.length - 1] = opts.to;
+    if (opts.from) st.pts[0] = opts.from;
     el.hidden = false; d.onOpen(); sheet.show('half');
-    fromIn.value = st.from?.label ?? ''; toIn.value = st.to?.label ?? '';
-    st.active = !st.from ? 'from' : 'to';
-    (st.active === 'from' ? fromIn : toIn).focus();
+    const empty = st.pts.findIndex((p) => !p);
+    st.active = empty >= 0 ? empty : st.pts.length - 1;
+    renderFields(); inputAt(st.active)?.focus();
     syncMarkers(); compute();
   }
   function close() {
-    el.hidden = true; sheet.hide(); startM.remove(); endM.remove();
+    el.hidden = true; sheet.hide(); startM.remove(); endM.remove(); for (const m of stopMs) m.remove(); stopMs = [];
     (map.getSource('route') as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: [] });
     st.results = {}; d.onClose();
   }
   const isOpen = () => !el.hidden;
   onUnits(() => { if (isOpen()) render(); });
 
-  function setPoint(which: 'from' | 'to', p: Place) {
-    st[which] = p;
-    (which === 'from' ? fromIn : toIn).value = p.label;
-    if (which === 'from' && !st.to) { st.active = 'to'; toIn.focus(); }
+  function setPoint(k: number, p: Place) {
+    st.pts[k] = p;
+    const input = inputAt(k);
+    if (input) input.value = p.label;
+    // the next empty field is the one a map click or search fills next
+    const empty = st.pts.findIndex((q) => !q);
+    if (empty >= 0) { st.active = empty; inputAt(empty)?.focus(); }
     syncMarkers(); compute();
   }
   function syncMarkers() {
-    if (st.from) startM.setLngLat(st.from.ll).addTo(map); else startM.remove();
-    if (st.to) endM.setLngLat(st.to.ll).addTo(map); else endM.remove();
+    const a = first(), b = last();
+    if (a) startM.setLngLat(a.ll).addTo(map); else startM.remove();
+    if (b) endM.setLngLat(b.ll).addTo(map); else endM.remove();
+    for (const m of stopMs) m.remove();
+    stopMs = st.pts.slice(1, -1).flatMap((p, i) => {
+      if (!p) return [];
+      const e = mk('dir-pin-s'); e.textContent = String(i + 1);
+      const m = new maplibregl.Marker({ element: e, draggable: true }).setLngLat(p.ll).addTo(map);
+      m.on('dragend', () => { const q = m.getLngLat(); setPoint(i + 1, { label: t('Dropped pin'), ll: [q.lng, q.lat] }); });
+      return [m];
+    });
   }
+
+  // ---------------------------------------------------------- the trip's fields: start, stops, destination
+  const MAX_POINTS = 10;
+  const inputAt = (k: number) => fields.querySelector<HTMLInputElement>(`input[data-k="${k}"]`);
+  const placeholder = (k: number) => (k === 0 ? t('Choose starting point, or click the map') : k === st.pts.length - 1 ? t('Choose destination…') : t('Choose stop…'));
+  /** what is typed in each field now (a field still being typed in has no place yet, but its text must survive the rows
+   *  being made again when a stop is added, removed or moved) */
+  const typed = () => st.pts.map((_, k) => inputAt(k)?.value ?? '');
+  function renderFields(drafts: string[] = []) {
+    const n = st.pts.length, many = n > 2;
+    fields.innerHTML = st.pts.map((p, k) => {
+      const dot = k === 0 ? 'o' : k === n - 1 ? 'd' : 's';
+      return `<div class="dir-row" role="listitem" data-k="${k}">
+        <span class="dir-handle" data-handle="${k}" title="${esc(t('Drag to reorder (or Alt+↑/↓)'))}" aria-hidden="true">${svg('<path d="M9 5h2v2H9zm4 0h2v2h-2zM9 11h2v2H9zm4 0h2v2h-2zM9 17h2v2H9zm4 0h2v2h-2z"/>')}</span>
+        <i class="dir-dot ${dot}">${dot === 's' ? k : ''}</i>
+        <input data-k="${k}" value="${esc(p?.label ?? drafts[k] ?? '')}" placeholder="${esc(placeholder(k))}" aria-label="${esc(placeholder(k))}" autocomplete="off" spellcheck="false" />
+        ${many ? `<button type="button" class="icon-btn dir-rm" data-rm="${k}" title="${esc(t('Remove'))}" aria-label="${esc(t('Remove'))}">${svg('<path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6z"/>')}</button>` : ''}
+      </div>`;
+    }).join('');
+    fields.classList.toggle('many', many);
+    addBtn.hidden = n >= MAX_POINTS;
+  }
+  /** the trip's points in a new order (`order[i]`: which old point goes to place i) */
+  function reorder(order: number[]) {
+    if (order.every((o, i) => o === i)) return;
+    const was = typed();
+    st.pts = order.map((o) => st.pts[o]);
+    renderFields(order.map((o) => was[o])); syncMarkers(); compute();
+  }
+  function move(k: number, by: number) {
+    const j = k + by;
+    if (j < 0 || j >= st.pts.length) return;
+    const order = st.pts.map((_, i) => i); [order[k], order[j]] = [order[j], order[k]];
+    reorder(order); st.active = j; inputAt(j)?.focus();
+  }
+  addBtn.addEventListener('click', () => {
+    if (st.pts.length >= MAX_POINTS) return;
+    const was = typed();
+    st.pts.splice(st.pts.length - 1, 0, null); // a new stop before the destination
+    was.splice(was.length - 1, 0, '');
+    st.active = st.pts.length - 2;
+    renderFields(was); inputAt(st.active)?.focus(); syncMarkers(); compute();
+  });
+  // reordering by dragging a row's handle: pointer events, so a finger works as well as a mouse
+  fields.addEventListener('pointerdown', (e) => {
+    const h = (e.target as HTMLElement).closest('[data-handle]') as HTMLElement | null;
+    if (!h || e.button > 0) return;
+    e.preventDefault();
+    const row = h.closest('.dir-row') as HTMLElement, rows = () => [...fields.querySelectorAll<HTMLElement>('.dir-row')];
+    const y0 = e.clientY;
+    row.classList.add('dragging'); fields.setPointerCapture(e.pointerId);
+    // how far the row's own place in the list has moved since the drag began (the finger stays on the row)
+    let shift = 0;
+    const onMove = (ev: PointerEvent) => {
+      row.style.transform = `translateY(${ev.clientY - y0 - shift}px)`;
+      // move the row's place in the list as its middle passes a neighbour's
+      const mid = row.getBoundingClientRect().top + row.offsetHeight / 2;
+      const before = rows().filter((r) => r !== row).find((r) => mid < r.getBoundingClientRect().top + r.offsetHeight / 2) ?? null;
+      if (before !== row.nextElementSibling) {
+        const t0 = row.offsetTop;
+        fields.insertBefore(row, before);
+        shift += row.offsetTop - t0;
+        row.style.transform = `translateY(${ev.clientY - y0 - shift}px)`;
+      }
+    };
+    const onUp = () => {
+      fields.removeEventListener('pointermove', onMove); fields.removeEventListener('pointerup', onUp); fields.removeEventListener('pointercancel', onUp);
+      row.classList.remove('dragging'); row.style.transform = '';
+      reorder(rows().map((r) => +r.dataset.k!));
+    };
+    fields.addEventListener('pointermove', onMove); fields.addEventListener('pointerup', onUp); fields.addEventListener('pointercancel', onUp);
+  });
 
   // ---------------------------------------------------------- routing
   function compute() {
     st.results = {}; st.sel = 0; st.expanded = false;
     drawRoutes();
-    if (!st.from || !st.to) { render(); return; }
+    // a new trip makes every reply still on its way out of date, even one with a stop not chosen yet
     const id = ++st.req;
-    const from = fromLngLat(...st.from.ll), to = fromLngLat(...st.to.ll);
-    for (const m of MODES) worker.postMessage({ type: 'route', id, mode: m.id, from, to, avoidTolls: st.avoidTolls, rules: st.rules });
+    if (!complete()) { render(); return; }
+    const pts = st.pts as Place[], from = fromLngLat(...pts[0].ll), to = fromLngLat(...pts[pts.length - 1].ll);
+    // with stops the worker routes leg by leg (Router.routeVia); two points ask exactly as before
+    const via = pts.length > 2 ? { points: pts.map((p) => fromLngLat(...p.ll)), segs: pts.map((p) => p.seg), labels: pts.map((p) => p.label) } : {};
+    for (const m of MODES) worker.postMessage({ type: 'route', id, mode: m.id, from, to, avoidTolls: st.avoidTolls, rules: st.rules, fromSeg: pts[0].seg, toSeg: pts[pts.length - 1].seg, ...via });
     render();
   }
   function onResult(msg: { id: number; mode: Mode; routes: Route[] }) {
-    if (msg.id !== st.req) return;
+    if (msg.id !== st.req || !isOpen()) return; // closed meanwhile: nothing to draw
     st.results[msg.mode] = msg.routes;
     if (msg.mode === st.mode) { drawRoutes(true); }
     render();
@@ -187,20 +287,27 @@ export function createDirections(d: DirectionsDeps) {
       for (const l of r.legs) {
         const kind = l.kind === 'ride' ? 'ride' : l.kind === 'walk' ? 'walk' : 'main';
         feats.push({ type: 'Feature', properties: { role: kind, color: l.line?.color ?? '#1a73e8', idx: st.sel }, geometry: { type: 'LineString', coordinates: l.coords } });
+        // traffic on this driving leg: each slowed stretch drawn over the route in the colour of its slowdown
+        if (l.traffic) l.traffic.forEach((pc, k) => {
+          const color = trafficColor(pc.pct); if (!color) return;
+          const end = k + 1 < l.traffic!.length ? l.traffic![k + 1].i : l.coords.length - 1;
+          const cs = l.coords.slice(Math.max(0, pc.i - 1), end + 1);
+          if (cs.length > 1) feats.push({ type: 'Feature', properties: { role: 'traffic', color, idx: st.sel }, geometry: { type: 'LineString', coordinates: cs } });
+        });
         if (l.kind === 'ride' && l.coords.length) {
           for (const c of [l.coords[0], l.coords[l.coords.length - 1]]) feats.push({ type: 'Feature', properties: { role: 'stop', color: l.line!.color }, geometry: { type: 'Point', coordinates: c } });
         }
       }
     }
     // connect pins to the network with a faint dotted line, as Google does
-    if (r && st.from && st.to) {
-      const first = r.legs[0]?.coords[0], last = r.legs[r.legs.length - 1]?.coords.at(-1);
-      if (first) feats.push({ type: 'Feature', properties: { role: 'link' }, geometry: { type: 'LineString', coordinates: [st.from.ll, first] } });
-      if (last) feats.push({ type: 'Feature', properties: { role: 'link' }, geometry: { type: 'LineString', coordinates: [last, st.to.ll] } });
+    if (r && complete()) {
+      const a = r.legs[0]?.coords[0], b = r.legs[r.legs.length - 1]?.coords.at(-1);
+      if (a) feats.push({ type: 'Feature', properties: { role: 'link' }, geometry: { type: 'LineString', coordinates: [first()!.ll, a] } });
+      if (b) feats.push({ type: 'Feature', properties: { role: 'link' }, geometry: { type: 'LineString', coordinates: [b, last()!.ll] } });
     }
     src.setData({ type: 'FeatureCollection', features: feats });
     if (fit && r && !d.simulating()) {
-      const all = r.legs.flatMap((l) => l.coords).concat(st.from ? [st.from.ll] : [], st.to ? [st.to.ll] : []);
+      const all = r.legs.flatMap((l) => l.coords).concat(st.pts.flatMap((p) => (p ? [p.ll] : [])));
       const b = all.reduce((bb, c) => bb.extend(c as LL), new maplibregl.LngLatBounds(all[0] as LL, all[0] as LL));
       const phone = isPhone(), narrow = innerWidth < 700;
       const top = phone ? $<HTMLElement>('.dir-top').getBoundingClientRect().bottom + 24 : 70;
@@ -216,17 +323,17 @@ export function createDirections(d: DirectionsDeps) {
     el.querySelectorAll<HTMLElement>('.dir-mode').forEach((b) => {
       const m = b.dataset.mode as Mode, rs = st.results[m];
       b.classList.toggle('on', m === st.mode);
-      b.querySelector('.t')!.textContent = !st.from || !st.to ? '' : rs === undefined ? '…' : rs.length ? fmtTime(rs[0].time) : '—';
+      b.querySelector('.t')!.textContent = !complete() ? '' : rs === undefined ? '…' : rs.length ? fmtTime(rs[0].time) : '—';
     });
-    if (!st.from || !st.to) { body.innerHTML = `<div class="dir-hint">${svg('<path d="M21.7 11.3l-9-9a1 1 0 0 0-1.4 0l-9 9a1 1 0 0 0 0 1.4l9 9a1 1 0 0 0 1.4 0l9-9a1 1 0 0 0 0-1.4zM14 14.5V12h-4v3H8v-4a1 1 0 0 1 1-1h5V7.5l3.5 3.5-3.5 3.5z"/>')}<p>${t('Search for places above, click the map, or right-click anywhere to set a start or destination.')}</p></div>`; return; }
+    if (!complete()) { body.innerHTML = `<div class="dir-hint">${svg('<path d="M21.7 11.3l-9-9a1 1 0 0 0-1.4 0l-9 9a1 1 0 0 0 0 1.4l9 9a1 1 0 0 0 1.4 0l9-9a1 1 0 0 0 0-1.4zM14 14.5V12h-4v3H8v-4a1 1 0 0 1 1-1h5V7.5l3.5 3.5-3.5 3.5z"/>')}<p>${t('Search for places above, click the map, or right-click anywhere to set a start or destination.')}</p></div>`; return; }
     const rs = st.results[st.mode];
     if (rs === undefined) { body.innerHTML = '<div class="dir-loading"><span></span></div>'; return; }
     if (!rs.length) {
-      const why = st.mode === 'transit' ? t('No transit route — it may be quicker to walk, or no line serves these places.') : st.mode === 'walk' || st.mode === 'bike' ? t('No route for this mode. The places may only be connected by highways or water.') : t('No legal driving route between these places. One-way roads confirmed by traffic are never driven the wrong way.');
-      body.innerHTML = `<div class="dir-empty">${esc(why)}</div>`; return;
+      const why = st.mode === 'transit' && st.pts.length > 2 ? t('Transit directions don\'t take stops. Remove the stops to see transit routes.') : st.mode === 'transit' ? t('No transit route — it may be quicker to walk, or no line serves these places.') : st.mode === 'walk' || st.mode === 'bike' ? t('No route for this mode. The places may only be connected by highways or water.') : d.approx() ? t('No driving route between these places on the estimated road network.') : t('No legal driving route between these places. One-way roads confirmed by traffic are never driven the wrong way.');
+      body.innerHTML = approxNote() + `<div class="dir-empty">${esc(why)}</div>`; return;
     }
     const sel = rs[st.sel];
-    body.innerHTML = st.expanded && sel ? details(sel) : rs.map((r, i) => routeCard(r, i, i === st.sel)).join('');
+    body.innerHTML = approxNote() + (st.expanded && sel ? details(sel) : rs.map((r, i) => routeCard(r, i, i === st.sel)).join(''));
   }
 
   function routeCard(r: Route, i: number, on: boolean): string {
@@ -250,11 +357,11 @@ export function createDirections(d: DirectionsDeps) {
   function details(r: Route): string {
     const head = `<div class="dd-head"><button class="icon-btn" data-back aria-label="${t('Back')}">${svg('<path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/>')}</button><div><b>${fmtTime(r.time)}</b> <span class="muted">(${fmtDist(r.dist)})</span>${r.via ? `<div class="muted small">${esc(t('via {road}', { road: r.via }))}</div>` : ''}${r.tolls?.length ? tollDetails(r) : ''}${onewayNote(r, true)}${trafficNote(r)}${simButton(r)}</div></div>`;
     if (r.mode !== 'transit') return head + `<ol class="steps">${r.legs[0].steps.map(stepRow).join('')}</ol>`;
-    const rows: string[] = [`<li class="tr-place"><i class="dot o"></i><b>${esc(st.from!.label)}</b></li>`];
+    const rows: string[] = [`<li class="tr-place"><i class="dot o"></i><b>${esc(first()!.label)}</b></li>`];
     r.legs.forEach((l, i) => {
       const next = r.legs[i + 1];
       if (l.kind === 'walk') {
-        const target = next?.kind === 'ride' ? next.from : st.to!.label;
+        const target = next?.kind === 'ride' ? next.from : last()!.label;
         rows.push(`<li class="tr-walk"><span class="rail walk"></span>${svg(MODES[2].icon, 'wi')}<div><div>${esc(t('Walk to {place}', { place: target ?? t('destination') }))}</div><div class="muted small">${fmtTime(l.time)} · ${fmtDist(l.dist)}</div>
           ${l.steps.length > 2 ? `<details><summary>${t('Walking directions')}</summary><ol class="steps mini">${l.steps.map(stepRow).join('')}</ol></details>` : ''}</div></li>`);
       } else {
@@ -268,23 +375,37 @@ export function createDirections(d: DirectionsDeps) {
         rows.push(`<li class="tr-stop"><i class="dot" style="border-color:${c}"></i><b>${esc(l.to!)}</b></li>`);
       }
     });
-    rows.push(`<li class="tr-place"><i class="dot d"></i><b>${esc(st.to!.label)}</b></li>`);
-    return head + `<ol class="transit-steps">${rows.join('')}</ol>${fareBox(P.fareCost(r))}<div class="dd-schem"><button class="pill" data-schem>${svg('<path d="M4 6h5v2H6v3h3v2H6v3h3v2H4V6zm11 0h5v12h-5v-2h3v-3h-3v-2h3V8h-3V6zM10 11h4v2h-4z"/>')}${t('Show on transit map')}</button></div><p class="muted small dd-note">${t('Ride times come from the real road and track speed limits, with acceleration, stops and traffic. Waiting times are estimates: the export has no timetable.')}</p>`;
+    rows.push(`<li class="tr-place"><i class="dot d"></i><b>${esc(last()!.label)}</b></li>`);
+    return head + `<ol class="transit-steps">${rows.join('')}</ol>${fareBox(P.fareCost(r))}<div class="dd-schem"><button class="pill" data-schem>${svg('<path d="M4 6h5v2H6v3h3v2H6v3h3v2H4V6zm11 0h5v12h-5v-2h3v-3h-3v-2h3V8h-3V6zM10 11h4v2h-4z"/>')}${t('Show on transit map')}</button></div><p class="muted small dd-note">${d.approx() ? t('Ride times are estimated from each road and track\'s type, with acceleration, stops and traffic. Waiting times are estimates: the file has no timetable.') : t('Ride times come from the real road and track speed limits, with acceleration, stops and traffic. Waiting times are estimates: the export has no timetable.')}</p>`;
   }
 
+  /** Maps without lane data: every route is worked out on estimated lanes. */
+  function approxNote(): string {
+    const saved = d.approx() ? d.savedLanes() : null;
+    if (saved !== null) return `<div class="toll-note approx-note">${esc(t('Approximate route'))}<div class="small">${esc(saved >= 1 ? t('Lanes and one-way streets come from your save. Times may still differ a little from the game.') : t('Lanes and one-way streets come from your save on {pct}% of the road network (by length); the rest are estimated from road types, so times may be a little off.', { pct: Math.floor(100 * saved) }))}</div></div>`;
+    if (!d.approx()) return '';
+    const why = st.mode === 'drive'
+      ? t('Speeds and one-way streets on this map are estimated from road types, so times may be off. For more accurate directions, add the save (.crp) the export was made from, or open a .cslmap export.')
+      : t('This map has no lane data, so which streets and paths can be used, and how fast, is estimated from each road\'s type. Times may be off.');
+    return `<div class="toll-note approx-note">${esc(t('Approximate route'))}<div class="small">${esc(why)}</div></div>`;
+  }
   /** Traffic-aware driving: what traffic adds, against the same route without it, and how much of it has data. */
   function trafficNote(r: Route): string {
     if (r.baseTime === undefined) return '';
     const extra = r.time - r.baseTime;
-    const parts = [extra >= 30 ? t('Traffic adds about {time} to this route', { time: fmtTime(extra) }) : t('No delay from traffic')];
+    // short slow stretches still cost a few seconds: only a route traffic leaves untouched says so
+    const parts = [extra >= 30 ? t('Traffic adds about {time} to this route', { time: fmtTime(extra) }) : extra >= 5 ? t('Traffic adds under a minute') : t('No delay from traffic')];
     if ((r.trafficShare ?? 0) < 0.9) parts.push(t('traffic known for {pct}% of the route', { pct: Math.round((r.trafficShare ?? 0) * 100) }));
+    // stretches where the save's vehicles tell the two directions apart use the traffic in the direction driven
+    const pieces = r.legs.flatMap((l) => l.traffic ?? []);
+    if (pieces.some((p) => p.split)) parts.push(t('by direction where the save shows it'));
     return `<div class="traffic-note">${esc(parts.join(' · '))}</div>`;
   }
   /** A last-resort route that drives against a likely (unconfirmed) one-way: never shown as an ordinary route. */
   function onewayNote(r: Route, long = false): string {
     const n = r.againstLikelyOneWay?.length;
     if (!n) return '';
-    return `<div class="toll-note warn oneway-note">${t('No route obeys every one-way here: this one drives against a likely one-way direction')}${long ? `<div class="small">${t('That direction was inferred from the road layout and no vehicle has confirmed it, so it may be wrong. Check before driving.')}</div>` : ''}</div>`;
+    return `<div class="toll-note warn oneway-note">${t('No route obeys every one-way here: this one drives against a likely one-way direction')}${long ? `<div class="small">${d.approx() && d.savedLanes() === null ? t('One-way streets on this map are estimated, so this direction may be wrong. Check in game.') : t('That direction was inferred from the road layout and no vehicle has confirmed it, so it may be wrong. Check before driving.')}</div>` : ''}</div>`;
   }
   function tollDetails(r: Route): string {
     const tc = P.tollCost(r)!;
@@ -303,12 +424,14 @@ export function createDirections(d: DirectionsDeps) {
     if (t.closest('.dir-close')) return close();
     const mode = (t.closest('.dir-mode') as HTMLElement | null)?.dataset.mode as Mode | undefined;
     if (mode) { st.mode = mode; st.sel = 0; st.expanded = false; drawRoutes(true); render(); return; }
-    if (t.closest('.dir-swap')) { [st.from, st.to] = [st.to, st.from]; fromIn.value = st.from?.label ?? ''; toIn.value = st.to?.label ?? ''; syncMarkers(); compute(); return; }
+    if (t.closest('.dir-swap')) { reorder(st.pts.map((_, i) => st.pts.length - 1 - i)); return; } // the whole trip, reversed
+    const rm = (t.closest('[data-rm]') as HTMLElement | null)?.dataset.rm;
+    if (rm !== undefined && st.pts.length > 2) { const was = typed(); st.pts.splice(+rm, 1); was.splice(+rm, 1); st.active = Math.min(st.active, st.pts.length - 1); renderFields(was); syncMarkers(); compute(); return; }
     const pricing = (t.closest('[data-pricing]') as HTMLElement | null)?.dataset.pricing as 'tolls' | 'fares' | undefined;
     if (pricing) { const r = st.results[st.mode]?.[st.sel]; d.editPricing(pricing, pricing === 'tolls' && r?.tolls?.[0] ? { booth: r.tolls.find((x) => P.tollFee(x.booth).fee === null)?.booth ?? r.tolls[0].booth } : undefined); return; }
     if (t.closest('[data-schem]')) { const r = st.results[st.mode]?.[st.sel]; if (r) d.showOnSchematic(r); return; }
     if (t.closest('[data-back]')) { st.expanded = false; render(); sheet.to('half'); return; }
-    if (t.closest('[data-sim]')) { const r = st.results[st.mode]?.[st.sel]; if (r) d.simulate(r, st.to?.label ?? ''); return; }
+    if (t.closest('[data-sim]')) { const r = st.results[st.mode]?.[st.sel]; if (r) d.simulate(r, last()?.label ?? ''); return; }
     if (t.closest('[data-details]')) { st.expanded = true; render(); body.scrollTop = 0; sheet.to('full'); return; }
     const step = (t.closest('[data-at]') as HTMLElement | null)?.dataset.at;
     if (step) { const [lng, lat] = step.split(',').map(Number); map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 17), speed: 1.5 }); return; }
@@ -324,7 +447,15 @@ export function createDirections(d: DirectionsDeps) {
   /** the worker's router holds one traffic switch: Directions, reach and closures all follow it */
   // st.traffic is the user's choice and outlives a removed or reloaded save; it applies while traffic data is loaded
   const trafficOn = () => st.traffic && d.simTraffic();
-  const sendTraffic = () => { worker.postMessage({ type: 'traffic', on: trafficOn() }); $<HTMLElement>('.dir-traffic-note').hidden = !trafficOn(); };
+  // per-direction estimates: a separate experimental choice, offered while traffic-aware routing is on and the save has them
+  const sendTraffic = () => {
+    worker.postMessage({ type: 'traffic', on: trafficOn(), dir: trafficOn() && st.trafficDir && d.simTrafficDir() });
+    $<HTMLElement>('.dir-traffic-note').hidden = !trafficOn();
+    $<HTMLElement>('#dirTrafficDirRow').hidden = !(trafficOn() && d.simTrafficDir());
+    trafficDirBox.checked = st.trafficDir;
+  };
+  const trafficDirBox = $<HTMLInputElement>('#dirTrafficDir');
+  trafficDirBox.addEventListener('change', () => { st.trafficDir = trafficDirBox.checked; sendTraffic(); compute(); });
   trafficBox.addEventListener('change', () => { st.traffic = trafficBox.checked; sendTraffic(); compute(); });
   /** the save's rules or traffic were loaded or removed: show each switch while its data exists, and re-route */
   function rulesChanged() {
@@ -335,14 +466,15 @@ export function createDirections(d: DirectionsDeps) {
     $<HTMLElement>('#dirTrafficRow').hidden = !tr;
     trafficBox.checked = st.traffic;
     sendTraffic(); // a new load resets the router's switch: send the page's choice again
-    if (st.from && st.to) compute();
+    // only while Directions is open: a closed panel must not draw its last route again (opening it re-routes)
+    if (complete() && isOpen()) compute();
   }
 
   // autocomplete for the two fields
   let sugItems: { place: Place; sub: string; icon: string }[] = [];
   let sugActive = -1;
   function suggest(input: HTMLInputElement) {
-    st.active = input === fromIn ? 'from' : 'to';
+    st.active = +input.dataset.k!;
     const q = input.value.trim().toLowerCase();
     const city = d.city();
     if (!city || !q) { sug.hidden = true; return; }
@@ -356,16 +488,21 @@ export function createDirections(d: DirectionsDeps) {
     sug.hidden = false;
   }
   const rank = (s: SearchEntry) => ({ station: 0, district: 1, park: 2, poi: 3, road: 4 } as Record<string, number>)[s.kind] ?? 5;
-  for (const input of [fromIn, toIn]) {
-    input.addEventListener('input', () => suggest(input));
-    input.addEventListener('focus', () => { st.active = input === fromIn ? 'from' : 'to'; input.select(); });
-    input.addEventListener('blur', () => setTimeout(() => (sug.hidden = true), 150));
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (!sugItems.length) return; sugActive = (sugActive + (e.key === 'ArrowDown' ? 1 : -1) + sugItems.length) % sugItems.length; sug.querySelectorAll('.sg').forEach((x, i) => x.classList.toggle('on', i === sugActive)); }
-      else if (e.key === 'Enter' && sugActive >= 0 && !sug.hidden) { setPoint(input === fromIn ? 'from' : 'to', sugItems[sugActive].place); sug.hidden = true; input.blur(); }
-      else if (e.key === 'Escape') { sug.hidden = true; input.blur(); }
-    });
-  }
+  // the fields are made again as the trip changes: listen on their container
+  const inputOf = (e: Event) => ((e.target as HTMLElement).matches('input[data-k]') ? (e.target as HTMLInputElement) : null);
+  fields.addEventListener('input', (e) => { const input = inputOf(e); if (input) suggest(input); });
+  fields.addEventListener('focusin', (e) => { const input = inputOf(e); if (input) { st.active = +input.dataset.k!; input.select(); } });
+  fields.addEventListener('focusout', (e) => { if (inputOf(e)) setTimeout(() => (sug.hidden = true), 150); });
+  fields.addEventListener('keydown', (e) => {
+    const input = inputOf(e);
+    if (!input) return;
+    const k = +input.dataset.k!;
+    // Alt+↑/↓ moves this point earlier or later in the trip (the keyboard's way to reorder)
+    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); sug.hidden = true; move(k, e.key === 'ArrowUp' ? -1 : 1); return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (!sugItems.length) return; sugActive = (sugActive + (e.key === 'ArrowDown' ? 1 : -1) + sugItems.length) % sugItems.length; sug.querySelectorAll('.sg').forEach((x, i) => x.classList.toggle('on', i === sugActive)); }
+    else if (e.key === 'Enter' && sugActive >= 0 && !sug.hidden) { setPoint(k, sugItems[sugActive].place); sug.hidden = true; input.blur(); }
+    else if (e.key === 'Escape') { sug.hidden = true; input.blur(); }
+  });
   sug.addEventListener('mousedown', (e) => { const i = (e.target as HTMLElement).closest('[data-i]') as HTMLElement | null; if (i) { e.preventDefault(); setPoint(st.active, sugItems[+i.dataset.i!].place); sug.hidden = true; } });
 
   return {
@@ -373,11 +510,18 @@ export function createDirections(d: DirectionsDeps) {
     /** traffic-aware routing is on (reach and closures say so) */
     trafficOn,
     /** language changed: relabel and re-ask the worker, whose step text is in the UI language */
-    relang() { applyStatic(el); if (isOpen()) compute(); },
-    /** a click on the map while directions are open fills the active empty field */
-    mapClick(ll: LL, label: string) { const w = !st.from ? 'from' : !st.to ? 'to' : st.active; setPoint(w, { label, ll }); },
-    setFrom: (p: Place) => { if (!isOpen()) open({ from: p }); else setPoint('from', p); },
-    setTo: (p: Place) => { if (!isOpen()) open({ to: p }); else setPoint('to', p); },
+    relang() { applyStatic(el); renderFields(); if (isOpen()) compute(); },
+    /** a click on the map while directions are open fills the first empty field, else the active one */
+    mapClick(ll: LL, label: string, seg?: number) { const empty = st.pts.findIndex((p) => !p); setPoint(empty >= 0 ? empty : st.active, { label, ll, ...(seg !== undefined ? { seg } : {}) }); },
+    setFrom: (p: Place) => { if (!isOpen()) open({ from: p }); else setPoint(0, p); },
+    setTo: (p: Place) => { if (!isOpen()) open({ to: p }); else setPoint(st.pts.length - 1, p); },
+    /** add a stop before the destination (map menu); false when the trip is full or directions aren't set up */
+    addStop(p: Place): boolean {
+      if (!isOpen() || !complete() || st.pts.length >= MAX_POINTS) return false;
+      const was = typed(); st.pts.splice(st.pts.length - 1, 0, p); was.splice(was.length - 1, 0, ''); renderFields(was); syncMarkers(); compute(); return true;
+    },
+    /** directions are open with a start and destination, and room for another stop (the map menu offers "Add stop") */
+    canAddStop: () => isOpen() && complete() && st.pts.length < MAX_POINTS,
   };
 }
 

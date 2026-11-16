@@ -33,6 +33,24 @@ jobs:
         run: npm run check
       - name: Korean translations
         run: npm run check:i18n
+      - name: .vellummap reader
+        run: npm run check:vellummap
+      - name: .cmm reader
+        run: npm run check:cmm
+      - name: Send to Phone (protocol, encryption, relay rules)
+        run: npm run check:phone
+      - name: .skysave (format, refusals, checks)
+        run: npm run check:skysave
+      - name: Trips through stops
+        run: npm run check:route-stops
+      - name: Route shield recognition
+        run: npm run check:shields
+      - name: Traffic layer colours
+        run: npm run check:traffic-style
+      - name: Relay worker type check
+        run: npx tsc -p worker
+      - name: Build with Send to Phone switched on (not deployed)
+        run: VITE_SEND_TO_PHONE=1 npx vite build --outDir dist-phone --emptyOutDir
 
   data:
     name: Data checks

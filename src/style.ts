@@ -3,7 +3,11 @@ import { t } from './i18n';
 import type { StyleSpecification, LayerSpecification, ExpressionSpecification } from 'maplibre-gl';
 
 export type Theme = 'light' | 'dark';
-export interface StyleOptions { theme: Theme; terrain: boolean; transit: boolean; bus: boolean; cycling: boolean; buildings3d: boolean; grid: boolean; labels: boolean; contours: boolean }
+export interface StyleOptions { theme: Theme; terrain: boolean; transit: boolean; bus: boolean; cycling: boolean; buildings3d: boolean; grid: boolean; labels: boolean; contours: boolean;
+  /** the file has no lanes (.vellummap): bike lanes come only from a matched save, as feature state `bike` (sim-ui.ts) */
+  bikeFromSave?: boolean;
+  /** grey highways and main roads instead of yellow and orange (Layers menu) */
+  neutralRoads?: boolean }
 
 type E = ExpressionSpecification;
 
@@ -48,6 +52,12 @@ const PAL = {
   },
 };
 
+/** 'Neutral road colours': highways and main roads in greys, everything else unchanged */
+const NEUTRAL = {
+  light: { casing: { motorway: '#a7adb6', motorway_link: '#a7adb6', trunk: '#b3b8c0', primary: '#c3c7cd' }, fill: { motorway: '#d3d7dd', motorway_link: '#d9dce1', trunk: '#e1e3e7', primary: '#f4f5f6' }, highwayText: '#4a4f57', highwayHalo: '#f4f5f6' },
+  dark: { casing: { motorway: '#33373d', motorway_link: '#33373d', trunk: '#363a40', primary: '#383c42' }, fill: { motorway: '#6a6f78', motorway_link: '#62676f', trunk: '#5a5f67', primary: '#50545b' }, highwayText: '#d5d9df', highwayHalo: '#17191c' },
+};
+
 // px per metre at a given zoom (512 px tiles, Web Mercator at the equator)
 const K = (z: number) => 2 ** z / 78271.517;
 
@@ -76,7 +86,8 @@ export function roadWidth(extra: [number, number, number, number] = [0, 0, 0, 0]
 const CASING: [number, number, number, number] = [0.6, 1.2, 2, 2.6];
 
 export function buildStyle(o: StyleOptions, fontBase: string): StyleSpecification {
-  const p = PAL[o.theme];
+  const p0 = PAL[o.theme], nr = o.neutralRoads ? NEUTRAL[o.theme] : null;
+  const p = nr ? { ...p0, casing: { ...p0.casing, ...nr.casing }, fill: { ...p0.fill, ...nr.fill }, highwayText: nr.highwayText } : p0;
   const font = (w: 'Regular' | 'Medium' | 'SemiBold' | 'Bold') => [`Pretendard ${w}`];
   const vis = (on: boolean) => (on ? 'visible' : 'none') as 'visible' | 'none';
   const lbl = vis(o.labels);
@@ -216,14 +227,15 @@ export function buildStyle(o: StyleOptions, fontBase: string): StyleSpecificatio
         'line-color': ['get', 'color'],
         'line-width': ['interpolate', ['linear'], ['zoom'], 11, ['match', ['get', 'mode'], 'bus', 1, 1.8], 15, ['match', ['get', 'mode'], 'bus', 2, 3.6], 18, ['match', ['get', 'mode'], 'bus', 3, 5]],
         'line-offset': ['interpolate', ['linear'], ['zoom'], 11, ['*', ['get', 'offset'], 1.8], 15, ['*', ['get', 'offset'], ['match', ['get', 'mode'], 'bus', 2.4, 3.6]], 18, ['*', ['get', 'offset'], ['match', ['get', 'mode'], 'bus', 3.4, 5]]],
-        'line-opacity': ['match', ['get', 'mode'], 'bus', 0.85, 1],
+        // a leg rebuilt from the network (.cmm, no path in the file) is fainter: an estimate, not the game's path
+        'line-opacity': ['case', ['==', ['get', 'est'], 1], 0.45, ['match', ['get', 'mode'], 'bus', 0.85, 1]],
       },
     } as LayerSpecification,
 
     {
       id: 'cycling', type: 'line', source: 'roads', layout: { visibility: vis(o.cycling), 'line-join': 'round', 'line-cap': 'round' },
-      filter: ['any', ['==', ['get', 'bike'], 1], ['all', ['==', ['get', 'cls'], 'footway'], ['in', 'Bicycle', ['get', 'type']]]],
-      paint: { 'line-color': o.theme === 'light' ? '#1e8e3e' : '#5bb974', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.4, 16, 3, 19, 5], 'line-opacity': 0.9 },
+      ...(o.bikeFromSave ? {} : { filter: ['any', ['==', ['get', 'bike'], 1], ['all', ['==', ['get', 'cls'], 'footway'], ['in', 'Bicycle', ['get', 'type']]]] }),
+      paint: { 'line-color': o.theme === 'light' ? '#1e8e3e' : '#5bb974', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.4, 16, 3, 19, 5], 'line-opacity': o.bikeFromSave ? ['case', ['boolean', ['feature-state', 'bike'], false], 0.9, 0] : 0.9 },
     } as LayerSpecification,
     { id: 'grid', type: 'line', source: 'grid', layout: { visibility: vis(o.grid) }, paint: { 'line-color': p.grid, 'line-width': 1, 'line-dasharray': [4, 3] } },
 
@@ -249,6 +261,8 @@ export function buildStyle(o: StyleOptions, fontBase: string): StyleSpecificatio
     { id: 'route-alt', type: 'line', source: 'route', filter: ['==', ['get', 'role'], 'alt'], layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': o.theme === 'light' ? '#bccbe2' : '#61738f', 'line-width': ['interpolate', ['linear'], ['zoom'], 11, 4, 16, 7, 19, 10] } } as LayerSpecification,
     { id: 'route-casing', type: 'line', source: 'route', filter: ['in', ['get', 'role'], ['literal', ['main', 'ride']]], layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': ['case', ['==', ['get', 'role'], 'ride'], '#ffffff', '#174ea6'], 'line-width': ['interpolate', ['linear'], ['zoom'], 11, 7, 16, 11, 19, 15] } } as LayerSpecification,
     { id: 'route-line', type: 'line', source: 'route', filter: ['in', ['get', 'role'], ['literal', ['main', 'ride']]], layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': ['case', ['==', ['get', 'role'], 'ride'], ['get', 'color'], '#4285f4'], 'line-width': ['interpolate', ['linear'], ['zoom'], 11, 4.5, 16, 7.5, 19, 11] } } as LayerSpecification,
+    // traffic on the chosen driving route (traffic-aware routing on): slow stretches over the blue line
+    { id: 'route-traffic', type: 'line', source: 'route', filter: ['==', ['get', 'role'], 'traffic'], layout: { 'line-join': 'round', 'line-cap': 'butt' }, paint: { 'line-color': ['get', 'color'], 'line-width': ['interpolate', ['linear'], ['zoom'], 11, 4.5, 16, 7.5, 19, 11] } } as LayerSpecification,
     { id: 'route-walk', type: 'line', source: 'route', filter: ['==', ['get', 'role'], 'walk'], layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#4285f4', 'line-width': ['interpolate', ['linear'], ['zoom'], 11, 3.5, 16, 6, 19, 8], 'line-dasharray': [0, 1.6] } } as LayerSpecification,
     { id: 'route-stop', type: 'circle', source: 'route', filter: ['==', ['get', 'role'], 'stop'], paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 4, 16, 6], 'circle-color': '#ffffff', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 3 } } as LayerSpecification,
 
@@ -259,7 +273,7 @@ export function buildStyle(o: StyleOptions, fontBase: string): StyleSpecificatio
       paint: { 'text-color': p.contourText, 'text-halo-color': p.halo, 'text-halo-width': 1.4 },
     } as LayerSpecification,
     {
-      id: 'road-label-minor', type: 'symbol', source: 'roadLabels', minzoom: 13.5, filter: ['all', ['<', ['get', 'rank'], 7], ['any', ['>=', ['get', 'rank'], 5], ['>=', ['zoom'], 14.8]]],
+      id: 'road-label-minor', type: 'symbol', source: 'roadLabels', minzoom: 13.5, filter: ['all', ['!', ['has', 'shield']], ['<', ['get', 'rank'], 7], ['any', ['>=', ['get', 'rank'], 5], ['>=', ['zoom'], 14.8]]],
       layout: {
         visibility: lbl, 'symbol-placement': 'line', 'text-field': ['get', 'name'], 'text-font': font('Medium'),
         'text-size': ['interpolate', ['linear'], ['zoom'], 13.5, ['match', ['get', 'rank'], [5, 6], 11, 10.5], 18, ['match', ['get', 'rank'], [5, 6], 15, 13.5]],
@@ -268,12 +282,23 @@ export function buildStyle(o: StyleOptions, fontBase: string): StyleSpecificatio
       paint: { 'text-color': p.road, 'text-halo-color': p.halo, 'text-halo-width': 1.8, 'text-halo-blur': 0.4 },
     } as LayerSpecification,
     {
-      id: 'road-label-major', type: 'symbol', source: 'roadLabels', minzoom: 12, filter: ['>=', ['get', 'rank'], 7],
+      id: 'road-label-major', type: 'symbol', source: 'roadLabels', minzoom: 12, filter: ['all', ['!', ['has', 'shield']], ['>=', ['get', 'rank'], 7]],
       layout: {
         visibility: lbl, 'symbol-placement': 'line', 'text-field': ['get', 'name'], 'text-font': font('SemiBold'),
         'text-size': ['interpolate', ['linear'], ['zoom'], 12, 11, 17, 14.5], 'symbol-spacing': 420, 'text-max-angle': 25, 'text-padding': 6, 'text-letter-spacing': 0.03,
       },
-      paint: { 'text-color': p.highwayText, 'text-halo-color': o.theme === 'light' ? '#fff8e1' : p.halo, 'text-halo-width': 2, 'text-halo-blur': 0.3 },
+      paint: { 'text-color': p.highwayText, 'text-halo-color': nr ? nr.highwayHalo : o.theme === 'light' ? '#fff8e1' : p.halo, 'text-halo-width': 2, 'text-halo-blur': 0.3 },
+    } as LayerSpecification,
+    {
+      // route shields (shields.ts) instead of the text label, spaced out and thinned by zoom like other map apps; major
+      // roads first, minor ones once zoomed in. Images are drawn on demand (styleimagemissing in main.ts).
+      id: 'road-shield', type: 'symbol', source: 'roadLabels', minzoom: 9,
+      filter: ['all', ['has', 'shield'], ['any', ['>=', ['get', 'rank'], 7], ['>=', ['zoom'], 13]]],
+      layout: {
+        visibility: lbl, 'symbol-placement': 'line', 'icon-image': ['concat', 'shield:', ['get', 'shield'], ':', ['get', 'ref']],
+        'icon-rotation-alignment': 'viewport', 'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.8, 13, 1],
+        'symbol-spacing': ['interpolate', ['linear'], ['zoom'], 9, 220, 14, 360, 18, 520], 'icon-padding': 6, 'symbol-sort-key': ['-', 10, ['get', 'rank']],
+      },
     } as LayerSpecification,
     {
       id: 'busstop', type: 'symbol', source: 'places', minzoom: 16, filter: ['==', ['get', 'kind'], 'busstop'],

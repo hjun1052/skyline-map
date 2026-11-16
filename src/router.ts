@@ -9,6 +9,7 @@ import { laneAccess, hasVehicle, type Access } from './access';
 import { hopTime, legRideTime, modeParams, type Piece } from './transit-time';
 import { t } from './i18n';
 import type { SimRules } from './sim/rules';
+import type { ControlKind } from './sim/controls';
 import { trafficFactor } from './sim/traffic';
 
 export type Mode = 'drive' | 'transit' | 'walk' | 'bike';
@@ -22,14 +23,19 @@ const HIGHWAY = new Set(['motorway', 'motorway_link', 'trunk']);
  * route follows the path instead of a straight line to the node.
  */
 /** A point on a drivable road where a trip can join it: edge, position along it (metres and fraction), seconds of extra access. */
-interface DriveHit { e: number; pt: XY; d: number; along: number; i: number; frac: number; extra: number }
+/** `node`: a junction standing in for an end (its point is the node, at one end of edge e) */
+interface DriveHit { e: number; pt: XY; d: number; along: number; i: number; frac: number; extra: number; node?: boolean }
 
 interface Join { node: number; extra: number; part?: Edge; snap?: { e: number; pt: XY; along: number; i: number; d: number } }
 
 interface Edge {
   id: number; a: number; b: number; len: number; pts: XY[]; cls: string; name: string; speed: number; bike: boolean; brunnel: string;
+  /** carriageway width (m), from the export */
+  w: number;
   /** the speed limit comes from the segment type's lanes (else `speed` is a class default) */
   limKnown: boolean;
+  /** lanes estimated from the road class (.vellummap, no matched save naming it): a TM:PE limit's direction is a guess too */
+  guessed?: boolean;
   /** closed for the closure being analysed (see setClosure): unusable by every mode */
   x?: boolean;
   /** one-way: +1 traffic a→b, -1 b→a, 0 two-way; `sure` = backed by transit or keep-right evidence */
@@ -50,6 +56,10 @@ interface Edge {
   noCar?: [boolean, boolean];
   /** traffic-aware routing: driving-time multiplier from the matched save's traffic density (see sim/traffic.ts) */
   tf?: number;
+  /** traffic factor per direction [start→end, end→start], where the save's vehicles give enough evidence to split it */
+  tfd?: [number, number];
+  /** the save's density (0-100 %), and per direction where split (for colouring a route) */
+  tp?: number; tpd?: [number, number];
 }
 
 type Hop = { pts: XY[]; len: number; time: number; segs: number[]; x?: boolean; timeOf: (limit?: PieceLimit) => number };
@@ -68,7 +78,14 @@ export interface Leg {
   stopIds?: number[];
   /** driving legs: the road under each stretch of `coords`, in order (navigation simulation) */
   spans?: Span[];
+  /** driving legs with traffic-aware routing on: the save's traffic on each stretch from coords[i], in the direction driven */
+  traffic?: TrafficPiece[];
+  /** driving legs with a matched save: traffic control facing the car at each junction it drives through, at coords[i] (the junction) */
+  controls?: { i: number; kind: ControlKind }[];
 }
+/** Traffic on a stretch of a driving leg from coords[i]: density 0-100 (-1: no data), and whether it is split by direction;
+ *  `delay`: seconds the traffic adds to driving this stretch (its time with traffic less its time without, as routing counts it) */
+export interface TrafficPiece { i: number; pct: number; split: boolean; seg: number; delay: number }
 /** One road of a driving leg: from coords[i] on, driven at `v` m/s (as driving time counts it, traffic included when on). */
 export interface Span {
   i: number; v: number; name: string; cls: string; brunnel: string;
@@ -120,6 +137,10 @@ class Heap {
 
 export class Router {
   private nodeIdx = new Map<number, number>();
+  /** the game's node id of each graph node */
+  private nodeIds: number[] = [];
+  /** traffic control a car meets entering a junction from a segment, by "segment:node" (a matched save; see sim/controls.ts) */
+  private controls = new Map<string, ControlKind>();
   private pos: XY[] = [];
   private edges: Edge[] = [];
   private adj: number[][] = []; // node index → edge indices
@@ -135,12 +156,18 @@ export class Router {
   private assets: { rings: XY[][]; box: [number, number, number, number] }[] = [];
   /** the asset footprints a route endpoint stands in, for the current search (walk/bike/transit only) */
   private ends = new Map<string, XY[][]>();
+  /** driving: the road the user picked an end on (the segment drawn on top where they clicked), by end point */
+  private picked = new Map<string, number>();
+  /** driving on from an intermediate stop: the direction the car arrived in (a stop isn't a place to turn round in
+   *  the road), or null for an ordinary start (see departsAlong) */
+  private heading: XY | null = null;
+  private edgeOfSeg = new Map<number, number>();
 
   constructor(private city: CityData, private stopNames: Map<number, string>, oneway?: OneWayResult, tolls?: TollData) {
     for (const b of tolls?.booths ?? []) this.booths.set(b.id, { name: b.name, unconfirmed: !!b.unconfirmed, road: b.roads[0] ?? '' });
     const node = (id: number): number => {
       let i = this.nodeIdx.get(id);
-      if (i === undefined) { const n = city.nodes.get(id); i = this.pos.length; this.nodeIdx.set(id, i); this.pos.push(n ? [n.x, n.z] : [0, 0]); this.adj.push([]); }
+      if (i === undefined) { const n = city.nodes.get(id); i = this.pos.length; this.nodeIdx.set(id, i); this.nodeIds.push(id); this.pos.push(n ? [n.x, n.z] : [0, 0]); this.adj.push([]); }
       return i;
     };
     const segById = new Map<number, CSeg>();
@@ -149,21 +176,31 @@ export class Router {
       if (seg.pts.length < 2 || !city.nodes.has(seg.sn) || !city.nodes.has(seg.en)) continue;
       const st = city.segTypes.get(seg.name);
       const lanes = laneInfo(st);
-      const acc = laneAccess(seg, st);
+      // on estimated lanes the prefab name is a guess: bridges, tunnels, posted limits and bike lanes come from the file only
+      // (roads a matched save names have their real prefab, so those count as known)
+      const guessed = !!city.extras?.caps.lanesEstimated && !city.extras.exactLanes?.has(seg.id);
+      let acc = laneAccess(seg, st);
+      // a guessed bike lane never lets bikes ride where the road itself doesn't (they push on paths, as without one)
+      if (guessed && acc.bike && !(acc.drive && !st?.highway) && !/Bicycle|Bike/i.test(seg.icls)) acc = { ...acc, bike: false, bikeWalk: acc.walk };
       if (!acc.walk && !acc.drive && !acc.bike && !acc.bikeWalk) continue;
       const c0 = classify(seg, st, lanes);
       // class only names the edge in instructions and sets default speeds; access comes from lanes
       const c = c0.group === 'road' || c0.group === 'path' ? c0 : { ...c0, cls: acc.drive ? 'minor' : 'footway' };
       const pts: XY[] = seg.pts.map((p) => [p.x, p.z]);
-      const both = seg.name + ' ' + seg.icls;
+      const both = guessed ? seg.icls : seg.name + ' ' + seg.icls;
       const e: Edge = {
-        id: seg.id, a: node(seg.sn), b: node(seg.en), len: Math.max(1, len(pts)), pts, cls: c.cls, name: seg.customName,
-        speed: (lanes.speed > 0 && lanes.speed < 200 ? lanes.speed : DRIVE_DEFAULT[c.cls] ?? 30) / 3.6, limKnown: lanes.speed > 0 && lanes.speed < 200,
-        bike: lanes.bike || /Bicycle|Bike/i.test(seg.name), brunnel: /Tunnel/i.test(both) ? 'tunnel' : /Elevated|Bridge/i.test(both) ? 'bridge' : '',
-        acc, gate: tolls?.gateOf.get(seg.id) ?? 0, ow: oneway?.dir.get(seg.id) ?? 0, sure: !!oneway && oneway.source.get(seg.id) !== 'prior' && oneway.source.has(seg.id), confirmed: oneway?.source.get(seg.id) === 'transit',
+        id: seg.id, a: node(seg.sn), b: node(seg.en), len: Math.max(1, len(pts)), pts, cls: c.cls, name: seg.customName, w: seg.width > 0 ? seg.width : 8,
+        // estimated lanes (.vellummap) give a speed to drive at, never a posted limit to show
+        speed: (lanes.speed > 0 && lanes.speed < 200 ? lanes.speed : DRIVE_DEFAULT[c.cls] ?? 30) / 3.6, limKnown: lanes.speed > 0 && lanes.speed < 200 && !guessed,
+        bike: guessed ? /Bicycle|Bike/i.test(seg.icls) : lanes.bike || /Bicycle|Bike/i.test(seg.name), brunnel: /Tunnel/i.test(both) ? 'tunnel' : /Elevated|Bridge/i.test(both) ? 'bridge' : '',
+        ...(guessed ? { guessed: true } : {}), acc, gate: tolls?.gateOf.get(seg.id) ?? 0, ow: oneway?.dir.get(seg.id) ?? 0, sure: !!oneway && oneway.source.get(seg.id) !== 'prior' && oneway.source.has(seg.id), confirmed: oneway?.source.get(seg.id) === 'transit' || oneway?.source.get(seg.id) === 'exact',
         hA: headRad(pts), hB: headRad([...pts].reverse()),
       };
+      // a file that states each road's effective limit per direction (.cmm, TM:PE-aware) drives at that, as a matched save does
+      const cs = city.extras?.carSpeed?.get(seg.id);
+      if (cs && acc.drive) { const f = cs[0] ?? cs[1]!, b = cs[1] ?? cs[0]!; e.spd = [f, b]; e.speed = Math.max(f, b); e.limKnown = true; }
       const ei = this.edges.push(e) - 1;
+      this.edgeOfSeg.set(seg.id, ei);
       this.adj[e.a].push(ei); this.adj[e.b].push(ei);
     }
 
@@ -366,9 +403,10 @@ export class Router {
   }
   private byId: Map<number, Edge> | null = null;
   /** Does this oriented piece run along its road's point order (start → end)? Trimmed and reversed pieces carry
-   *  their own points, so measure against the whole road. Only per-direction rules (spd) need the answer. */
+   *  their own points, so measure against the whole road. Only per-direction values (TM:PE limits `spd`, traffic split
+   *  `tfd`) need the answer. */
   private drivesForward(p: { ed: Edge; pts: XY[] }): boolean {
-    if (!p.ed.spd) return true;
+    if (!p.ed.spd && !(this.trafficDir && p.ed.tfd)) return true;
     this.byId ??= new Map(this.edges.map((e) => [e.id, e]));
     const whole = this.byId.get(p.ed.id)?.pts ?? p.ed.pts, a = whole[0], z = whole[whole.length - 1];
     if (Math.hypot(a[0] - z[0], a[1] - z[1]) > 0.5) return nearestOnLine(p.pts[p.pts.length - 1], whole).along >= nearestOnLine(p.pts[0], whole).along;
@@ -379,14 +417,20 @@ export class Router {
   /** The moving speed cost() drives an edge at (m/s), without its fixed seconds per minor street. */
   private driveSpeed(e: Edge, fwd: boolean) {
     const v = e.spd ? e.spd[fwd ? 0 : 1] : e.speed;
-    return (v * (/^(motorway|motorway_link|trunk)$/.test(e.cls) ? 1 : 0.85)) / (this.trafficOn && e.tf ? e.tf : 1);
+    const tf = this.tfOf(e, fwd);
+    return (v * (/^(motorway|motorway_link|trunk)$/.test(e.cls) ? 1 : 0.85)) / (this.trafficOn && tf ? tf : 1);
   }
-  private cost(e: Edge, mode: Mode, fwd?: boolean): number {
+  /** the edge's traffic factor in a direction (its segment's when it isn't split), or undefined without traffic */
+  private tfOf(e: Edge, fwd?: boolean) { return this.trafficDir && fwd !== undefined && e.tfd ? e.tfd[fwd ? 0 : 1] : e.tf; }
+  /** `fwd`: the direction driven, for TM:PE's per-direction limits and traffic; `tdir`: the direction for traffic only (searches
+   *  that keep the road's own speed both ways but still drive one way along it) */
+  private cost(e: Edge, mode: Mode, fwd?: boolean, tdir?: boolean): number {
     // cars rarely hold the posted limit in town (traffic, signals): 85% on ordinary streets, full speed on highways
     if (mode === 'drive') {
       const v = e.spd && fwd !== undefined ? e.spd[fwd ? 0 : 1] : e.speed;
       const t = e.len / (v * (/^(motorway|motorway_link|trunk)$/.test(e.cls) ? 1 : 0.85)) + (e.cls === 'minor' || e.cls === 'service' ? 2 : 0);
-      return this.trafficOn && e.tf ? t * e.tf : t;
+      const tf = this.tfOf(e, fwd ?? tdir);
+      return this.trafficOn && tf ? t * tf : t;
     }
     if (mode === 'bike') return e.acc.bike ? (e.len / BIKE) * (e.bike ? 0.8 : 1) : e.len / WALK; // push the bike on footpaths
     return e.len / WALK;
@@ -426,17 +470,31 @@ export class Router {
     return best;
   }
 
-  route(from: XY, to: XY, mode: Mode, opts: { avoidTolls?: boolean; rules?: boolean } = {}): Route[] {
+  /** `fromSeg` / `toSeg`: the road segment drawn on top where the user set that end (a click on a road); used for
+   *  driving when it is a motorway, ramp or highway (see highwayEnd), ignored otherwise */
+  route(from: XY, to: XY, mode: Mode, opts: { avoidTolls?: boolean; rules?: boolean; fromSeg?: number; toSeg?: number; heading?: XY } = {}): Route[] {
+    // driving on from a stop: leave in the direction the car arrived. Only if no route does (a dead end that can't be
+    // left that way is handled by the U-turn rules at its end, so this is rare) does the stop allow any direction
+    if (opts.heading && mode === 'drive' && !this.heading) {
+      this.heading = opts.heading;
+      let r: Route[];
+      try { r = this.route(from, to, mode, { ...opts, heading: undefined }); } finally { this.heading = null; }
+      return r.length ? r : this.route(from, to, mode, { ...opts, heading: undefined });
+    }
     // the save's traffic rules apply by default once loaded; `rules: false` compares against the export alone
     if (opts.rules === false && this.rulesOn) {
       this.setRules(false);
       try { return this.route(from, to, mode, { ...opts, rules: undefined }); } finally { this.setRules(true); }
     }
-    return this.withEnds(mode, [from, to], () => {
-      if (mode === 'transit') return this.transit(from, to);
-      this.avoidTolls = mode === 'drive' && !!opts.avoidTolls;
-      try { return this.roadRoutes(from, to, mode); } finally { this.avoidTolls = false; }
-    });
+    if (opts.fromSeg !== undefined) this.picked.set(from[0] + ',' + from[1], opts.fromSeg);
+    if (opts.toSeg !== undefined) this.picked.set(to[0] + ',' + to[1], opts.toSeg);
+    try {
+      return this.withEnds(mode, [from, to], () => {
+        if (mode === 'transit') return this.transit(from, to);
+        this.avoidTolls = mode === 'drive' && !!opts.avoidTolls;
+        try { return this.roadRoutes(from, to, mode); } finally { this.avoidTolls = false; }
+      });
+    } finally { this.picked.clear(); }
   }
 
   private roadRoutes(from: XY, to: XY, mode: Mode): Route[] {
@@ -475,12 +533,14 @@ export class Router {
       }
       if ('bent' in found && found.bent) this.flagAgainst(r, path);
       const used = new Set(path.map((p) => p.e));
-      const overlap = out.some((o) => { const prev = (o as any)._edges as Set<number>; let sh = 0; for (const e of used) if (prev.has(e)) sh += this.edges[e].len; return sh / r.dist > 0.7; });
-      if (!overlap && (!out.length || r.time <= out[0].time * 1.5)) { (r as any)._edges = used; out.push(r); }
+      // a different set of graph edges can still draw the very same line (joins part-way along a road): that is a copy too
+      const line = r.legs.map((l) => l.coords.map((c) => Math.round(c[0]) + ',' + Math.round(c[1])).join(' ')).join('|'); // to the metre
+      const overlap = out.some((o) => { if ((o as any)._line === line) return true; const prev = (o as any)._edges as Set<number>; let sh = 0; for (const e of used) if (prev.has(e)) sh += this.edges[e].len; return sh / r.dist > 0.7; });
+      if (!overlap && (!out.length || r.time <= out[0].time * 1.5)) { (r as any)._edges = used; (r as any)._line = line; out.push(r); }
       // a near-copy means the penalty is too weak to leave a fast road (e.g. an expressway): escalate faster
       for (const e of used) penalty.set(e, (penalty.get(e) ?? 1) * (overlap ? 1.8 : 1.3));
     }
-    for (const r of out) delete (r as any)._edges;
+    for (const r of out) { delete (r as any)._edges; delete (r as any)._line; }
     // both ends on one edge: walking straight along it beats going out to a junction and back
     if (mode !== 'drive') {
       let direct: Route | null = null;
@@ -582,7 +642,8 @@ export class Router {
     if (!this.restrictBan && !this.timing && e.noCar?.[fwd ? 0 : 1]) base *= this.restrictFactor;
     if (e.ow !== 0 && (fwd ? 1 : -1) !== e.ow) {
       // the wrong-way penalty scales with the time without traffic, so traffic doesn't multiply it
-      const raw = this.trafficOn && e.tf ? base / e.tf : base;
+      const tf = this.tfOf(e, fwd);
+      const raw = this.trafficOn && tf ? base / tf : base;
       return base + (e.sure ? raw * 29 + 600 : raw * 5 + 90); // `sure` only reachable when relaxed
     }
     return base;
@@ -614,12 +675,16 @@ export class Router {
     // the block is the real way. Only if that finds no legal route (a point between motorway carriageways)
     // do the nearby junctions become options too, charged double for the straight distance beyond the road.
     const ends = (p: XY, roadsOnly: boolean): DriveHit[] => {
+      // an end set on a motorway, ramp or highway itself starts or ends on that road, in the directions it may be
+      // driven, and nowhere else: no nearby road or junction stands in for it (with no legal route, there is none)
+      const on = this.highwayEnd(p);
+      if (on.length) return on;
       const hits = this.driveHits(p), d0 = hits[0]?.d ?? Infinity;
       if (roadsOnly && hits.length) return hits; // (an end with no road in reach always uses junctions)
       // a junction as a point at the end of each road meeting there, so every way in and out is open
       const nodes = this.nearby(p, 'drive').flatMap(({ node }) => this.adj[node].filter((x) => this.allowed(this.edges[x], 'drive')).map((ei) => {
         const e = this.edges[ei], atA = e.a === node, d = this.reach(p, this.pos[node]);
-        return { e: ei, pt: this.pos[node], d, along: atA ? 0 : e.len, i: atA ? 0 : Math.max(0, e.pts.length - 2), frac: atA ? 0 : 1, extra: 0 };
+        return { e: ei, pt: this.pos[node], d, along: atA ? 0 : e.len, i: atA ? 0 : Math.max(0, e.pts.length - 2), frac: atA ? 0 : 1, extra: 0, node: true };
       }));
       // roads and junctions compete on the same footing: distance beyond the nearest of them costs double (a road
       // hit's own extra only counts distance beyond the nearest road, which may be far behind a closer junction)
@@ -632,16 +697,53 @@ export class Router {
     const SH = ends(from, false), TH = ends(to, false);
     if (onRoads) {
       // avoiding tolls: if the road joins only lead through a gate, a nearby junction may not
-      if (this.avoidTolls && gated(onRoads)) { const alt = SH.length && TH.length ? this.driveSearchOn(SH, TH, penalty) : null; if (alt && !gated(alt)) return alt; }
+      if (this.avoidTolls && gated(onRoads)) { const [S, T] = this.stopOkEnds(from, to, SH, TH); const alt = S.length && T.length ? this.driveSearchOn(S, T, penalty) : null; if (alt && !gated(alt)) return alt; }
       return onRoads;
     }
     if (!SH.length || !TH.length) return null;
-    const r = this.driveSearchOn(SH, TH, penalty);
-    if (r) return r;
+    // an end on a motorway, ramp or highway (highwayEnd) keeps only the road under it (ends() returns nothing else for
+    // it). The other end may still use nearby junctions as usual, but only where an ordinary road meets (a car can't
+    // stop at a node on a motorway or ramp alone: that would be a jump across to it); and no route drives a likely
+    // one-way backwards from or to it
+    const onHighway = this.highwayEnd(from).length > 0 || this.highwayEnd(to).length > 0;
+    const [S, T] = this.stopOkEnds(from, to, SH, TH);
+    const r = this.driveSearchOn(S, T, penalty);
+    if (r || onHighway) return r;
     // no route obeys every inferred one-way: as a last resort a likely (keep-right) direction may be driven
     // against, heavily penalised and flagged; a direction confirmed by vehicles never is (then: no route)
     this.relaxed = true;
     try { const b = this.driveSearchOn(SH, TH, penalty); return b ? { ...b, bent: true } : null; } finally { this.relaxed = false; }
+  }
+  /** With an end on a motorway, ramp or highway, the other end's junction stand-ins only where an ordinary road meets
+   *  (a car can't stop at a node on a motorway or ramp alone); otherwise the joins unchanged */
+  private stopOkEnds(from: XY, to: XY, SH: DriveHit[], TH: DriveHit[]): [DriveHit[], DriveHit[]] {
+    if (!this.highwayEnd(from).length && !this.highwayEnd(to).length) return [SH, TH];
+    const ok = (h: DriveHit) => !h.node || this.adj[this.edges[h.e][h.frac ? 'b' : 'a']].some((ei) => this.allowed(this.edges[ei], 'drive') && !HIGHWAY.has(this.edges[ei].cls));
+    return [SH.filter(ok), TH.filter(ok)];
+  }
+  /**
+   * The road under an end the user put on a motorway, ramp or highway (issue #16): such a road is otherwise never
+   * joined while any ordinary road is within 3 km (driveHits), so the route started on a road beside or under it.
+   *  - picked: the user clicked a road; the segment drawn on top there (the map's own pick) is that road;
+   *  - otherwise (a dragged pin, a typed point): the point lies on a carriageway (within half its width plus 2 m).
+   *    Where carriageways overlap at different levels, only those drawn on top count (bridge over ground over tunnel),
+   *    as a click there would pick.
+   * Only when that road is a motorway, ramp or highway; anything else keeps the usual joins (driveHits).
+   */
+  private highwayEnd(p: XY): DriveHit[] {
+    const { id, size } = this.comp('drive');
+    const big = Math.min(40, Math.max(...size, 0));
+    const usable = (e: Edge) => this.allowed(e, 'drive') && id[e.a] >= 0 && size[id[e.a]] >= big;
+    const hitOn = (ei: number): DriveHit => { const e = this.edges[ei], h = nearestOnLine(p, e.pts); return { e: ei, ...h, frac: e.len > 0 ? Math.min(1, h.along / e.len) : 0, extra: 0 }; };
+    const pick = this.picked.get(p[0] + ',' + p[1]);
+    if (pick !== undefined) {
+      const ei = this.edgeOfSeg.get(pick), e = ei === undefined ? null : this.edges[ei];
+      return e && HIGHWAY.has(e.cls) && usable(e) && nearestOnLine(p, e.pts).d <= 200 ? [hitOn(ei!)] : []; // (a click at low zoom may land metres off the centreline)
+    }
+    const on = this.edgesNear(p, 60).filter((ei) => { const e = this.edges[ei]; return usable(e) && nearestOnLine(p, e.pts).d <= e.w / 2 + 2; });
+    const level = (ei: number) => (this.edges[ei].brunnel === 'bridge' ? 2 : this.edges[ei].brunnel === 'tunnel' ? 0 : 1);
+    const top = Math.max(-1, ...on.map(level)), shown = on.filter((ei) => level(ei) === top);
+    return shown.some((ei) => HIGHWAY.has(this.edges[ei].cls)) ? shown.map(hitOn) : [];
   }
   /**
    * The drivable roads a point can join: the nearest point on each of the few nearest roads a car may use
@@ -701,6 +803,7 @@ export class Router {
       const e = this.edges[s.e];
       for (const fwd of [true, false]) {
         if (!this.driveOk(e, fwd)) continue;
+        if (this.heading && !this.departsAlong(s, fwd)) continue; // leaving a stop: no turning round in the road
         const st = 2 * s.e + (fwd ? 0 : 1), c = s.extra + part(s.e, fwd, fwd ? 1 - s.frac : s.frac);
         if (c < dist[st]) { dist[st] = c; prev[st] = -1; seedOf[st] = si; h.push(c, st); }
         // the target further along the same road, in this direction
@@ -738,6 +841,45 @@ export class Router {
     const sHit = goal.s ?? SH[seedOf[goal.from]];
     return { path, time: this.driveTimeOn(path, sHit, goal.t), sHit, tHit: goal.t };
   }
+  /**
+   * Leaving an intermediate stop along edge `s.e` in direction `fwd` keeps to the direction the car arrived in: part-way
+   * along a road only straight on (no turning round in the road), from a junction any way but back (the turn rules
+   * there are those of an ordinary start, so a real U-turn at a junction is still judged by the router's U-turn rules
+   * on the next leg's first turn).
+   */
+  private departsAlong(s: DriveHit, fwd: boolean): boolean {
+    const h = this.heading!, e = this.edges[s.e], n = e.pts.length;
+    const i = Math.min(Math.max(0, s.node ? (s.frac ? n - 2 : 0) : s.i), n - 2);
+    const a = e.pts[i], b = e.pts[i + 1];
+    const dx = (b[0] - a[0]) * (fwd ? 1 : -1), dz = (b[1] - a[1]) * (fwd ? 1 : -1);
+    const l1 = Math.hypot(dx, dz), l2 = Math.hypot(h[0], h[1]);
+    if (!l1 || !l2) return true;
+    const cos = (dx * h[0] + dz * h[1]) / (l1 * l2);
+    return s.node ? cos > -0.7 : cos > 0;
+  }
+  /**
+   * A trip through stops (`points`: start, stops…, destination; up to 10). Each leg is the best route between two
+   * neighbouring points; driving on from a stop keeps the direction the car arrived in (see route / departsAlong). The
+   * legs are joined into one route with one leg, so everything that reads a route (directions, the navigation
+   * simulation, tolls, traffic) works unchanged; an "Arrive at stop n" step marks each stop. Alternatives are only
+   * offered without stops, and transit has no stops: both return what route() does for two points, or nothing.
+   */
+  routeVia(points: XY[], mode: Mode, opts: { avoidTolls?: boolean; rules?: boolean; segs?: (number | undefined)[]; labels?: string[] } = {}): Route[] {
+    const segs = opts.segs ?? [];
+    if (points.length < 2 || points.length > 10) return [];
+    if (points.length === 2) return this.route(points[0], points[1], mode, { avoidTolls: opts.avoidTolls, rules: opts.rules, fromSeg: segs[0], toSeg: segs[1] });
+    if (mode === 'transit') return [];
+    const parts: Route[] = [];
+    let heading: XY | undefined;
+    for (let i = 0; i + 1 < points.length; i++) {
+      const r = this.route(points[i], points[i + 1], mode, { avoidTolls: opts.avoidTolls, rules: opts.rules, fromSeg: segs[i], toSeg: segs[i + 1], heading })[0];
+      if (!r) return [];
+      parts.push(r);
+      heading = mode === 'drive' ? arrivalHeading(r) : undefined;
+    }
+    return [joinRoutes(parts, opts.labels ?? [])];
+  }
+
   /** Travel time of a path that starts and ends part-way along its first and last roads. */
   private driveTimeOn(path: { e: number; fwd: boolean }[], s: DriveHit, t: DriveHit) {
     const avoid = this.avoidTolls; this.avoidTolls = false; this.timing = true; // reported time: no search-only penalties
@@ -855,18 +997,30 @@ export class Router {
     if (!parts.length && meet) coords.push(meet);
     let dist = 0, time = 0;
     for (const p of parts) { dist += p.ed.len; time += this.cost(p.ed, mode); }
-    const spans: Span[] = [];
+    const spans: Span[] = [], traffic: TrafficPiece[] = [], controls: { i: number; kind: ControlKind }[] = [];
     for (const p of parts) {
       if (mode === 'drive') {
         const e = p.ed, fwd = this.drivesForward(p);
-        const lim = e.spd ? e.spd[fwd ? 0 : 1] * 3.6 : e.limKnown ? e.speed * 3.6 : 0;
+        // a TM:PE limit on guessed lanes is shown only when both directions agree (which lanes run which way is a guess)
+        const lim = e.spd && (!e.guessed || e.spd[0] === e.spd[1]) ? e.spd[fwd ? 0 : 1] * 3.6 : e.limKnown ? e.speed * 3.6 : 0;
         spans.push({ i: coords.length, v: this.driveSpeed(e, fwd), name: e.name, cls: e.cls, brunnel: e.brunnel, ...(lim ? { limit: Math.round(lim) } : {}) });
+        if (this.trafficOn) {
+          const split = this.trafficDir && !!e.tpd, tf = this.tfOf(e, fwd) ?? 1, c = this.cost(e, 'drive', fwd);
+          traffic.push({ i: coords.length, pct: split ? e.tpd![fwd ? 0 : 1] : e.tp ?? -1, split, seg: e.id, delay: tf > 1 ? c - c / tf : 0 });
+        }
       }
       coords.push(...p.pts);
+      // the junction at the end of this piece, when the route drives on through it: what control faces the car there
+      if (mode === 'drive' && this.controls.size && p !== parts[parts.length - 1]) {
+        const e = p.ed, end = p.pts[p.pts.length - 1], d = (n: number) => Math.hypot(this.pos[n][0] - end[0], this.pos[n][1] - end[1]);
+        const kind = this.controls.get(e.id + ':' + this.nodeIds[d(e.a) <= d(e.b) ? e.a : e.b]);
+        if (kind) controls.push({ i: coords.length - 1, kind });
+      }
     }
     coords.push(this.endPoint(to, coords[coords.length - 1]));
     const kind = mode === 'drive' ? 'drive' : mode === 'bike' ? 'bike' : 'walk';
-    const steps = turnSteps(parts, mode, (ed) => this.cost(ed, mode));
+    const fw = new Map(parts.map((p) => [p.ed, this.drivesForward(p)]));
+    const steps = turnSteps(parts, mode, (ed) => this.cost(ed, mode, undefined, fw.get(ed)));
     // toll gates passed, in order, with a step at the point they are reached
     const tolls: TollPass[] = [];
     if (mode === 'drive') {
@@ -890,7 +1044,7 @@ export class Router {
     const named = new Map<string, number>();
     for (const p of parts) if (p.ed.name) named.set(p.ed.name, (named.get(p.ed.name) ?? 0) + p.ed.len);
     const via = [...named].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
-    return { mode, dist, time, via, legs: [{ kind, dist, time, coords: coords.map((p) => toLngLat(p[0], p[1])), steps, ...(spans.length ? { spans } : {}) }], ...(tolls.length ? { tolls } : {}), ...(tolls.length && this.avoidTolls ? { tollsUnavoidable: true } : {}) };
+    return { mode, dist, time, via, legs: [{ kind, dist, time, coords: coords.map((p) => toLngLat(p[0], p[1])), steps, ...(spans.length ? { spans } : {}), ...(traffic.length ? { traffic } : {}), ...(controls.length ? { controls } : {}) }], ...(tolls.length ? { tolls } : {}), ...(tolls.length && this.avoidTolls ? { tollsUnavoidable: true } : {}) };
   }
 
   // ------------------------------------------------------------ transit
@@ -1097,22 +1251,35 @@ export class Router {
   // ---------------------------------------------------------------- traffic from a matched save (estimate)
   private trafficEdges: Edge[] = [];
   private trafficOn = false;
-  /** densities (0-100 %) for matched segments; routing uses them only while setTraffic(true) */
-  applyTraffic(ids: ArrayLike<number>, pct: ArrayLike<number>) {
+  /** traffic-aware routing uses the per-direction estimates where split (experimental, off by default: the game's value per road) */
+  private trafficDir = false;
+  /** densities (0-100 %) for matched segments, and per direction where the save's vehicles split them with enough
+   *  evidence (sim/directional.ts, `trusted`); routing uses them only while setTraffic(true) */
+  applyTraffic(ids: ArrayLike<number>, pct: ArrayLike<number>, dir?: { ids: ArrayLike<number>; f: ArrayLike<number>; b: ArrayLike<number>; trusted: ArrayLike<number> }) {
     this.clearTraffic();
     const byId = new Map(this.edges.map((e) => [e.id, e]));
     for (let i = 0; i < ids.length; i++) {
       const e = byId.get(ids[i]);
       if (!e || !e.acc.drive) continue;
-      e.tf = trafficFactor(pct[i]); this.trafficEdges.push(e);
+      e.tf = trafficFactor(pct[i]); e.tp = pct[i]; this.trafficEdges.push(e);
+    }
+    if (dir) for (let i = 0; i < dir.ids.length; i++) {
+      const e = byId.get(dir.ids[i]);
+      if (!e || e.tf === undefined || !dir.trusted[i]) continue;
+      e.tfd = [trafficFactor(dir.f[i]), trafficFactor(dir.b[i])]; e.tpd = [dir.f[i], dir.b[i]];
     }
   }
   clearTraffic() {
-    for (const e of this.trafficEdges) delete e.tf;
+    for (const e of this.trafficEdges) { delete e.tf; delete e.tfd; delete e.tp; delete e.tpd; }
     this.trafficEdges = []; this.trafficOn = false;
   }
   /** traffic-aware driving on or off (Directions, reach and closures alike); no effect without data */
   setTraffic(on: boolean) { this.trafficOn = on && this.trafficEdges.length > 0; }
+  /** use the per-direction estimates while traffic-aware routing is on (otherwise each road's own value both ways) */
+  setTrafficDir(on: boolean) { this.trafficDir = on; }
+  /** traffic lights and stop/yield signs from a matched save, by the segment a car arrives on and the node it enters */
+  applyControls(list: { seg: number; node: number; kind: ControlKind }[]) { this.controls = new Map(list.map((c) => [c.seg + ':' + c.node, c.kind])); }
+  clearControls() { this.controls = new Map(); }
   clearRules() {
     this.setRules(false);
     this.ruleEdits = []; this.hopEdits = []; this.uturnRule = new Set(); this.turnRule = new Map(); this.restrictRule = null;
@@ -1202,7 +1369,7 @@ export class Router {
       for (const ei of this.adj[u]) {
         const e = this.edges[ei];
         if (!this.allowed(e, mode)) continue;
-        const v = e.a === u ? e.b : e.a, nd = d + this.cost(e, mode);
+        const v = e.a === u ? e.b : e.a, nd = d + this.cost(e, mode, undefined, e.a === u);
         if (nd < dist[v] && nd <= max) { dist[v] = nd; via[v] = ei; h.push(nd, v); }
       }
     }
@@ -1361,7 +1528,7 @@ export class Router {
           for (const ei of this.adj[u]) {
             const e = this.edges[ei];
             if (!this.allowed(e, mode)) continue;
-            const v = e.a === u ? e.b : e.a, nd = d + this.cost(e, mode);
+            const v = e.a === u ? e.b : e.a, nd = d + this.cost(e, mode, undefined, e.a === u);
             if (nd < out[v] && nd <= max) { out[v] = nd; h.push(nd, v); }
           }
         }
@@ -1480,6 +1647,55 @@ const STEP_KEYS = [
 ];
 // end i18n-keys
 void STEP_KEYS;
+/** the direction a route's car is driving as it arrives (world x/z), from the last road it drives: the line's final
+ *  point is the stop itself (partsRoute's endPoint), joined to the road by a connector that says nothing about the
+ *  direction of travel (a stop north of an eastbound road would read as northbound) */
+function arrivalHeading(r: Route): XY | undefined {
+  const c = r.legs[r.legs.length - 1]?.coords;
+  if (!c || c.length < 3) return undefined;
+  const b = fromLngLat(...(c[c.length - 2] as [number, number]));
+  for (let i = c.length - 3; i >= 0; i--) {
+    const a = fromLngLat(...(c[i] as [number, number]));
+    if (Math.hypot(b[0] - a[0], b[1] - a[1]) >= 3) return [b[0] - a[0], b[1] - a[1]];
+  }
+  return undefined;
+}
+/** routes between neighbouring stops joined into one route with one leg (see Router.routeVia); `labels`: the points' names */
+export function joinRoutes(parts: Route[], labels: string[]): Route {
+  const coords: XY[] = [], steps: Step[] = [], spans: Span[] = [], traffic: TrafficPiece[] = [], controls: { i: number; kind: ControlKind }[] = [];
+  let legDist = 0, legTime = 0;
+  parts.forEach((r, k) => {
+    const last = k === parts.length - 1;
+    for (const l of r.legs) {
+      const off = coords.length;
+      coords.push(...l.coords);
+      legDist += l.dist; legTime += l.time;
+      if (l.spans) spans.push(...l.spans.map((x) => ({ ...x, i: x.i + off })));
+      if (l.traffic) traffic.push(...l.traffic.map((x) => ({ ...x, i: x.i + off })));
+      if (l.controls) controls.push(...l.controls.map((x) => ({ ...x, i: x.i + off })));
+      for (const st of l.steps) {
+        if (st.maneuver === 'arrive' && !last) {
+          const name = labels[k + 1];
+          steps.push({ ...st, text: t('Arrive at stop {n}', { n: k + 1 }) + (name ? ' · ' + name : ''), maneuver: 'stop' });
+        } else steps.push(st);
+      }
+    }
+  });
+  const leg: Leg = { kind: parts[0].legs[0]?.kind ?? 'drive', dist: legDist, time: legTime, coords, steps };
+  if (spans.length) leg.spans = spans;
+  if (traffic.length) leg.traffic = traffic;
+  if (controls.length) leg.controls = controls;
+  const dist = parts.reduce((a, r) => a + r.dist, 0);
+  const out: Route = { mode: parts[0].mode, dist, time: parts.reduce((a, r) => a + r.time, 0), via: parts.reduce((a, r) => (r.dist > a.dist ? r : a)).via, legs: [leg] };
+  const tolls = parts.flatMap((r) => r.tolls ?? []);
+  if (tolls.length) out.tolls = tolls;
+  const against = parts.flatMap((r) => r.againstLikelyOneWay ?? []);
+  if (against.length) out.againstLikelyOneWay = against;
+  if (parts.some((r) => r.tollsUnavoidable)) out.tollsUnavoidable = true;
+  if (parts.every((r) => r.baseTime !== undefined)) out.baseTime = parts.reduce((a, r) => a + r.baseTime!, 0);
+  if (parts.every((r) => r.trafficShare !== undefined) && dist > 0) out.trafficShare = parts.reduce((a, r) => a + r.trafficShare! * r.dist, 0) / dist;
+  return out;
+}
 const heading = (a: XY, b: XY) => Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
 const tailHeading = (pts: XY[]) => { const n = pts.length; let i = n - 2; while (i > 0 && Math.hypot(pts[n - 1][0] - pts[i][0], pts[n - 1][1] - pts[i][1]) < 8) i--; return heading(pts[Math.max(0, i)], pts[n - 1]); };
 const headHeading = (pts: XY[]) => { let i = 1; while (i < pts.length - 1 && Math.hypot(pts[i][0] - pts[0][0], pts[i][1] - pts[0][1]) < 8) i++; return heading(pts[0], pts[i]); };

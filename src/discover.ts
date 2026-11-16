@@ -5,7 +5,7 @@
 import type { CityData, CSeg } from './parse';
 import type { BuiltCity } from './build';
 import { makeTerrainSampler, modeOf } from './build';
-import { HALF, MAP_SIZE, toLngLat, fromLngLat, polylineLength, type XY } from './geo';
+import { HALF, MAP_SIZE, ROAD_CLASSES, toLngLat, fromLngLat, polylineLength, type XY } from './geo';
 
 export type DiscoveryCat = 'transit' | 'roads' | 'land' | 'buildings' | 'quirks';
 type GeoFeature = { type: 'Feature'; properties: { role: 'line' | 'area' | 'point' | 'pin' }; geometry: { type: string; coordinates: unknown } };
@@ -136,7 +136,10 @@ export function discover(city: CityData, built: BuiltCity): DiscoveryResult {
   for (const f of built.sources.roads.features) roadProps.set(f.properties.id as number, f.properties);
   const railProps = new Map<number, P>();
   for (const f of built.sources.rails.features) if (f.properties.type !== undefined) railProps.set(f.properties.id as number, f.properties);
-  const isRoad = (p: P | undefined) => !!p && p.lanes > 0 && !['runway', 'taxiway', 'pedestrian', 'footway', 'trail', 'canal', 'ferry'].includes(p.cls);
+  // a road carries car or tram lanes; a file without a lane table (.vellummap) only has the drawn road class to go by
+  const noLanes = city.segTypes.size === 0;
+  const drivable = (p: P) => p.lanes > 0 || (noLanes && ROAD_CLASSES.has(p.cls));
+  const isRoad = (p: P | undefined) => !!p && drivable(p) && !['runway', 'taxiway', 'pedestrian', 'footway', 'trail', 'canal', 'ferry'].includes(p.cls);
   const roadSegs = city.segs.filter((s) => isRoad(roadProps.get(s.id)) && s.pts.length >= 2);
   const railSegs = city.segs.filter((s) => { const p = railProps.get(s.id); return p && ['rail', 'subway', 'monorail', 'tram'].includes(p.cls) && s.pts.length >= 2; });
 
@@ -340,7 +343,8 @@ export function discover(city: CityData, built: BuiltCity): DiscoveryResult {
     });
   const both = [...roadSegs, ...railSegs];
   const bridges = structs('bridge', both), tunnels = structs('tunnel', both);
-  {
+  // without prefab names (.vellummap) low bridges look like roads, so the longest one may be missed: no bridge record
+  if (!noLanes) {
     const wet = bridges.map((b) => ({ ...b, wet: overWater(b.pts) })).filter((b) => b.wet >= 40 && b.wet >= b.len * 0.25);
     // i18n-keys
     void ['Longest bridge', 'A continuous {len} span with {w} of it over water.', 'Road bridge', 'Rail bridge', 'Longest viaduct', 'The longest continuous elevated stretch, {len}, mostly over dry land.'];
@@ -361,6 +365,10 @@ export function discover(city: CityData, built: BuiltCity): DiscoveryResult {
           note: 'The longest continuous elevated stretch, {len}, mostly over dry land.', params: { len: lenText(v.len) }, geom: [lineF(v.pts)], bbox: bboxOf(v.pts, 150) });
       }
     }
+  }
+
+  // tunnels are found from the file's own class and underground flags (no prefab names needed)
+  {
     // i18n-keys
     void ['Longest road tunnel', 'Longest rail tunnel', 'Unbroken underground for {len}.', 'Unbroken underground for {len}, {w} of it under water.', 'Road tunnel', 'Rail tunnel'];
     // end i18n-keys
@@ -576,7 +584,8 @@ export function discover(city: CityData, built: BuiltCity): DiscoveryResult {
     // biggest footprint: a whole asset (all its parts)
     const groups = new Map<number, Lot[]>();
     for (const l of solid) { const g = groups.get(l.grp) ?? []; g.push(l); groups.set(l.grp, g); }
-    if (groups.size) {
+    // without the export's sub-building chains (.vellummap) an asset's parts can't be added up: no record beats a wrong one
+    if (groups.size && city.extras?.caps.buildingParts !== false) {
       const [, big] = [...groups].map(([g, ls]) => [g, ls] as const).reduce((a, b) => (b[1].reduce((s, l) => s + l.area, 0) > a[1].reduce((s, l) => s + l.area, 0) ? b : a));
       const area = big.reduce((s, l) => s + l.area, 0), head = big.find((l) => !l.part) ?? big[0];
       // i18n-keys
@@ -670,7 +679,7 @@ export function discover(city: CityData, built: BuiltCity): DiscoveryResult {
   {
     const parent = new Map<number, number>();
     const find = (a: number): number => { let r = a; while (parent.get(r)! !== r) r = parent.get(r)!; let x = a; while (x !== r) { const nx = parent.get(x)!; parent.set(x, r); x = nx; } return r; };
-    const net = city.segs.filter((s) => roadProps.has(s.id) && (roadProps.get(s.id)!.lanes > 0) && s.pts.length >= 2);
+    const net = city.segs.filter((s) => roadProps.has(s.id) && drivable(roadProps.get(s.id)!) && s.pts.length >= 2);
     for (const s of net) for (const n of [s.sn, s.en]) if (!parent.has(n)) parent.set(n, n);
     for (const s of net) { const a = find(s.sn), b = find(s.en); if (a !== b) parent.set(a, b); }
     const comp = new Map<number, CSeg[]>();

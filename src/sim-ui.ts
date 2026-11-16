@@ -2,13 +2,14 @@
 // and checks it shows the same city state (sim/validate.ts); this module shows the outcome, the map overlays
 // (traffic, land value, noise, pollution, crime) and the extra rows in the info panels. Values appear only
 // on objects the check matched; city-wide figures are labelled as covering the whole save.
+import { trafficColor, drawnFrom, legendBackground, type TrafficStyle } from './traffic-style';
 import { fmtSpeed } from './units';
 import type { Map as MLMap, ExpressionSpecification } from 'maplibre-gl';
 import type { BuiltCity } from './build';
 import type { SimResult, SimData, SimFailure, SimLine } from './sim';
 
 type TmSeg = NonNullable<SimData['tmpe']>['segs'][number];
-import { toLngLat } from './geo';
+import { toLngLat, COMPASS } from './geo';
 import { roadWidth } from './style';
 import { t, tn, locale } from './i18n';
 import { bottomSheet } from './sheet';
@@ -16,9 +17,10 @@ import { bottomSheet } from './sheet';
 type Layer = 'none' | 'traffic' | 'landValue' | 'noise' | 'pollution' | 'crime';
 const LAYERS: Layer[] = ['none', 'traffic', 'landValue', 'noise', 'pollution', 'crime'];
 const TRAFFIC = 'sim-traffic', RASTER = 'sim-grid', COVER = 'sim-cover';
+/** from this zoom, two-way roads with a directional estimate show one line per direction */
+const DIR_ZOOM = 14;
 const IMM_HALF = 128 * 38.4; // immaterial grid: 256 cells of 38.4 m, central 25 tiles only
 const NAT_HALF = 256 * 33.75; // natural grid: 512 cells of 33.75 m, the whole map
-const TRAFFIC_COLORS: [number, string][] = [[0, '#34a853'], [40, '#a8c530'], [60, '#f6bf26'], [80, '#f2853d'], [100, '#d93025']];
 // sequential ramps (low → high); index 0 is the colour at the bottom of the scale
 const RAMPS: Record<Exclude<Layer, 'none' | 'traffic'>, string[]> = {
   landValue: ['#f7fcb9', '#c2e699', '#78c679', '#31a354', '#006837'],
@@ -43,6 +45,9 @@ void ['Simulation data', 'Close', 'Enhance your map with real traffic, populatio
   'This save file is incomplete', 'It may not have finished copying or downloading. Try the original file.',
   'This save file is damaged', 'Its contents don\'t match the checksum the game wrote into it. Try the original file, or save again in the game.',
   'This save couldn\'t be read', 'It may be damaged, or a mod changed how the game stores this data.',
+  'This .skysave belongs to another export', 'It was made for a different export of this map. Open the export it was made from, or load the save (.crp) instead.',
+  'This .skysave couldn\'t be read', 'It may be damaged or incomplete. Make it again from the save (.crp).', 'This .skysave is from a newer version of Skyline Map', 'Reload the page to update Skyline Map, then open it again.',
+  'Export .skysave', 'Exported {file}', 'A .skysave keeps what Skyline Map uses from this save (and your fares and toll prices) in a small file that opens with this map export.',
   'Choose another save', 'Remove simulation data', 'Save: {city}', 'In game {date}', 'Saved {date}',
   'Map layer', 'Off', 'Traffic', 'Land value', 'Noise', 'Ground pollution', 'Crime',
   'Free-flowing', 'Jammed', 'Low', 'High', 'None', 'Matched roads only. The game\'s traffic view shows the same value.',
@@ -50,7 +55,7 @@ void ['Simulation data', 'Close', 'Enhance your map with real traffic, populatio
   'Whole city, from the save', 'Population', 'Workers', 'Jobs', 'Unemployment', 'Education', 'Uneducated', 'Educated', 'Well educated', 'Highly educated',
   'Tourists', 'Happiness', 'Crime rate', 'Average land value', 'Taxes', 'Residential', 'Commercial', 'Industrial', 'Office', 'low', 'high',
   'Transit ridership', 'Passengers per week, as the game\'s line panel shows them.',
-  'Some data couldn\'t be read from this save: {list}.', 'building occupancy', 'transit ridership', 'traffic rules', 'city statistics', 'map layers',
+  'Some data couldn\'t be read from this save: {list}.', 'building occupancy', 'transit ridership', 'traffic rules', 'city statistics', 'map layers', 'traffic by direction',
   'From your save', 'This object doesn\'t match the save, so no simulation data is shown for it.',
   'Residents', 'Households', 'Workers now', 'Students', 'Visitors now', 'Happiness', 'Traffic', 'Speed limit (TM:PE)', 'Default speed for this road type (TM:PE)', 'Parking', 'Not allowed', 'One side only', 'No limit',
   'Passengers per week', '{res} residents · {tour} tourists', 'Last full week', 'Car trips saved', 'as the game shows it',
@@ -58,16 +63,27 @@ void ['Simulation data', 'Close', 'Enhance your map with real traffic, populatio
   'Directions, reach and closures now follow the traffic rules in your save: {list}.', 'Left-hand traffic: one-way directions and per-direction rules aren\'t applied yet.', 'Traffic density changes travel times only when you switch on traffic-aware routing in Directions, and then only as an estimate.'];
 // end i18n-keys
 
+/** compass octants from east, counter-clockwise (same keys as the closure tool) */
+export type TrafficMode = 'combined' | 'directional';
+export type { TrafficStyle };
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const num = (v: number) => v.toLocaleString(locale());
 const pct = (v: number) => `${v.toLocaleString(locale(), { maximumFractionDigits: 1 })}%`;
 
-export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltCity | null; onOpen: () => void; selectLine: (id: number) => void; toast: (m: string) => void; onRules: () => void; onLoaded?: (f: File) => void }) {
+export function createSim(map: MLMap, deps: {
+  worker: Worker; city: () => BuiltCity | null; onOpen: () => void; selectLine: (id: number) => void; toast: (m: string) => void; onRules: () => void; onLoaded?: (f: File) => void; onData?: () => void;
+  /** the open city's fares and toll prices, put into an exported .skysave */
+  context?: () => Promise<unknown>;
+  /** the viewer switched the traffic layer between the gradient and the simple view (the page keeps the choice) */
+  onTrafficStyle?: (s: TrafficStyle) => void;
+  /** a .skysave brought fares and toll prices: keep them (checked, and not over newer ones) */
+  adoptContext?: (c: unknown) => Promise<void>;
+}) {
   const st = {
     open: false, busy: false, step: '', file: '', id: 0, src: null as File | null,
     data: null as SimData | null, fail: null as SimFailure | null,
     layer: 'none' as Layer,
-    traffic: new Map<number, number>(), bld: new Map<number, number>(), tm: new Map<number, TmSeg>(), lines: new Map<number, SimLine>(),
+    bikes: [] as number[], traffic: new Map<number, number>(), dir: new Map<number, { f: number; b: number; ok: boolean; q: number; h: number }>(), mode: 'combined' as TrafficMode, style: 'gradient' as TrafficStyle, drawn: [] as number[], bld: new Map<number, number>(), tm: new Map<number, TmSeg>(), lines: new Map<number, SimLine>(),
   };
 
   const el = document.createElement('div');
@@ -84,7 +100,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
   document.body.appendChild(legendChip);
   legendChip.onclick = () => open();
   const input = document.createElement('input');
-  input.type = 'file'; input.accept = '.crp,.gz'; input.hidden = true;
+  input.type = 'file'; input.accept = '.crp,.gz,.skysave'; input.hidden = true;
   document.body.appendChild(input);
   input.onchange = () => { const f = input.files?.[0]; input.value = ''; if (f) void load(f); };
 
@@ -97,12 +113,26 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     const buf = await f.arrayBuffer();
     deps.worker.postMessage({ type: 'sim', id: ++st.id, buffer: buf }, [buf]);
   }
-  function onMessage(m: { type: string; id: number; step?: string; result?: SimResult }) {
+  /** .skysave exports waiting for the worker */
+  const exports = new Map<number, (b: ArrayBuffer | null) => void>();
+  let exportId = 0;
+  /** the loaded save as a .skysave (null when none is loaded); `withContext`: include the city's fares and toll prices */
+  async function skysave(withContext: boolean): Promise<Blob | null> {
+    if (!st.data) return null;
+    const context = withContext ? await deps.context?.().catch(() => null) : null;
+    const id = ++exportId;
+    const buf = await new Promise<ArrayBuffer | null>((res) => { exports.set(id, res); deps.worker.postMessage({ type: 'skysaveExport', id, context: context ?? null }); });
+    return buf ? new Blob([buf], { type: 'application/octet-stream' }) : null;
+  }
+  const skysaveName = () => `${(deps.city()?.meta.name ?? 'city').replace(/[\\/:*?"<>|]+/g, '_')}.skysave`;
+  function onMessage(m: { type: string; id: number; step?: string; result?: SimResult & { context?: unknown }; buffer?: ArrayBuffer | null }) {
+    if (m.type === 'skysave') { exports.get(m.id)?.(m.buffer ?? null); exports.delete(m.id); return; }
     if (m.id !== st.id) return;
     if (m.type === 'simProgress') { st.step = m.step ?? ''; render(); return; }
     st.busy = false;
     const r = m.result!;
-    if (r.ok) { apply(r); deps.toast(t('Simulation data loaded')); if (st.src) deps.onLoaded?.(st.src); if (r.rulesSummary || r.traffic?.ids.length) deps.onRules(); }
+    if (r.ok && r.context !== undefined) { void deps.adoptContext?.(r.context).catch(() => {}); delete r.context; }
+    if (r.ok) { apply(r); deps.toast(t('Simulation data loaded')); if (st.src) deps.onLoaded?.(st.src); if (r.rulesSummary || r.traffic?.ids.length || r.savedLanes) deps.onRules(); }
     else { st.fail = r; }
     render();
   }
@@ -112,18 +142,26 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     clearView();
     st.data = r; st.fail = null;
     if (r.traffic) for (let i = 0; i < r.traffic.ids.length; i++) st.traffic.set(r.traffic.ids[i], r.traffic.pct[i]);
+    if (r.trafficDir) { const x = r.trafficDir; for (let i = 0; i < x.ids.length; i++) st.dir.set(x.ids[i], { f: x.f[i], b: x.b[i], ok: !!x.trusted[i], q: x.queue[i], h: x.heading[i] }); }
     if (r.buildings) for (let i = 0; i < r.buildings.ids.length; i++) st.bld.set(r.buildings.ids[i], i);
     if (r.tmpe) for (const s of r.tmpe.segs) st.tm.set(s.id, s);
     if (r.lines) for (const l of r.lines) st.lines.set(l.id, l);
+    // .vellummap: bike lanes the save names, for the cycling layer (style.ts, bikeFromSave)
+    if (r.roadFacts) for (const [id, f] of r.roadFacts) if (f.bike) { map.setFeatureState({ source: 'roads', id }, { bike: true }); st.bikes.push(id); }
     if (st.layer !== 'none') draw();
+    deps.onData?.();
   }
   function clearView() {
-    st.data = null; st.traffic.clear(); st.bld.clear(); st.tm.clear(); st.lines.clear();
+    const had = !!st.data;
+    if (map.getSource('roads')) for (const id of st.bikes) map.removeFeatureState({ source: 'roads', id }, 'bike');
+    st.bikes = [];
+    st.data = null; st.traffic.clear(); st.dir.clear(); st.bld.clear(); st.tm.clear(); st.lines.clear();
     removeLayers();
+    if (had) deps.onData?.();
   }
   /** drop the save entirely: what the page shows and the traffic rules in the worker's router */
   function clear() {
-    const hadRules = !!st.data?.rulesSummary || !!st.data?.traffic?.ids.length;
+    const hadRules = !!st.data?.rulesSummary || !!st.data?.traffic?.ids.length || !!st.data?.savedLanes;
     clearView();
     deps.worker.postMessage({ type: 'simClear' });
     if (hadRules) deps.onRules();
@@ -134,9 +172,11 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
   /** heat grids sit on the ground: under roads and buildings, over land and lots */
   function firstRoadLayer() { return map.getLayersOrder().find((id) => (map.getLayer(id) as { source?: string } | undefined)?.source === 'roads'); }
   function removeLayers() {
-    for (const id of [TRAFFIC, RASTER, COVER + '-line']) if (map.getLayer(id)) map.removeLayer(id);
+    for (const id of [TRAFFIC, TRAFFIC + '-f', TRAFFIC + '-b', RASTER, COVER + '-line']) if (map.getLayer(id)) map.removeLayer(id);
     for (const id of [RASTER, COVER]) if (map.getSource(id)) map.removeSource(id);
-    if (map.getSource('roads')) map.removeFeatureState({ source: 'roads' });
+    // only what the traffic layer set: other road states (a save's bike lanes on a .vellummap) stay
+    if (map.getSource('roads')) for (const id of st.drawn) for (const k of ['t', 'tf', 'tb', 'td']) map.removeFeatureState({ source: 'roads', id }, k);
+    st.drawn = [];
   }
   let drawQueued = false;
   function draw() {
@@ -150,17 +190,48 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     if (!d || st.layer === 'none') { syncChip(); return; }
     if (st.layer === 'traffic') {
       if (!d.traffic) return;
-      for (const [id, v] of st.traffic) map.setFeatureState({ source: 'roads', id }, { t: v });
+      for (const [id, v] of st.traffic) {
+        // two-way roads with enough evidence: a value per direction (sim/directional.ts), drawn side by side when zoomed in
+        const x = st.dir.get(id), split = st.mode === 'directional' && !!x && x.ok;
+        map.setFeatureState({ source: 'roads', id }, split ? { t: v, tf: x!.f, tb: x!.b, td: true } : { t: v });
+        st.drawn.push(id);
+      }
       const tv = ['coalesce', ['feature-state', 't'], -1] as ExpressionSpecification;
+      // the simple view leaves free-flowing roads uncoloured (traffic-style.ts)
+      const floor = drawnFrom(st.style);
       map.addLayer({
-        id: TRAFFIC, type: 'line', source: 'roads', filter: ['>', ['coalesce', ['get', 'lanes'], 0], 0],
+        id: TRAFFIC, type: 'line', source: 'roads',
+        // roads with car lanes; a .vellummap has no lane counts, so there only roads the save gave a density show (opacity below)
+        ...(deps.city()?.meta.source?.lanes === false ? {} : { filter: ['>', ['coalesce', ['get', 'lanes'], 0], 0] as ExpressionSpecification }),
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
-          'line-color': ['interpolate', ['linear'], tv, ...TRAFFIC_COLORS.flat()] as ExpressionSpecification,
+          'line-color': trafficColor(st.style, tv),
           'line-width': roadWidth([0.5, 0.8, 1.2, 1.6]),
-          'line-opacity': ['case', ['<', tv, 0], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95] as ExpressionSpecification,
+          // zoomed in, split roads hand over to the two direction lines below
+          'line-opacity': ['step', ['zoom'], ['case', ['<', tv, floor], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95], DIR_ZOOM,
+            ['case', ['<', tv, floor], 0, ['boolean', ['feature-state', 'td'], false], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95]] as ExpressionSpecification,
         },
       }, before());
+      const splitIds = st.mode === 'directional' ? [...st.dir].filter(([id, x]) => x.ok && st.traffic.has(id)).map(([id]) => id) : [];
+      if (splitIds.length) {
+        // each direction on the right of travel (left-hand-traffic saves get no split: sim/index.ts)
+        const side = 1;
+        for (const [key, sign] of [['f', 1], ['b', -1]] as const) {
+          const v = ['coalesce', ['feature-state', 't' + key], -1] as ExpressionSpecification;
+          map.addLayer({
+            id: TRAFFIC + '-' + key, type: 'line', source: 'roads', minzoom: DIR_ZOOM,
+            // only the split roads: a hidden line still costs drawing time on every other road
+            filter: ['in', ['id'], ['literal', splitIds]] as ExpressionSpecification,
+            layout: { 'line-join': 'round', 'line-cap': 'butt' },
+            paint: {
+              'line-color': trafficColor(st.style, v),
+              'line-width': ['interpolate', ['linear'], ['zoom'], DIR_ZOOM, 1.6, 16, 2.6, 18, 4.5],
+              'line-offset': ['interpolate', ['linear'], ['zoom'], DIR_ZOOM, 1.3 * sign * side, 16, 2.4 * sign * side, 18, 4.6 * sign * side],
+              'line-opacity': ['case', ['!', ['boolean', ['feature-state', 'td'], false]], 0, ['<', v, floor], 0, ['==', ['get', 'brunnel'], 'tunnel'], 0.45, 0.95] as ExpressionSpecification,
+            },
+          }, before());
+        }
+      }
     } else {
       const g = d.grids;
       if (!g) return;
@@ -203,18 +274,20 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
   function layerName(l: Layer) { return t(l === 'none' ? 'Off' : l === 'traffic' ? 'Traffic' : l === 'landValue' ? 'Land value' : l === 'noise' ? 'Noise' : l === 'pollution' ? 'Ground pollution' : 'Crime'); }
   function syncChip() {
     legendChip.hidden = st.open || !st.data || st.layer === 'none';
-    if (!legendChip.hidden) legendChip.innerHTML = `${legendBar(st.layer, true)}<span>${esc(layerName(st.layer))}</span>`;
+    const dirLabel = st.layer === 'traffic' && st.mode === 'directional' && st.data?.trafficDir?.ids.length;
+    if (!legendChip.hidden) legendChip.innerHTML = `${legendBar(st.layer, true)}<span>${esc(dirLabel ? t('Traffic, directions where estimated') : layerName(st.layer))}</span>`;
   }
   function legendBar(l: Layer, mini = false) {
     if (l === 'none') return '';
-    const cols = l === 'traffic' ? TRAFFIC_COLORS.map(([, c]) => c) : RAMPS[l];
-    return `<i class="sim-ramp${mini ? ' mini' : ''}" style="background:linear-gradient(90deg,${cols.join(',')})"></i>`;
+    const bg = l === 'traffic' ? legendBackground(st.style) : `linear-gradient(90deg,${RAMPS[l].join(',')})`;
+    return `<i class="sim-ramp${mini ? ' mini' : ''}" style="background:${bg}"></i>`;
   }
   function legend(l: Layer) {
     if (l === 'none') return '';
     const [lo, hi] = l === 'traffic' ? [t('Free-flowing'), t('Jammed')] : [l === 'landValue' ? t('Low') : t('None'), t('High')];
-    const note = l === 'traffic' ? t('Matched roads only. The game\'s traffic view shows the same value.') : l === 'pollution' ? t('Whole map.') : t('The game records this only for the central 25 tiles.');
-    return `<div class="sim-legend">${legendBar(l)}<div class="sim-legend-ends"><span>${esc(lo)}</span><span>${esc(hi)}</span></div><p class="sim-note">${esc(note)}</p></div>`;
+    const note = l === 'traffic' ? (st.style === 'simple' ? t('Roads without slowdowns keep their usual colour.') + ' ' : '') + t('Matched roads only. The game\'s traffic view shows the same value.') + (st.dir.size && st.mode === 'directional' ? ' ' + t('Zoomed in, two-way roads with enough vehicles show one estimated line per direction; other roads keep the game\'s combined value.') : '') : l === 'pollution' ? t('Whole map.') : t('The game records this only for the central 25 tiles.');
+    const simple = l === 'traffic' ? `<label class="switch-row sim-simple"><input type="checkbox" data-tstyle ${st.style === 'simple' ? 'checked' : ''}> <span><span>${esc(t('Simple view'))}</span><span class="switch-hint">${esc(t('Only slow and jammed roads are coloured.'))}</span></span></label>` : '';
+    return `<div class="sim-legend">${legendBar(l)}<div class="sim-legend-ends"><span>${esc(lo)}</span><span>${esc(hi)}</span></div>${simple}<p class="sim-note">${esc(note)}</p></div>`;
   }
 
   // ---------------------------------------------------------------- panel
@@ -230,17 +303,27 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     const d = new Date(raw.replace(/(\.\d{3})\d+/, '$1'));
     return isNaN(+d) ? raw : d.toLocaleString(locale(), time ? { dateStyle: 'medium', timeStyle: 'short' } : { dateStyle: 'medium' });
   }
+  /** how to get a save and a map export of the same moment, for the format this map came from */
+  function tip() {
+    const format = deps.city()?.meta.source?.format;
+    return format === 'cmm' ? t('Tip: export the city with CSLModernMap right after you save the game (or save right after exporting), so the save and the export show the same moment.')
+      : format ? t('Tip: export the city with Vellum Bridge right after you save the game (or save right after exporting), so the save and the export show the same moment.')
+      : t('Tip: in the CSLMapView mod options, turn on “Auto export on saving game”. Every time you save, the mod writes a map export of the same moment, so the save and the export always match.');
+  }
   function intro() {
     return `<p class="sim-lede">${t('Enhance your map with real traffic, population, transit, and other data from your Cities: Skylines save.')}</p>
       <div class="tl-actions"><button class="pill primary" data-a="pick">${t('Choose a save (.crp)')}</button></div>
-      <p class="sim-tip">${t('Tip: in the CSLMapView mod options, turn on “Auto export on saving game”. Every time you save, the mod writes a map export of the same moment, so the save and the export always match.')}</p>
+      <p class="sim-tip">${tip()}</p>
       <p class="sim-note">${t('Saves are in the game\'s Saves folder:')}<br><code>~/Library/Application Support/Colossal Order/Cities_Skylines/Saves</code><br><code>%LOCALAPPDATA%\\Colossal Order\\Cities_Skylines\\Saves</code></p>
       <p class="sim-note">${t('Your files stay on this computer. Nothing is uploaded.')}</p>`;
   }
   function failure(f: SimFailure) {
     const v = f.v;
     const [title, body] =
-      f.code === 'incompatible' ? (v?.reason === 'different-city' ? [t('This save is from a different city'), t('None of this map\'s roads or junctions appear in it. Open this save\'s own map export, or choose the save that belongs to this map.')]
+      f.code === 'skysave-mismatch' ? [t('This .skysave belongs to another export'), t('It was made for a different export of this map. Open the export it was made from, or load the save (.crp) instead.')]
+      : f.code === 'skysave-bad' ? [t('This .skysave couldn\'t be read'), t('It may be damaged or incomplete. Make it again from the save (.crp).')]
+      : f.code === 'skysave-newer' ? [t('This .skysave is from a newer version of Skyline Map'), t('Reload the page to update Skyline Map, then open it again.')]
+      : f.code === 'incompatible' ? (v?.reason === 'different-city' ? [t('This save is from a different city'), t('None of this map\'s roads or junctions appear in it. Open this save\'s own map export, or choose the save that belongs to this map.')]
         : v?.reason === 'empty' ? [t('This save couldn\'t be read'), t('This map has nothing to compare against.')]
         : [t('This save is too far apart in time'), t('It is the same city, but only {pct}% of the map\'s roads and buildings are unchanged in the save. Choose the save made at the same time as this export.', { pct: Math.floor(100 * Math.min(v?.share.segments ?? 0, v?.share.buildings ?? 0)) })])
       : f.code === 'not-crp' ? [t('This isn\'t a Cities: Skylines save'), t('Choose a .crp file from the game\'s Saves folder.')]
@@ -251,7 +334,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
       : [t('This save couldn\'t be read'), t('It may be damaged, or a mod changed how the game stores this data.')];
     return `<div class="sim-status bad"><b>${esc(title)}</b><p>${esc(body)}</p>${f.save?.city ? `<p class="sim-note">${esc(t('Save: {city}', { city: f.save.city }))}${f.save.gameDate ? ' · ' + esc(t('In game {date}', { date: fmtDate(f.save.gameDate) })) : ''}</p>` : ''}</div>
       <div class="tl-actions"><button class="pill primary" data-a="pick">${t('Choose another save')}</button></div>
-      <p class="sim-tip">${t('Tip: in the CSLMapView mod options, turn on “Auto export on saving game”. Every time you save, the mod writes a map export of the same moment, so the save and the export always match.')}</p>`;
+      <p class="sim-tip">${tip()}</p>`;
   }
   function status(d: SimData) {
     const v = d.v;
@@ -259,6 +342,7 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     return `<div class="sim-status ${near ? 'near' : 'ok'}"><b>${t(near ? 'Close match' : 'Matches this map')}</b>
       <p>${esc(near ? t('Some objects differ between the two files: they were built, removed or changed in between. Simulation values appear only where the two match exactly.') : t('Every road, junction and building on the map was found in the save, unchanged.'))}</p>
       ${near ? `<p class="sim-note">${esc(t('{roads} of {nroads} roads and {blds} of {nblds} buildings match.', { roads: num(v.segments.verified), nroads: num(v.segments.exported), blds: num(v.buildings.verified), nblds: num(v.buildings.exported) }))}</p>` : ''}
+      ${d.savedLanes?.roads ? `<p class="sim-note">${esc(d.savedLanes.exact >= d.savedLanes.roads ? t('Directions now use this save\'s lanes and one-way streets.') : t('Directions now use this save\'s lanes and one-way streets on {pct}% of the road network (by length). The rest are still estimated from road types.', { pct: Math.floor(100 * d.savedLanes.lenShare) }))}</p>` : ''}
       <p class="sim-note">${[d.save.city ? esc(t('Save: {city}', { city: d.save.city })) : '', d.save.gameDate ? esc(t('In game {date}', { date: fmtDate(d.save.gameDate) })) : '', d.save.savedAt ? esc(t('Saved {date}', { date: fmtDate(d.save.savedAt, true) })) : ''].filter(Boolean).join(' · ')}</p></div>`;
   }
   function rulesInfo(d: SimData) {
@@ -313,10 +397,11 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     else if (!st.data) body = intro();
     else {
       const d = st.data;
-      const un = d.unavailable.map((k) => t(k === 'buildings' ? 'building occupancy' : k === 'transit' ? 'transit ridership' : k === 'tmpe' ? 'traffic rules' : k === 'city' ? 'city statistics' : 'map layers'));
+      const un = d.unavailable.map((k) => t(k === 'buildings' ? 'building occupancy' : k === 'transit' ? 'transit ridership' : k === 'tmpe' ? 'traffic rules' : k === 'city' ? 'city statistics' : k === 'vehicles' ? 'traffic by direction' : 'map layers'));
       body = status(d) + rulesInfo(d) + layerPicker(d) + cityStats(d) + ridership(d) +
         (un.length ? `<p class="sim-note">${esc(t('Some data couldn\'t be read from this save: {list}.', { list: un.join(', ') }))}</p>` : '') +
-        `<div class="tl-actions sim-foot"><button class="pill" data-a="pick">${t('Choose another save')}</button><button class="pill" data-a="remove">${t('Remove simulation data')}</button></div>`;
+        `<div class="tl-actions sim-foot"><button class="pill" data-a="pick">${t('Choose another save')}</button><button class="pill" data-a="export">${t('Export .skysave')}</button><button class="pill" data-a="remove">${t('Remove simulation data')}</button></div>
+        <p class="sim-note">${esc(t('A .skysave keeps what Skyline Map uses from this save (and your fares and toll prices) in a small file that opens with this map export.'))}</p>`;
     }
     el.innerHTML = `${head}<div class="sim-scroll">${body}</div>`;
     sheet.refresh();
@@ -326,9 +411,19 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     const a = (tg.closest('[data-a]') as HTMLElement | null)?.dataset.a;
     if (a === 'close') return close();
     if (a === 'pick') return input.click();
+    if (a === 'export') {
+      void skysave(true).then((b) => {
+        if (!b) return;
+        const name = skysaveName(), url = URL.createObjectURL(b), link = document.createElement('a');
+        link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        deps.toast(t('Exported {file}', { file: name }));
+      });
+      return;
+    }
     if (a === 'remove') { clear(); st.fail = null; st.layer = 'none'; render(); deps.toast(t('Simulation data removed')); return; }
     const l = (tg.closest('[data-layer]') as HTMLElement | null)?.dataset.layer as Layer | undefined;
     if (l) { st.layer = l; draw(); render(); return; }
+    if (tg.matches('[data-tstyle]')) { deps.onTrafficStyle?.((tg as HTMLInputElement).checked ? 'simple' : 'gradient'); return; }
     const line = (tg.closest('[data-line]') as HTMLElement | null)?.dataset.line;
     if (line) deps.selectLine(+line);
   });
@@ -353,18 +448,43 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     if (has(b.residents) || has(b.workers)) rows += row('Happiness', pct(b.happiness[i]));
     return section(rows);
   }
-  function roadHtml(id: number) {
+  /** `oneWay`: the road carries traffic one way only (then its single value is that direction's) */
+  function roadHtml(id: number, oneWay = false) {
     const d = st.data;
     if (!d) return '';
-    const tv = st.traffic.get(id);
-    if (tv === undefined) return unmatched();
-    let rows = row('Traffic', pct(tv));
+    const tv = st.traffic.get(id), f = d.roadFacts?.get(id);
+    if (tv === undefined && !f) return unmatched();
+    let rows = '';
+    // .vellummap: the road type the save names, and its lanes where Skyline Map knows that type (same values as a .cslmap)
+    if (f) {
+      rows += row('Road type', f.prefab);
+      if (f.lanes !== undefined) {
+        if (f.lanes) rows += row('Lanes', num(f.lanes));
+        if (f.speed) rows += row('Speed limit', fmtSpeed(f.speed));
+        if (f.oneway) rows += row('One-way', t('Yes'));
+      }
+      if (f.bike) rows += row('Bike lane', t('Yes'));
+    }
+    if (tv !== undefined) rows += row('Traffic', pct(tv));
+    // Directional display: what this road has, by direction: an estimate, the combined value as fallback, or nothing
+    let dirNote = '';
+    if (st.mode === 'directional' && tv !== undefined && !oneWay) {
+      const x = st.dir.get(id);
+      if (x?.ok) {
+        const head = (o: number) => t(COMPASS[o % 8]);
+        const side = (v: number, q: boolean) => pct(v) + (q ? ' · ' + t('waiting at the lights') : '');
+        rows += `<div class="p-row sub"><span>${esc(head(x.h))}</span><span>${esc(side(x.f, !!(x.q & 1)))}</span></div><div class="p-row sub"><span>${esc(head(x.h + 4))}</span><span>${esc(side(x.b, !!(x.q & 2)))}</span></div>`;
+        dirNote = t('Directions are estimated from the vehicles in your save, not measured by the game.');
+      } else rows += row('By direction', x ? t('Not enough vehicles to tell: combined value shown') : d.trafficDir ? t('Not available for this road') : t('Not available for this save'));
+    }
     const tm = st.tm.get(id);
     if (tm) {
       if (tm.kmh.length) rows += row('Speed limit (TM:PE)', tm.kmh.map((k) => (k >= 1000 ? t('No limit') : fmtSpeed(k))).join(' · '));
       else if (tm.typeDefault !== null) rows += row('Default speed for this road type (TM:PE)', fmtSpeed(tm.typeDefault));
       if (tm.parking && !(tm.parking[0] && tm.parking[1])) rows += row('Parking', tm.parking[0] || tm.parking[1] ? t('One side only') : t('Not allowed'));
     }
+    if (dirNote) rows += `<p class="p-sim-note">${esc(dirNote)}</p>`;
+    if (f && f.lanes === undefined && f.prefab) rows += `<p class="p-sim-note">${esc(t('Skyline Map doesn\'t know this road type, so its lanes and speed limit aren\'t shown.'))}</p>`;
     return section(rows);
   }
   function lineHtml(id: number) {
@@ -383,15 +503,33 @@ export function createSim(map: MLMap, deps: { worker: Worker; city: () => BuiltC
     isOpen: () => st.open,
     /** the worker's router follows this save's traffic rules */
     hasRules: () => !!st.data?.rulesSummary,
+    /** the traffic map layer is shown */
+    trafficShown: () => !!st.data?.traffic && st.layer === 'traffic',
+    /** the save's vehicles gave traffic by direction (format 121034, right-hand traffic, directions confirmed) */
+    hasTrafficDir: () => !!st.data?.trafficDir?.ids.length,
+    /** how the traffic layer and road panels show traffic: the game's value per road (default) or the estimate per direction */
+    /** gradient (every matched road, green to red) or simple (only slowdowns: yellow, red, dark red) */
+    setTrafficStyle(s: TrafficStyle) { if (s === st.style) return; st.style = s; if (st.data?.traffic && st.layer === 'traffic') draw(); syncChip(); if (st.open) render(); },
+    setTrafficMode(m: TrafficMode) { if (m === st.mode) return; st.mode = m; if (st.data?.traffic && st.layer === 'traffic') draw(); syncChip(); if (st.open) render(); },
+    /** show or hide the traffic map layer (Layers menu); does nothing without a save's traffic */
+    showTraffic(on: boolean) { if (!st.data?.traffic) return; st.layer = on ? 'traffic' : 'none'; draw(); syncChip(); if (st.open) render(); },
     /** densities of matched roads are loaded in the worker's router, for traffic-aware routing */
     hasTraffic: () => !!st.data?.traffic?.ids.length,
     loaded: () => !!st.data,
+    /** .vellummap: the share of driving roads routed on this save's real lanes, or null */
+    savedLanes: () => (st.data?.savedLanes?.roads ? st.data.savedLanes.lenShare : null),
+    /** .vellummap: share of road length whose bike lanes the save tells (same roads as savedLanes), or null without a save */
+    bikeShare: () => (st.data?.roadFacts && st.data.savedLanes?.roads ? st.data.savedLanes.lenShare : null),
+    /** .vellummap: what the save says about one road */
+    roadFact: (id: number) => st.data?.roadFacts?.get(id),
     /** a new map was opened: simulation data belonged to the old one */
     reset() { clear(); st.fail = null; st.busy = false; st.id++; st.layer = 'none'; close(); },
     /** re-draw overlays after the style changed */
     refresh() { if (st.data && st.layer !== 'none' && !map.getLayer(st.layer === 'traffic' ? TRAFFIC : RASTER)) draw(); },
     pick: () => { open(); input.click(); },
-    /** load a save kept from an earlier visit */
+    /** load a save kept from an earlier visit (a .crp or a .skysave) */
     load: (f: File) => load(f),
+    /** the loaded save as a .skysave, and a file name for it (null when none is loaded) */
+    skysave: async (withContext: boolean) => { const b = await skysave(withContext); return b ? { file: skysaveName(), blob: b } : null; },
   };
 }

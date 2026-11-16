@@ -3,6 +3,8 @@
 // space is exactly one metre of map scale, so fill-extrusion heights, scale
 // bars and widths all stay physically correct.
 
+/** compass headings by octant from east, counter-clockwise (i18n keys, listed in closure.ts) */
+export const COMPASS = ['Heading east', 'Heading northeast', 'Heading north', 'Heading northwest', 'Heading west', 'Heading southwest', 'Heading south', 'Heading southeast'];
 export type XY = [number, number];
 
 const R = 6378137;
@@ -10,6 +12,8 @@ const DEG = 180 / Math.PI;
 
 export const HALF = 8640; // 9x9 tiles of 1920 m
 export const MAP_SIZE = HALF * 2;
+/** drawn road classes (build.ts classify) that carry cars: stands in for car lanes where a file has no lane table */
+export const ROAD_CLASSES = new Set(['motorway', 'motorway_link', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service', 'track', 'raceway', 'inherit']);
 
 const r7 = (v: number) => Math.round(v * 1e7) / 1e7;
 

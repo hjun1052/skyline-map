@@ -49,8 +49,8 @@ body=f'''
         <p>The file is named after your city, for example <code>Sarrant-20261107-234707.cslmap</code> when timestamps are on, or <code>.cslmap.gz</code> when compression is on. If your Steam library lives somewhere else, see <a href="/blog/where-cslmapview-saves-files">where CSLMapView saves your files</a> for a quick way to get there.</p>
 
         <h2>Step 3: open it in Skyline Map</h2>
-        <p>Go to <a href="/">skyline.codz.me</a> and drop the file on the page, or click the drop zone and pick it. The start screen also shows the folder for your system with a button to copy the path, and the shortcut that jumps straight to it in the file picker.</p>
-        {fig('e-welcome', 'The Skyline Map start screen with its drop zone', 'The start screen. Drop a .cslmap or .cslmap.gz file.', '(min-width: 50rem) 560px, 100vw')}
+        <p>Go to <a href="/">skyline.codz.me</a> and drop the file anywhere on the page, or click <b>Choose a .cslmap file</b> and pick it. The start screen also shows the folder for your system with a button to copy the path, and the shortcut that jumps straight to it in the file picker.</p>
+        {fig('e-welcome', 'The Skyline Map start screen with its Choose a .cslmap file button', 'The start screen. Drop a .cslmap or .cslmap.gz file.', '(min-width: 50rem) 560px, 100vw')}
         <p class="note">The file is read inside your browser. It isn't uploaded anywhere, so it works the same for a city you'd rather keep to yourself.</p>
         <p>Large cities take a few seconds to build: the map draws roads, lots, buildings, water, forests and terrain from the raw data, then the transit network on top.</p>
 
@@ -121,13 +121,13 @@ body=f'''
         <p>The same folder holds the mod's Windows viewer, CSLMapView.exe, and its language folders. You can ignore those.</p>
 
         <h2>Jump to the folder from a file picker</h2>
-        <p>You don't have to click through all those folders. Copy the path above, open the file picker (in Skyline Map, click the drop zone), then:</p>
+        <p>You don't have to click through all those folders. Copy the path above, open the file picker (in Skyline Map, click <b>Choose a .cslmap file</b>), then:</p>
         <ul>
           <li><b>macOS:</b> press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd>, paste with <kbd>⌘</kbd><kbd>V</kbd> and press <kbd>Return</kbd>.</li>
           <li><b>Windows:</b> press <kbd>Alt</kbd><kbd>D</kbd> to reach the address bar, paste with <kbd>Ctrl</kbd><kbd>V</kbd> and press <kbd>Enter</kbd>.</li>
           <li><b>Linux</b> (GTK file chooser): press <kbd>Ctrl</kbd><kbd>L</kbd>, paste and press <kbd>Enter</kbd>.</li>
         </ul>
-        {fig('e-welcome', 'The Skyline Map start screen with its drop zone', 'Skyline Map shows the folder for your system, with a copy button, right under the drop zone.', '(min-width: 50rem) 560px, 100vw')}
+        {fig('e-welcome', 'The Skyline Map start screen with its Choose a .cslmap file button', 'On the Skyline Map start screen, Need your file? shows the folder for your system, with a copy button.', '(min-width: 50rem) 560px, 100vw')}
 
         <h2>No file in the folder?</h2>
         <ul>

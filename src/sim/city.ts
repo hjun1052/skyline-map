@@ -88,7 +88,7 @@ interface District0 {
   educated: number[][]; education: number[]; production: number[]; ground: number[]; tourist: number[][]; library: number;
 }
 
-function readDistricts(sd: SaveData): District0 {
+function readDistricts(sd: SaveData, all?: { pop: Map<number, number>; grid?: Uint8Array }): District0 {
   const sec = section(sd, 'DistrictManager');
   if (!sec) throw new SaveError('corrupt', 'DistrictManager section missing');
   const { s, end } = sec;
@@ -123,10 +123,12 @@ function readDistricts(sd: SaveData): District0 {
     if (s.bool()) s.ustr(); // style
     const library = fields(s, AGE)[1];
     s.i8(); // airline
+    all?.pop.set(i, pop);
     if (i === 0) d0 = { pop, happiness, crime, ages, eligible, alive, homeOrWork, births, deaths, educated, education, production, ground, tourist, library };
   }
   for (let i = 0; i < PARKS; i++) if (pflags[i]) skipPark(s, i);
-  s.eaU8(GRID * 8); s.eaU8(GRID * 8); // district / park grids
+  const grid = s.eaU8(GRID * 8); s.eaU8(GRID * 8); // district / park grids
+  if (all) all.grid = grid;
   for (let i = 0; i < 19; i++) s.obj();
   s.u32(); s.u32(); s.u32();
   endSection(s, end, 'DistrictManager');
@@ -223,4 +225,12 @@ export function readCityStats(sd: SaveData): CityStats {
     landValue: d.ground[2], groundPollutionPct: Math.trunc(d.ground[4] * 100 / 255),
     taxRates: { residentialLow: tax[40], residentialHigh: tax[45], commercialLow: tax[50], commercialHigh: tax[55], industrial: tax[10], office: tax[35] },
   };
+}
+
+/** Every district's population and the 512² district grid (4 id planes, then 4 alpha planes), for checking a
+ *  .vellummap's own district data against the save (tools/vellum-sim-check.ts). */
+export function readDistrictData(sd: SaveData): { pop: Map<number, number>; grid: Uint8Array } {
+  const all: { pop: Map<number, number>; grid?: Uint8Array } = { pop: new Map() };
+  readDistricts(sd, all);
+  return { pop: all.pop, grid: all.grid! };
 }

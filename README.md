@@ -14,12 +14,14 @@
 - **A real map:** roads at their true width, buildings and lots, water, forests, terrain and labels, in Default, Terrain and Night styles, with 3D buildings.
 - **Search and info panels:** stations, districts, roads, buildings and lines.
 - **Directions:** by car, transit, walking and bike, with alternatives, turn-by-turn steps, transfers, tolls and fares.
-- **Navigation simulation:** drive a car route virtually with a tilted follow camera, turn-by-turn banner, optional voice guidance (English, Korean, Russian) and playback controls.
+- **Navigation simulation:** drive a car route virtually with a tilted follow camera, turn-by-turn banner, optional voice guidance (English, Korean, Russian) and playback controls. With a matched save: traffic colours on the route, "+N min" callouts on sustained traffic, and the traffic lights and stop/yield signs facing you at each junction.
 - **Transit map:** a metro-style schematic drawn automatically from your lines.
 - **How far can I get?** Areas reachable in 15, 30, 45 or 60 minutes.
 - **What if it closes?** Close a road, bridge or station and see which trips and lines break.
 - **City time-lapse:** watch the city grow across older exports.
-- **Save file (optional):** load your `.crp` save for traffic, line ridership, land value, noise, crime and pollution. Directions then follow your TM:PE one-ways, speed limits, U-turn bans and lane arrows, with an optional traffic-aware mode.
+- **Save file (optional):** load your `.crp` save for traffic, line ridership, land value, noise, crime and pollution. Directions then follow your TM:PE one-ways, speed limits, U-turn bans and lane arrows, with an optional traffic-aware mode. Export it as a small `.skysave` (about 1% of the save's size, with your fares and tolls) to reopen or share it with the same map export.
+- **CSLModernMap exports (experimental):** `.cmm` and `.cmm.gz` files open with the full map, lanes, exact one-way streets and speed limits (including TM:PE limits), the game's district boundaries and directions. Transit paths the file leaves out are rebuilt for ferries and walking tours and marked as estimated; ship and airplane lines aren't drawn. See `docs/research/cmm-format.md`.
+- **Vellum Bridge exports:** `.vellummap` files open as a map, with approximate directions. These files have no lane data, so speeds and one-way streets are estimated from each road's type and every route is labelled approximate. Adding the save (`.crp`) the export was made from brings traffic, ridership, the overlays and city statistics, and routes on the save's real lanes and one-way streets.
 - **English, Korean and Russian** interface, desktop and phone layouts, with metric or imperial units.
 
 Everything runs in the browser. Map and save files are read on the visitor's own device and never uploaded. Cities: Skylines 1 only.
@@ -35,7 +37,7 @@ npm ci
 npm run dev
 ```
 
-Open the address Vite prints and click **Try a sample city**, or drop in your own `.cslmap` file.
+Open the address Vite prints and click **Try the sample city**, or choose or drop your own `.cslmap` file.
 
 The dev server also lists the exports in your CSLMapView folder on the start screen. On macOS it looks in `~/Library/Application Support/Steam/steamapps/common/Cities_Skylines/CSLMapView`; set `CSLMAP_DIR=/path/to/folder` to use another folder.
 

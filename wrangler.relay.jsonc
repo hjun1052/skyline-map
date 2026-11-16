@@ -1,0 +1,21 @@
+{
+  // Production: the app plus the Send to Phone relay. `npm run deploy` and the deploy workflow build with
+  // VITE_SEND_TO_PHONE=1 and deploy this. The relay needs the RELAY_SECRET Worker secret (without it, it refuses
+  // everything). wrangler.jsonc is the same site without the relay: deploying it switches Send to Phone off
+  // (docs/send-to-phone-billing.md, section 6).
+  // Locally: VITE_SEND_TO_PHONE=1 npm run build, then the relay-* configurations in .claude/launch.json.
+  // name, compatibility_date, assets and routes must match wrangler.jsonc (npm run check:phone checks this).
+  "name": "skyline-atlas",
+  "compatibility_date": "2026-10-01",
+  // only /relay/* runs the worker (worker/index.ts); every other request is served from ./dist as a static asset,
+  // which is free and unlimited and never invokes the worker
+  "main": "worker/index.ts",
+  "assets": { "directory": "./dist", "not_found_handling": "404-page", "binding": "ASSETS", "run_worker_first": ["/relay/*"] },
+  // a Durable Object per transfer room (stores only its timestamps and counts, never map data) and one RelayBudget
+  // that caps what the relay may use per UTC day (rooms opened, bytes forwarded)
+  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "TransferRoom" }, { "name": "BUDGET", "class_name": "RelayBudget" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TransferRoom", "RelayBudget"] }],
+  // per-IP (per-/64) relay requests, checked in the worker before any Durable Object request (approximate, per location)
+  "ratelimits": [{ "name": "RELAY_LIMIT", "namespace_id": "73001", "simple": { "limit": 30, "period": 60 } }],
+  "routes": [{ "pattern": "skyline.codz.me", "custom_domain": true }]
+}
