@@ -49,6 +49,8 @@ jobs:
         run: npm run check:traffic-style
       - name: Chip rows scroll with a mouse
         run: npm run check:hscroll
+      - name: Routes follow TM:PE lane connections
+        run: npm run check:lane-route
       - name: Relay worker type check
         run: npx tsc -p worker
       - name: Build with Send to Phone switched on (not deployed)

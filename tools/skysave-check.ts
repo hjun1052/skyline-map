@@ -47,7 +47,7 @@ const sim = {
   unavailable: [],
   rules: {
     oneway: new Map([[7, 1]]), speed: new Map([[7, [50, null]]]), carRestrict: new Map([[7, [false, true]]]), restrictFactor: null,
-    uturnBan: [{ seg: 7, node: 2 }], turnBan: [{ from: 7, node: 2, to: 7 }], trackLimit: new Map([[7, new Map([['Car', 60]])]]),
+    uturnBan: [{ seg: 7, node: 2 }], turnBan: [{ from: 7, node: 2, to: 7 }], laneMoves: [{ from: 7, node: 2, to: 8, lanes: [4, 5], targets: [[5], null] }], trackLimit: new Map([[7, new Map([['Car', 60]])]]),
     summary: { oneway: 1, speed: 1, carRestrict: 1, restrictBan: false, uturnBan: 1, turnBan: 1, track: 1, leftHand: false, tmpe: true },
   },
   rulesSummary: { oneway: 1, speed: 1, carRestrict: 1, restrictBan: false, uturnBan: 1, turnBan: 1, track: 1, leftHand: false, tmpe: true },
@@ -96,6 +96,12 @@ async function unit() {
   const mm = await loadSkysave(bytes, other, step);
   ok(!mm.ok && mm.code === 'skysave-mismatch', 'refused for another export of the map (a road joined differently)');
   ok(!(await loadSkysave(bytes, { ...city, generated: 'later' } as CityData, step)).ok, 'refused for a later export of the same map');
+  // lane moves (issue #26): a file made before them still has its rules; a malformed one loses them
+  const { laneMoves: _lm, ...preLanes } = (sim as any).rules;
+  const pre = await loadSkysave(await encodeSkysave({ ...file, sim: { ...sim, rules: preLanes } as any }), city, step) as any;
+  ok(pre.ok && pre.rules && pre.rules.laneMoves === undefined && pre.rules.turnBan.length === 1, 'rules from before lane moves still load');
+  const badLanes = await loadSkysave(await encodeSkysave({ ...file, sim: { ...sim, rules: { ...(sim as any).rules, laneMoves: [{ from: 7, node: 2, to: 8, lanes: [4], targets: [[40]] }] } } as any }), city, step) as any;
+  ok(badLanes.ok && badLanes.rules === undefined && badLanes.unavailable.includes('rules'), 'a lane move naming a lane a mask can\'t hold drops the rules');
   // a part that doesn't check out is left out, like an unreadable part of a .crp; the rest still loads
   const broken = await loadSkysave(await encodeSkysave({ ...file, sim: { ...sim, traffic: { ids: Uint16Array.from([7, 8]), pct: Uint8Array.from([1]) }, controls: [{ seg: 7, node: 2, kind: 'banana' }], grids: { ...sim.grids, pollution: new Uint8Array(5) } } as any }), city, step) as any;
   ok(broken.ok && broken.traffic === null && broken.controls === null && broken.grids === null && broken.buildings !== null, 'malformed parts are dropped, the rest loads');

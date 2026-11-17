@@ -165,6 +165,18 @@ async function main() {
       moves++; if (banSet.has(a.id + ':' + n + ':' + b.id)) against++;
     }
     check(rules.turnBan.length > 0 && against === 0 && moves > 100000, `lane-arrow/connection turn bans (${rules.turnBan.length}) agree with ${trips.length} car trips the game routed (${moves} turns, ${against} against a ban)`);
+    // Lane moves (issue #26): where a move names the lanes a connected lane leads to, the game's cars take one of them
+    const laneMove = new Map((rules.laneMoves ?? []).map((m) => [m.from + ':' + m.node + ':' + m.to, m]));
+    let laneHops = 0, laneAgainst = 0;
+    for (const { pos } of trips) for (let i = 2; i < pos.length; i++) { // (not out of the first segment: TM:PE's start lanes)
+      const [sa, la] = pos[i - 1], [sb, lb] = pos[i]; if (sa === sb) continue;
+      const a = segOf.get(sa), b = segOf.get(sb); if (!a || !b) continue;
+      const n = [a.sn, a.en].find((x) => x === b.sn || x === b.en); if (n === undefined) continue;
+      const m = laneMove.get(sa + ':' + n + ':' + sb), k = m ? m.lanes.indexOf(la) : -1, tg = k >= 0 ? m!.targets[k] : null;
+      if (!tg) continue;
+      laneHops++; if (!tg.includes(lb)) laneAgainst++;
+    }
+    check((rules.laneMoves?.length ?? 0) > 0 && laneHops > 50 && laneAgainst <= laneHops * 0.01, `lane moves (${rules.laneMoves?.length}) agree with the lanes the game's cars take (${laneHops} moves out of connected lanes, ${laneAgainst} into another lane)`);
     // U-turns: a trip that turns back along a segment shows two positions on it in lanes of opposite direction. At a
     // trip's start and end the game places the car on a lane beside the building, so only mid-trip turns count.
     const uBan = new Set(rules.uturnBan.map((u) => u.seg + ':' + u.node));
@@ -183,14 +195,14 @@ async function main() {
       }
     }
     check(uturns > 20 && uAgainst === 0, `U-turn bans agree with car trips: ${uturns} mid-trip U-turns the game routed, ${uAgainst} at a banned segment end`);
-    const noTurns = new Router(c, built.stopNames ?? new Map(), ow, tolls); noTurns.applyRules({ ...rules, turnBan: [] });
+    const noTurns = new Router(c, built.stopNames ?? new Map(), ow, tolls); noTurns.applyRules({ ...rules, turnBan: [], laneMoves: [] });
     let lost = 0, turnChanged = 0;
     for (const [p, q] of ends) {
       const a = noTurns.route(p, q, 'drive')[0], b = ruled.route(p, q, 'drive')[0];
       if (a && !b) lost++;
       if (a && b && a.dist !== b.dist) turnChanged++;
     }
-    check(lost === 0, `turn bans never make a reachable trip unreachable (${ends.length} drives; ${turnChanged} take another way)`);
+    check(lost === 0, `turn bans and lane moves never make a reachable trip unreachable (${ends.length} drives; ${turnChanged} take another way)`);
     // clearing restores reach and transit exactly too
     const ruled3 = new Router(c, built.stopNames ?? new Map(), ow, tolls); ruled3.applyRules(rules); ruled3.clearRules();
     let reachSame = 0, transitSame = 0;
