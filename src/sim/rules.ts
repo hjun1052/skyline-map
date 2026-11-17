@@ -319,8 +319,10 @@ function laneRules(city: CityData, net: SaveNet, seg: Uint8Array, tmpe: TmpeData
       const b = byId.get(m.to)!, n2 = b.sn === n ? b.en : b.sn, k = m.to + ':' + n2 + ':' + next;
       if (!seen.has(k)) { seen.add(k); queue.push([m.to, n2, next]); }
     }
-    // a segment end entered in some lanes only keeps its moves even if none narrows further: its arrows may still ban a turn
-    if ((narrows || mask !== -1) && !kept.has(a + ':' + n)) { kept.add(a + ':' + n); laneMoves.push(...r.moves); }
+    // kept where they narrow the lanes, where the end is entered in some lanes only (its arrows may still ban a turn), and
+    // where connections alone ban a move: on a middle node or a sharp turn, which turn bans leave undecided
+    const bans = mask === -1 && r.moves.some((m) => laneStep(m, -1) === -1);
+    if ((narrows || bans || mask !== -1) && !kept.has(a + ':' + n)) { kept.add(a + ':' + n); laneMoves.push(...r.moves); }
   };
   for (const k of conn.keys()) {
     const [lane, node] = k.split(':').map(Number), a = laneSeg.get(lane);

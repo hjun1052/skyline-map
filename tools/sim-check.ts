@@ -15,6 +15,7 @@ import { readBuildings } from '../src/sim/buildings';
 import { readGrids } from '../src/sim/grids';
 import { validate } from '../src/sim/validate';
 import { buildRules } from '../src/sim/rules';
+import { laneStep } from '../src/sim/lanes';
 import { readTmpe } from '../src/sim/tmpe';
 import { Router } from '../src/router';
 import { trafficFactor } from '../src/sim/traffic';
@@ -176,7 +177,8 @@ async function main() {
       if (!tg) continue;
       laneHops++; if (!tg.includes(lb)) laneAgainst++;
     }
-    check((rules.laneMoves?.length ?? 0) > 0 && laneHops > 50 && laneAgainst <= laneHops * 0.01, `lane moves (${rules.laneMoves?.length}) agree with the lanes the game's cars take (${laneHops} moves out of connected lanes, ${laneAgainst} into another lane)`);
+    // (1 in the reference save: a car that took another lane than its connection names, for a reason not found)
+    check((rules.laneMoves?.length ?? 0) > 0 && laneHops > 50 && laneAgainst <= 1, `lane moves (${rules.laneMoves?.length}) agree with the lanes the game's cars take (${laneHops} moves out of connected lanes, ${laneAgainst} into another lane)`);
     // U-turns: a trip that turns back along a segment shows two positions on it in lanes of opposite direction. At a
     // trip's start and end the game places the car on a lane beside the building, so only mid-trip turns count.
     const uBan = new Set(rules.uturnBan.map((u) => u.seg + ':' + u.node));
@@ -236,7 +238,8 @@ async function main() {
     check(offSame === 40, `traffic loaded but switched off: drive routes identical (${offSame}/40)`);
     tr.setTraffic(true);
     // switched on: never faster than without; the comparison time is the same route without traffic; rules still hold
-    let found = 0, slower = 0, pathChanged = 0, badCmp = 0, faster = 0, illegal = 0;
+    let found = 0, slower = 0, pathChanged = 0, badCmp = 0, faster = 0, illegal = 0, laneIllegal = 0;
+    const nodeIds = (tr as any).nodeIds as number[], laneMoveOf = new Map((rules.laneMoves ?? []).map((m) => [m.from + ':' + m.node + ':' + m.to, m]));
     const nodeOf = (tr as any).nodeIdx as Map<number, number>;
     const uBan = new Set(rules.uturnBan.map((u) => u.seg + ':' + nodeOf.get(u.node))), tBan = new Set(rules.turnBan.map((b) => b.from + ':' + nodeOf.get(b.node) + ':' + b.to));
     for (const [p, q] of ends) {
@@ -258,9 +261,19 @@ async function main() {
         if (prev && prev.e === st.e && uBan.has(e.id + ':' + (prev.fwd ? e.b : e.a))) illegal++;
         if (prev && i > 1 && prev.e !== st.e && tBan.has((tr as any).edges[prev.e].id + ':' + (prev.fwd ? (tr as any).edges[prev.e].b : (tr as any).edges[prev.e].a) + ':' + e.id)) illegal++;
       });
+      // and the lanes TM:PE's lane connections leave a car in (the first turn starts in any lane)
+      let mask = -1;
+      for (let i = 2; i < path.length; i++) {
+        const pe = (tr as any).edges[path[i - 1].e], e = (tr as any).edges[path[i].e];
+        if (pe === e) { mask = -1; continue; }
+        const m = laneMoveOf.get(pe.id + ':' + nodeIds[path[i - 1].fwd ? pe.b : pe.a] + ':' + e.id);
+        const next = m ? laneStep(m, mask) : 0;
+        if (next === -1) { illegal++; laneIllegal++; break; }
+        mask = next === 0 ? -1 : next;
+      }
     }
     check(found > 100 && badCmp === 0 && faster === 0, `traffic on: ${found} drives; the without-traffic time is the same route's, never better than the best route without traffic`);
-    check(illegal === 0, 'traffic never overrides a rule: no one-way, U-turn or lane-arrow ban broken, no trip lost or gained');
+    check(illegal === 0 && laneMoveOf.size > 0, `traffic never overrides a rule: no one-way, U-turn, lane-arrow or lane-connection ban broken (${laneIllegal} lane), no trip lost or gained`);
     check(slower > 0 && pathChanged > 0, `traffic changes ETAs and paths: ${slower} drives at least 30 s slower, ${pathChanged} take another way`);
     // other modes are untouched
     let other = 0;

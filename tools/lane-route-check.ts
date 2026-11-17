@@ -71,6 +71,12 @@ ok(has(segsOf(laned, onW, onC), [2, 3]), 'from W, which joins B in any lane, the
 const e = segsOf(laned, startQ, onE);
 ok(e.length > 0 && !has(e, [1, 2, 5]) && !has(e, [1, 2, 3]), `the ramp's lane can't go straight on or right, yet E is reached (${e.join(',')})`);
 ok(has(segsOf(laned, startQ, [300, 120]), [1, 2, 4]), 'and the left turn the lane allows is taken directly');
+// a stop on B just after the ramp: driving on, the car is still in the lane it arrived in
+const stopB: XY = [60, 0];
+const vp = plain.routeVia([startQ, stopB, onC], 'drive')[0], vl = laned.routeVia([startQ, stopB, onC], 'drive')[0];
+ok(!!vp && !!vl && vl.time > vp.time + 20, `a stop after the ramp doesn't lift its lane: still no right turn into C (${vl ? Math.round(vl.time) : '-'} s vs ${vp ? Math.round(vp.time) : '-'} s)`);
+const vw = laned.routeVia([onW, stopB, onC], 'drive')[0], vwp = plain.routeVia([onW, stopB, onC], 'drive')[0];
+ok(!!vw && !!vwp && Math.abs(vw.time - vwp.time) < 1, 'arriving at the stop from W (any lane), the right turn is still taken');
 // reach and node-to-node routes follow the same lanes
 const idx = (laned as any).nodeIndex.bind(laned) as (id: number) => number;
 const rp = plain.reachTimes(startQ, 'drive', 3600), rl = laned.reachTimes(startQ, 'drive', 3600);
