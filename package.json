@@ -38,7 +38,8 @@
     "check:route-ends": "tsx tools/route-ends-check.ts",
     "check:route-stops": "tsx tools/route-stops-check.ts",
     "check:nav-traffic": "tsx tools/nav-traffic-check.ts",
-    "check:hscroll": "tsx tools/hscroll-check.ts"
+    "check:hscroll": "tsx tools/hscroll-check.ts",
+    "check:lane-route": "tsx tools/lane-route-check.ts"
   },
   "author": "",
   "license": "AGPL-3.0-only",

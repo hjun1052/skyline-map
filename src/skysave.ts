@@ -157,6 +157,8 @@ const str = (x: unknown, max = 400): x is string => typeof x === 'string' && x.l
 const allTA = <T extends TA>(o: any, keys: readonly string[], T: { new (...a: any[]): T }) => keys.every((k) => o[k] instanceof T);
 const sameLen = (o: any, keys: readonly string[]) => keys.every((k) => o[k].length === o[keys[0]].length);
 const pair = (x: unknown, f: (v: unknown) => boolean) => Array.isArray(x) && x.length === 2 && f(x[0]) && f(x[1]);
+/** a target lane index a lane mask can hold (sim/lanes.ts; a lane past it is always `null`, any lane) */
+const lane = (v: unknown) => isInt(v) && (v as number) >= 0 && (v as number) < 30;
 const UNAVAILABLE = new Set(['transit', 'vehicles', 'buildings', 'tmpe', 'rules', 'controls', 'city', 'grids']);
 const VERDICTS = new Set(['match', 'near']), REASONS = new Set(['same', 'differs', 'too-different', 'different-city', 'empty']);
 
@@ -180,6 +182,10 @@ const check: { [K in keyof Skysave['sim']]?: (x: any) => boolean } = {
     && numOrNull(x.restrictFactor)
     && Array.isArray(x.uturnBan) && x.uturnBan.every((u: any) => isObj(u) && isInt(u.seg) && isInt(u.node))
     && Array.isArray(x.turnBan) && x.turnBan.every((u: any) => isObj(u) && isInt(u.from) && isInt(u.node) && isInt(u.to))
+    // (absent in files made before lane moves: the router then keeps to turn bans)
+    && (x.laneMoves === undefined || (Array.isArray(x.laneMoves) && x.laneMoves.every((m: any) => isObj(m) && isInt(m.from) && isInt(m.node) && isInt(m.to)
+      && Array.isArray(m.lanes) && Array.isArray(m.targets) && m.lanes.length === m.targets.length && m.lanes.every(isInt)
+      && m.targets.every((t: any) => t === null || (Array.isArray(t) && t.every(lane))))))
     && x.trackLimit instanceof Map && [...x.trackLimit].every(([k, v]) => isInt(k) && v instanceof Map && [...v].every(([t, n]) => str(t, 40) && isNum(n)))
     && summaryOk(x.summary),
   rulesSummary: (x) => summaryOk(x),

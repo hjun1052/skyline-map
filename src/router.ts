@@ -9,6 +9,7 @@ import { laneAccess, hasVehicle, type Access } from './access';
 import { hopTime, legRideTime, modeParams, type Piece } from './transit-time';
 import { t } from './i18n';
 import type { SimRules } from './sim/rules';
+import { laneStep, type LaneMove } from './sim/lanes';
 import type { ControlKind } from './sim/controls';
 import { trafficFactor } from './sim/traffic';
 
@@ -117,6 +118,10 @@ const DRIVE_DEFAULT: Record<string, number> = { motorway: 100, motorway_link: 60
 const LABEL: Record<string, string> = { motorway: 'highway', motorway_link: 'ramp', trunk: 'expressway', primary: 'main road', secondary: 'road', tertiary: 'road', minor: 'street', service: 'service road', track: 'gravel road', footway: 'path', trail: 'trail', pedestrian: 'pedestrian street' };
 
 const len = (p: XY[]) => { let l = 0; for (let i = 1; i < p.length; i++) l += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]); return l; };
+
+/** lane search states (Router.laneStates) */
+interface LaneStates { base: number[]; mask: number[]; id: Map<number, number>; at: Uint8Array }
+const NO_LANES: LaneStates = { base: [], mask: [], id: new Map(), at: new Uint8Array(0) };
 
 class Heap {
   k: number[] = []; v: number[] = [];
@@ -502,6 +507,7 @@ export class Router {
     if (!S.length || !T.length) return [];
     const out: Route[] = [];
     const penalty = new Map<number, number>();
+    this.arrivalLanes = null;
     // penalty method: re-search with already-used edges made more expensive, keeping only
     // candidates that are genuinely different (≤70% shared with every kept route) and not much slower
     for (let attempt = 0; attempt < 20 && out.length < 3; attempt++) {
@@ -536,6 +542,7 @@ export class Router {
       // a different set of graph edges can still draw the very same line (joins part-way along a road): that is a copy too
       const line = r.legs.map((l) => l.coords.map((c) => Math.round(c[0]) + ',' + Math.round(c[1])).join(' ')).join('|'); // to the metre
       const overlap = out.some((o) => { if ((o as any)._line === line) return true; const prev = (o as any)._edges as Set<number>; let sh = 0; for (const e of used) if (prev.has(e)) sh += this.edges[e].len; return sh / r.dist > 0.7; });
+      if (!out.length) this.arrivalLanes = ('endLanes' in found && found.endLanes) || null;
       if (!overlap && (!out.length || r.time <= out[0].time * 1.5)) { (r as any)._edges = used; (r as any)._line = line; out.push(r); }
       // a near-copy means the penalty is too weak to leave a fast road (e.g. an expressway): escalate faster
       for (const e of used) penalty.set(e, (penalty.get(e) ?? 1) * (overlap ? 1.8 : 1.3));
@@ -654,6 +661,59 @@ export class Router {
     if (d === undefined) { d = this.adj[v].filter((ei) => this.allowed(this.edges[ei], 'drive')).length; this.degree.set(v, d); }
     return d;
   }
+  /** search states: two per edge (2 * edge + 1 when driven b→a), then the lane states (see laneStates) */
+  private nStates() { return 2 * this.edges.length + this.lane.base.length; }
+  /** the directed edge (2 * edge + direction) of a search state */
+  private stBase(st: number) { const E2 = 2 * this.edges.length; return st < E2 ? st : this.lane.base[st - E2]; }
+  /** the lane state of directed edge `ns` with lanes `mask`, or the plain directed edge where no search can reach it */
+  private laneState(ns: number, mask: number) { return this.lane.id.get(ns * 2147483648 + mask) ?? ns; }
+  /**
+   * The lane states a search can reach: wherever a lane connection leaves a car in some lanes only (laneMoves), the
+   * directed edge it drives on next with those lanes, and on along the moves those lanes lead to.
+   */
+  private laneStates(moves: Map<number, Map<number, LaneMove>>): LaneStates {
+    if (!moves.size) return NO_LANES;
+    const out: LaneStates = { base: [], mask: [], id: new Map(), at: new Uint8Array(this.pos.length) };
+    const queue: number[] = [];
+    const reach = (from: Edge, v: number, mask: number) => {
+      for (const m of moves.get(from.id * 1048576 + v)?.values() ?? []) {
+        const next = laneStep(m, mask), ei = this.edgeOfSeg.get(m.to);
+        if (next <= 0 || ei === undefined) continue;
+        const e = this.edges[ei];
+        if (e.a === e.b || (e.a !== v && e.b !== v)) continue;
+        const ns = 2 * ei + (e.a === v ? 0 : 1), key = ns * 2147483648 + next;
+        if (out.id.has(key)) continue;
+        out.id.set(key, 2 * this.edges.length + out.base.length);
+        out.base.push(ns); out.mask.push(next); queue.push(out.base.length - 1);
+      }
+    };
+    for (const k of moves.keys()) { const v = k % 1048576; out.at[v] = 1; reach(this.edges[this.edgeOfSeg.get(Math.floor(k / 1048576))!], v, -1); }
+    while (queue.length) {
+      const i = queue.pop()!, ns = out.base[i], e = this.edges[ns >> 1];
+      reach(e, ns & 1 ? e.a : e.b, out.mask[i]);
+    }
+    return out;
+  }
+  /**
+   * The state after turning from state `st` (on inE, at node v) onto edge `ei` in direction `fwd`: the directed edge,
+   * or a lane state where a lane connection leaves the car in some of its lanes only; -1 where no lane the car can be in
+   * leads there. The turn out of a trip's first road (`first`) starts in any lane, as TM:PE's start lanes do.
+   */
+  private laneNext(st: number, inE: Edge, v: number, ei: number, fwd: boolean, first: boolean) {
+    const ns = 2 * ei + (fwd ? 0 : 1);
+    if (first || !this.lane.at[v]) return ns;
+    const m = this.laneMoves.get(inE.id * 1048576 + v)?.get(this.edges[ei].id);
+    if (!m) return ns;
+    const E2 = 2 * this.edges.length, next = laneStep(m, st < E2 ? -1 : this.lane.mask[st - E2]);
+    return next === -1 ? -1 : next === 0 ? ns : this.laneState(ns, next);
+  }
+  /** a search state's lanes, for carrying them on from a stop: null when the car may be in any lane */
+  private lanesOf(st: number) {
+    const E2 = 2 * this.edges.length;
+    if (st < E2) return null;
+    const b = this.lane.base[st - E2];
+    return { e: b >> 1, fwd: !(b & 1), mask: this.lane.mask[st - E2] };
+  }
   /** Seconds lost at a junction: waiting at crossroads, and turning (right < left < U-turn). */
   /** `first`: the turn out of a trip's first road, where TM:PE relaxes lane arrows (CustomPathFind start lanes) */
   private turnCost(inE: Edge, inFwd: boolean, outE: Edge, outFwd: boolean, v: number, first = false) {
@@ -670,7 +730,7 @@ export class Router {
   }
   /** Dijkstra over directed edges, so turns and one-way rules can be charged at each junction. */
   /** Like Google: try the few nearest usable roads at each end, paying for the distance to reach them. */
-  private driveRoute(from: XY, to: XY, penalty: Map<number, number>): { path: { e: number; fwd: boolean }[]; time: number; sHit?: DriveHit; tHit?: DriveHit; bent?: boolean } | null {
+  private driveRoute(from: XY, to: XY, penalty: Map<number, number>): { path: { e: number; fwd: boolean }[]; time: number; sHit?: DriveHit; tHit?: DriveHit; bent?: boolean; endLanes?: Router['arrivalLanes'] } | null {
     // Join the nearest roads where they pass and follow them, one-ways and all, like Google: driving round
     // the block is the real way. Only if that finds no legal route (a point between motorway carriageways)
     // do the nearby junctions become options too, charged double for the straight distance beyond the road.
@@ -786,10 +846,10 @@ export class Router {
    * arrives once it reaches the target point in an allowed direction.
    */
   private driveSearchOn(SH: DriveHit[], TH: DriveHit[], penalty: Map<number, number>) {
-    const E = this.edges.length;
-    const dist = new Float64Array(2 * E).fill(Infinity), prev = new Int32Array(2 * E).fill(-1), seedOf = new Int32Array(2 * E).fill(-1);
+    const NS = this.nStates();
+    const dist = new Float64Array(NS).fill(Infinity), prev = new Int32Array(NS).fill(-1), seedOf = new Int32Array(NS).fill(-1);
     const h = new Heap();
-    const endNode = (st: number) => { const e = this.edges[st >> 1]; return st & 1 ? e.a : e.b; };
+    const endNode = (st: number) => { const b = this.stBase(st), e = this.edges[b >> 1]; return b & 1 ? e.a : e.b; };
     const cost = (ei: number, fwd: boolean) => this.driveCost(this.edges[ei], fwd) * (penalty.get(ei) ?? 1);
     // part of an edge: its time scales with the distance, but a wrong-way penalty is paid in full however
     // short the stretch (else bending a one-way at the very start or end would look nearly free)
@@ -798,13 +858,15 @@ export class Router {
     for (const t of TH) targets.set(t.e, [...(targets.get(t.e) ?? []), t]);
     let best = Infinity, goal: { st: number; from: number; t: DriveHit; s?: DriveHit } | null = null;
     // the part of an edge state's cost from its start to the target point
-    const arrive = (st: number, t: DriveHit) => (st & 1 ? 1 - t.frac : t.frac);
+    const arrive = (st: number, t: DriveHit) => (this.stBase(st) & 1 ? 1 - t.frac : t.frac);
     SH.forEach((s, si) => {
       const e = this.edges[s.e];
       for (const fwd of [true, false]) {
         if (!this.driveOk(e, fwd)) continue;
         if (this.heading && !this.departsAlong(s, fwd)) continue; // leaving a stop: no turning round in the road
-        const st = 2 * s.e + (fwd ? 0 : 1), c = s.extra + part(s.e, fwd, fwd ? 1 - s.frac : s.frac);
+        // leaving a stop on the road it arrived by, in the lanes it arrived in
+        const dl = this.heading ? this.departLanes : null;
+        const st = dl && dl.e === s.e && dl.fwd === fwd ? this.laneState(2 * s.e + (fwd ? 0 : 1), dl.mask) : 2 * s.e + (fwd ? 0 : 1), c = s.extra + part(s.e, fwd, fwd ? 1 - s.frac : s.frac);
         if (c < dist[st]) { dist[st] = c; prev[st] = -1; seedOf[st] = si; h.push(c, st); }
         // the target further along the same road, in this direction
         for (const t of targets.get(s.e) ?? []) {
@@ -818,12 +880,16 @@ export class Router {
       const [d, st] = top;
       if (d > dist[st]) continue;
       if (d >= best) break;
-      const v = endNode(st), inE = this.edges[st >> 1], inFwd = !(st & 1);
+      const sb = this.stBase(st), v = endNode(st), inE = this.edges[sb >> 1], inFwd = !(sb & 1);
       for (const ei of this.adj[v]) {
         const e = this.edges[ei];
         for (const fwd of [true, false]) {
           if ((fwd ? e.a : e.b) !== v || !this.driveOk(e, fwd)) continue;
-          const ns = 2 * ei + (fwd ? 0 : 1), turn = this.turnCost(inE, inFwd, e, fwd, v, prev[st] === -1);
+          // the turn out of a trip's first road starts in any lane (TM:PE start lanes); driving on from a stop it doesn't
+          const first = prev[st] === -1 && !this.heading;
+          const ns = this.laneNext(st, inE, v, ei, fwd, first);
+          if (ns < 0) continue; // no lane the car can be in turns there (TM:PE lane connections)
+          const turn = this.turnCost(inE, inFwd, e, fwd, v, first);
           for (const t of targets.get(ei) ?? []) {
             const g = d + turn + part(ei, fwd, arrive(ns, t)) + t.extra;
             if (g < best) { best = g; goal = { st: ns, from: st, t }; }
@@ -835,11 +901,12 @@ export class Router {
     }
     if (!goal) return null;
     const path: { e: number; fwd: boolean }[] = [];
-    if (goal.from !== -2) for (let st = goal.from; st !== -1; st = prev[st]) path.push({ e: st >> 1, fwd: !(st & 1) });
+    if (goal.from !== -2) for (let st = goal.from; st !== -1; st = prev[st]) { const b = this.stBase(st); path.push({ e: b >> 1, fwd: !(b & 1) }); }
     path.reverse();
-    path.push({ e: goal.st >> 1, fwd: !(goal.st & 1) });
+    const gb = this.stBase(goal.st);
+    path.push({ e: gb >> 1, fwd: !(gb & 1) });
     const sHit = goal.s ?? SH[seedOf[goal.from]];
-    return { path, time: this.driveTimeOn(path, sHit, goal.t), sHit, tHit: goal.t };
+    return { path, time: this.driveTimeOn(path, sHit, goal.t), sHit, tHit: goal.t, endLanes: this.lanesOf(goal.st) };
   }
   /**
    * Leaving an intermediate stop along edge `s.e` in direction `fwd` keeps to the direction the car arrived in: part-way
@@ -870,12 +937,16 @@ export class Router {
     if (points.length === 2) return this.route(points[0], points[1], mode, { avoidTolls: opts.avoidTolls, rules: opts.rules, fromSeg: segs[0], toSeg: segs[1] });
     if (mode === 'transit') return [];
     const parts: Route[] = [];
-    let heading: XY | undefined;
+    let heading: XY | undefined, lanes: Router['departLanes'] = null;
     for (let i = 0; i + 1 < points.length; i++) {
-      const r = this.route(points[i], points[i + 1], mode, { avoidTolls: opts.avoidTolls, rules: opts.rules, fromSeg: segs[i], toSeg: segs[i + 1], heading })[0];
+      // driving on from a stop also keeps the lanes the car arrived in (TM:PE lane connections)
+      this.departLanes = lanes;
+      let r: Route | undefined;
+      try { r = this.route(points[i], points[i + 1], mode, { avoidTolls: opts.avoidTolls, rules: opts.rules, fromSeg: segs[i], toSeg: segs[i + 1], heading })[0]; } finally { this.departLanes = null; }
       if (!r) return [];
       parts.push(r);
       heading = mode === 'drive' ? arrivalHeading(r) : undefined;
+      lanes = mode === 'drive' ? this.arrivalLanes : null;
     }
     return [joinRoutes(parts, opts.labels ?? [])];
   }
@@ -933,10 +1004,10 @@ export class Router {
   private driveSearch(starts: { node: number; extra: number }[] | number, targets: { node: number; extra: number }[] | number, penalty: Map<number, number>) {
     const S = typeof starts === 'number' ? [{ node: starts, extra: 0 }] : starts;
     const T = new Map((typeof targets === 'number' ? [{ node: targets, extra: 0 }] : targets).map((x) => [x.node, x.extra]));
-    const E = this.edges.length;
-    const dist = new Float64Array(2 * E).fill(Infinity), prev = new Int32Array(2 * E).fill(-1);
+    const NS = this.nStates();
+    const dist = new Float64Array(NS).fill(Infinity), prev = new Int32Array(NS).fill(-1);
     const h = new Heap();
-    const endNode = (st: number) => { const e = this.edges[st >> 1]; return st & 1 ? e.a : e.b; };
+    const endNode = (st: number) => { const b = this.stBase(st), e = this.edges[b >> 1]; return b & 1 ? e.a : e.b; };
     for (const { node: s, extra } of S) for (const ei of this.adj[s]) {
       const e = this.edges[ei];
       for (const fwd of [true, false]) {
@@ -953,12 +1024,13 @@ export class Router {
       const v = endNode(st);
       const te = T.get(v);
       if (te !== undefined && d + te < best) { best = d + te; goal = st; }
-      const inE = this.edges[st >> 1], inFwd = !(st & 1);
+      const sb = this.stBase(st), inE = this.edges[sb >> 1], inFwd = !(sb & 1);
       for (const ei of this.adj[v]) {
         const e = this.edges[ei];
         for (const fwd of [true, false]) {
           if ((fwd ? e.a : e.b) !== v || !this.driveOk(e, fwd)) continue;
-          const ns = 2 * ei + (fwd ? 0 : 1);
+          const ns = this.laneNext(st, inE, v, ei, fwd, prev[st] === -1);
+          if (ns < 0) continue;
           const nd = d + this.turnCost(inE, inFwd, e, fwd, v, prev[st] === -1) + this.driveCost(e, fwd) * (penalty.get(ei) ?? 1);
           if (nd < dist[ns]) { dist[ns] = nd; prev[ns] = st; h.push(nd, ns); }
         }
@@ -966,7 +1038,7 @@ export class Router {
     }
     if (goal < 0) return null;
     const path: { e: number; fwd: boolean }[] = [];
-    for (let st = goal; st !== -1; st = prev[st]) path.push({ e: st >> 1, fwd: !(st & 1) });
+    for (let st = goal; st !== -1; st = prev[st]) { const b = this.stBase(st); path.push({ e: b >> 1, fwd: !(b & 1) }); }
     path.reverse();
     return { path, time: this.driveTime(path) };
   }
@@ -1197,6 +1269,17 @@ export class Router {
   /** turns a save's lane arrows / lane connections forbid: node index → in segment id * 65536 + out segment id */
   private turnRule = new Map<number, Set<number>>();
   private turnBan = new Map<number, Set<number>>();
+  /** TM:PE lane connections (issue #26): the lane-by-lane moves out of a segment end, by segment id * 2^20 + node index */
+  private laneRule = new Map<number, Map<number, LaneMove>>();
+  private laneMoves = new Map<number, Map<number, LaneMove>>();
+  /** search states past the 2 per edge: a directed edge (base) a car can only be in some lanes of (mask), by key; `at`
+   *  marks the nodes with lane moves. Built once per applyRules (laneStateRule), in use while the rules are on */
+  private laneStateRule: LaneStates = NO_LANES;
+  private lane: LaneStates = NO_LANES;
+  /** driving on from a stop: the lanes the car arrived in, on the road it arrived by (see routeVia) */
+  private departLanes: { e: number; fwd: boolean; mask: number } | null = null;
+  /** the lanes the best route of the last drive search ends in, when lane moves narrow them (else null) */
+  private arrivalLanes: { e: number; fwd: boolean; mask: number } | null = null;
   private rulesOn = false;
   /** TM:PE vehicle restrictions: banned (Strict) or a path-cost factor */
   private restrictBan = true;
@@ -1245,6 +1328,13 @@ export class Router {
     }
     for (const u of r.uturnBan) { const v = this.nodeIdx.get(u.node); if (v !== undefined) this.uturnRule.add(u.seg + ':' + v); }
     for (const b of r.turnBan) { const v = this.nodeIdx.get(b.node); if (v !== undefined) (this.turnRule.get(v) ?? this.turnRule.set(v, new Set()).get(v)!).add(b.from * 65536 + b.to); }
+    for (const m of r.laneMoves ?? []) {
+      const ei = this.edgeOfSeg.get(m.from), v = this.nodeIdx.get(m.node);
+      if (ei === undefined || v === undefined) continue;
+      const k = m.from * 1048576 + v;
+      (this.laneRule.get(k) ?? this.laneRule.set(k, new Map()).get(k)!).set(m.to, m);
+    }
+    this.laneStateRule = this.laneStates(this.laneRule);
     this.restrictRule = r.restrictFactor;
     this.setRules(true);
   }
@@ -1282,7 +1372,7 @@ export class Router {
   clearControls() { this.controls = new Map(); }
   clearRules() {
     this.setRules(false);
-    this.ruleEdits = []; this.hopEdits = []; this.uturnRule = new Set(); this.turnRule = new Map(); this.restrictRule = null;
+    this.ruleEdits = []; this.hopEdits = []; this.uturnRule = new Set(); this.turnRule = new Map(); this.laneRule = new Map(); this.laneStateRule = NO_LANES; this.restrictRule = null;
   }
   /** what the applied rules changed, for the page */
   rulesSummary() { return { edges: this.ruleEdits.length, hops: this.hopEdits.length, uturns: this.uturnRule.size }; }
@@ -1292,6 +1382,8 @@ export class Router {
     for (const x of this.hopEdits) x.h.time = on ? x.rule : x.base;
     this.uturnBan = on ? this.uturnRule : new Set();
     this.turnBan = on ? this.turnRule : new Map();
+    this.laneMoves = on ? this.laneRule : new Map();
+    this.lane = on ? this.laneStateRule : NO_LANES;
     this.restrictBan = !on || this.restrictRule === null; this.restrictFactor = on && this.restrictRule !== null ? this.restrictRule : 1;
     this.rulesOn = on;
     // access may have changed: rebuild components and junction degrees lazily
@@ -1330,7 +1422,7 @@ export class Router {
     if (a < 0 || b < 0) return null;
     const h = new Heap();
     if (mode === 'drive') {
-      const E = this.edges.length, dist = new Float64Array(2 * E).fill(Infinity), prev = new Int32Array(2 * E).fill(-1);
+      const NS = this.nStates(), dist = new Float64Array(NS).fill(Infinity), prev = new Int32Array(NS).fill(-1);
       for (const ei of this.adj[a]) {
         const e = this.edges[ei];
         for (const fwd of [true, false]) {
@@ -1343,13 +1435,15 @@ export class Router {
       for (let top = h.pop(); top; top = h.pop()) {
         const [d, st] = top;
         if (d > dist[st]) continue;
-        const inE = this.edges[st >> 1], inFwd = !(st & 1), v = inFwd ? inE.b : inE.a;
+        const sb = this.stBase(st), inE = this.edges[sb >> 1], inFwd = !(sb & 1), v = inFwd ? inE.b : inE.a;
         if (v === b) { end = st; break; }
         for (const ei of this.adj[v]) {
           const e = this.edges[ei];
           for (const fwd of [true, false]) {
             if ((fwd ? e.a : e.b) !== v || !this.driveOk(e, fwd)) continue;
-            const ns = 2 * ei + (fwd ? 0 : 1), nd = d + this.turnCost(inE, inFwd, e, fwd, v, prev[st] === -1) + this.driveCost(e, fwd);
+            const ns = this.laneNext(st, inE, v, ei, fwd, prev[st] === -1);
+            if (ns < 0) continue;
+            const nd = d + this.turnCost(inE, inFwd, e, fwd, v, prev[st] === -1) + this.driveCost(e, fwd);
             if (nd < dist[ns] && nd <= max) { dist[ns] = nd; prev[ns] = st; h.push(nd, ns); }
           }
         }
@@ -1357,7 +1451,7 @@ export class Router {
       if (end < 0) return null;
       const chain: number[] = [];
       for (let st = end; st !== -1; st = prev[st]) chain.unshift(st);
-      const path = chain.map((st) => ({ e: st >> 1, fwd: !(st & 1) }));
+      const path = chain.map((st) => { const b = this.stBase(st); return { e: b >> 1, fwd: !(b & 1) }; });
       return this.pathOut(path, this.driveTime(path)); // the search cost can include TM:PE's restriction factor
     }
     const N = this.pos.length, dist = new Float64Array(N).fill(Infinity), via = new Int32Array(N).fill(-1);
@@ -1479,7 +1573,7 @@ export class Router {
       const h = new Heap();
       if (mode === 'drive') {
         // edge-direction states, like driveSearch, so one-ways and turn costs apply
-        const E = this.edges.length, dist = new Float64Array(2 * E).fill(Infinity), seed = new Uint8Array(2 * E); // seed: a trip's first road
+        const NS = this.nStates(), dist = new Float64Array(NS).fill(Infinity), seed = new Uint8Array(NS); // seed: a trip's first road
         // a car can only stop (or set off) where an ordinary road meets the node, not on a motorway or ramp
         const stopOk = (v: number) => this.adj[v].some((ei) => this.allowed(this.edges[ei], 'drive') && !HIGHWAY.has(this.edges[ei].cls));
         // same order of preference as Directions (driveHits): an ordinary road in reach, then one up to 3 km out,
@@ -1502,13 +1596,15 @@ export class Router {
         for (let top = h.pop(); top; top = h.pop()) {
           const [d, st] = top;
           if (d > dist[st] || d > max) continue;
-          const inE = this.edges[st >> 1], inFwd = !(st & 1), v = inFwd ? inE.b : inE.a;
+          const sb = this.stBase(st), inE = this.edges[sb >> 1], inFwd = !(sb & 1), v = inFwd ? inE.b : inE.a;
           if (d < out[v]) out[v] = d;
           for (const ei of this.adj[v]) {
             const e = this.edges[ei];
             for (const fwd of [true, false]) {
               if ((fwd ? e.a : e.b) !== v || !this.driveOk(e, fwd)) continue;
-              const ns = 2 * ei + (fwd ? 0 : 1), nd = d + this.turnCost(inE, inFwd, e, fwd, v, seed[st] === 1) + this.driveCost(e, fwd);
+              const ns = this.laneNext(st, inE, v, ei, fwd, seed[st] === 1);
+              if (ns < 0) continue;
+              const nd = d + this.turnCost(inE, inFwd, e, fwd, v, seed[st] === 1) + this.driveCost(e, fwd);
               if (nd < dist[ns] && nd <= max) { dist[ns] = nd; seed[ns] = 0; h.push(nd, ns); }
             }
           }
